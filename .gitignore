@@ -1,0 +1,6 @@
+.DS_Store
+DerivedData/
+build/
+*.xcworkspace
+xcuserdata/
+xcshareddata/WorkspaceSettings.xcsettings
