@@ -1,0 +1,272 @@
+{
+  "project": "PageFlow",
+  "version": "1.0.0",
+  "lastUpdated": "2025-12-07",
+  "features": [
+    {
+      "id": "F001",
+      "category": "pdf-display",
+      "description": "Open PDF file via File > Open menu",
+      "passes": true,
+      "implementation": "MainView.swift - fileImporter modifier"
+    },
+    {
+      "id": "F002",
+      "category": "pdf-display",
+      "description": "Open PDF file via drag and drop",
+      "passes": true,
+      "implementation": "MainView.swift - onDrop modifier"
+    },
+    {
+      "id": "F003",
+      "category": "pdf-display",
+      "description": "Open PDF file via double-click in Finder",
+      "passes": true,
+      "implementation": "MainView.swift - onOpenURL modifier"
+    },
+    {
+      "id": "F004",
+      "category": "pdf-display",
+      "description": "Navigate pages using scroll",
+      "passes": true,
+      "implementation": "PDFViewWrapper.swift - PDFView native scrolling"
+    },
+    {
+      "id": "F005",
+      "category": "pdf-display",
+      "description": "Navigate pages using keyboard",
+      "passes": true,
+      "implementation": "MainView.swift - toolbar buttons + PDFManager navigation"
+    },
+    {
+      "id": "F006",
+      "category": "pdf-display",
+      "description": "Go to specific page number",
+      "passes": true,
+      "implementation": "MainView.swift - goToPageDialog sheet"
+    },
+    {
+      "id": "F007",
+      "category": "pdf-display",
+      "description": "Zoom in and out",
+      "passes": true,
+      "implementation": "PDFManager.swift - zoom methods + MainView toolbar"
+    },
+    {
+      "id": "F008",
+      "category": "pdf-display",
+      "description": "Display thumbnail sidebar",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 2"
+    },
+    {
+      "id": "F009",
+      "category": "pdf-display",
+      "description": "Search text within PDF",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 3"
+    },
+    {
+      "id": "F010",
+      "category": "pdf-display",
+      "description": "Open multiple PDFs in tabs",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 2"
+    },
+    {
+      "id": "F011",
+      "category": "pdf-display",
+      "description": "Remember recently opened files",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 2"
+    },
+    {
+      "id": "F012",
+      "category": "highlight",
+      "description": "Highlight selected text with default color",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 4"
+    },
+    {
+      "id": "F013",
+      "category": "highlight",
+      "description": "Highlight with custom color via preset",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 4"
+    },
+    {
+      "id": "F014",
+      "category": "highlight",
+      "description": "Highlight with custom RGB color",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 4"
+    },
+    {
+      "id": "F015",
+      "category": "highlight",
+      "description": "Remove highlight from text",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 4"
+    },
+    {
+      "id": "F016",
+      "category": "highlight",
+      "description": "Change color of existing highlight",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 4"
+    },
+    {
+      "id": "F017",
+      "category": "underline",
+      "description": "Underline selected text",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 5"
+    },
+    {
+      "id": "F018",
+      "category": "underline",
+      "description": "Underline with custom color",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 5"
+    },
+    {
+      "id": "F019",
+      "category": "underline",
+      "description": "Remove underline from text",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 5"
+    },
+    {
+      "id": "F020",
+      "category": "bookmark",
+      "description": "Add bookmark to current page",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 6"
+    },
+    {
+      "id": "F021",
+      "category": "bookmark",
+      "description": "View bookmarks in sidebar",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 6"
+    },
+    {
+      "id": "F022",
+      "category": "bookmark",
+      "description": "Rename bookmark",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 6"
+    },
+    {
+      "id": "F023",
+      "category": "bookmark",
+      "description": "Delete bookmark",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 6"
+    },
+    {
+      "id": "F024",
+      "category": "comments",
+      "description": "Add comment to text selection",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 7"
+    },
+    {
+      "id": "F025",
+      "category": "comments",
+      "description": "View existing comment",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 7"
+    },
+    {
+      "id": "F026",
+      "category": "comments",
+      "description": "Edit existing comment",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 7"
+    },
+    {
+      "id": "F027",
+      "category": "comments",
+      "description": "Delete comment",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 7"
+    },
+    {
+      "id": "F028",
+      "category": "comments",
+      "description": "View all comments in sidebar",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 7"
+    },
+    {
+      "id": "F029",
+      "category": "save",
+      "description": "Auto-save annotations to PDF",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 8"
+    },
+    {
+      "id": "F030",
+      "category": "save",
+      "description": "Manual save with Cmd+S",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 8"
+    },
+    {
+      "id": "F031",
+      "category": "save",
+      "description": "Save As with new filename",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 8"
+    },
+    {
+      "id": "F032",
+      "category": "save",
+      "description": "Export PDF without annotations",
+      "passes": true,
+      "implementation": "PDFManager.swift - exportWithoutAnnotations method"
+    },
+    {
+      "id": "F033",
+      "category": "ui",
+      "description": "Toggle toolbar visibility",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 9"
+    },
+    {
+      "id": "F034",
+      "category": "ui",
+      "description": "Full screen mode",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 9"
+    },
+    {
+      "id": "F035",
+      "category": "ui",
+      "description": "Dark mode support",
+      "passes": true,
+      "implementation": "DesignTokens.swift - uses native macOS colors"
+    },
+    {
+      "id": "F036",
+      "category": "ui",
+      "description": "Undo/Redo annotation actions",
+      "passes": false,
+      "implementation": "Not yet implemented - Phase 9"
+    },
+    {
+      "id": "F037",
+      "category": "keyboard",
+      "description": "All standard keyboard shortcuts work",
+      "passes": false,
+      "implementation": "Partially implemented - Phase 9 will complete"
+    }
+  ],
+  "summary": {
+    "total": 37,
+    "passing": 9,
+    "failing": 28,
+    "percentComplete": 24
+  }
+}
