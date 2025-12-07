@@ -2,7 +2,7 @@
 //  PDFViewWrapper.swift
 //  PageFlow
 //
-//  SwiftUI wrapper for PDFKit's PDFView
+//  SwiftUI wrapper for PDFKit's PDFView using StablePDFView for resize stability.
 //
 
 import SwiftUI
@@ -11,22 +11,21 @@ import PDFKit
 struct PDFViewWrapper: NSViewRepresentable {
     @Bindable var pdfManager: PDFManager
 
-    func makeNSView(context: Context) -> PDFView {
-        let pdfView = PDFView()
+    func makeNSView(context: Context) -> StablePDFView {
+        let pdfView = StablePDFView()
 
-        // Configure PDFView
         pdfView.wantsLayer = true
         pdfView.layer?.isOpaque = true
         pdfView.layer?.backgroundColor = DesignTokens.viewerBackground.cgColor
-        pdfView.autoScales = true
+        pdfView.backgroundColor = DesignTokens.viewerBackground
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = DesignTokens.viewerBackground
-
-        // Set delegate
+        pdfView.autoScales = false
+        pdfView.minScaleFactor = DesignTokens.pdfMinScale
+        pdfView.maxScaleFactor = DesignTokens.pdfMaxScale
+        pdfView.scaleFactor = pdfManager.scaleFactor
         pdfView.delegate = context.coordinator
 
-        // Observe page changes
         NotificationCenter.default.addObserver(
             context.coordinator,
             selector: #selector(Coordinator.pageChanged(_:)),
@@ -37,24 +36,20 @@ struct PDFViewWrapper: NSViewRepresentable {
         return pdfView
     }
 
-    func updateNSView(_ pdfView: PDFView, context: Context) {
-        // Update document if changed
+    func updateNSView(_ pdfView: StablePDFView, context: Context) {
         if pdfView.document !== pdfManager.document {
             pdfView.document = pdfManager.document
 
-            // When document changes, explicitly go to the current page
             if let currentPage = pdfManager.currentPage {
                 pdfView.go(to: currentPage)
             }
-        } else {
-            // Document hasn't changed, but page might have
-            if let currentPage = pdfManager.currentPage,
-               pdfView.currentPage != currentPage {
-                pdfView.go(to: currentPage)
-            }
+
+            applyInitialScale(to: pdfView)
+        } else if let currentPage = pdfManager.currentPage,
+                  pdfView.currentPage !== currentPage {
+            pdfView.go(to: currentPage)
         }
 
-        // Update scale factor if changed
         if pdfView.scaleFactor != pdfManager.scaleFactor {
             pdfView.scaleFactor = pdfManager.scaleFactor
         }
@@ -64,12 +59,26 @@ struct PDFViewWrapper: NSViewRepresentable {
         Coordinator(pdfManager: pdfManager)
     }
 
-    static func dismantleNSView(_ pdfView: PDFView, coordinator: Coordinator) {
+    static func dismantleNSView(_ pdfView: StablePDFView, coordinator: Coordinator) {
         NotificationCenter.default.removeObserver(
             coordinator,
             name: .PDFViewPageChanged,
             object: pdfView
         )
+    }
+
+    // MARK: - Private
+
+    private func applyInitialScale(to pdfView: StablePDFView) {
+        let fitScale = pdfView.scaleFactorForSizeToFit
+        let isDefaultScale = pdfManager.scaleFactor == DesignTokens.pdfDefaultScale
+        let targetScale = isDefaultScale ? fitScale : pdfManager.scaleFactor
+
+        pdfView.scaleFactor = targetScale
+
+        if pdfManager.scaleFactor != targetScale {
+            pdfManager.scaleFactor = targetScale
+        }
     }
 
     // MARK: - Coordinator
@@ -92,8 +101,5 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfManager.currentPageIndex = pageIndex
             pdfManager.currentPage = currentPage
         }
-
-        // PDFViewDelegate methods can be added here for future features
-        // e.g., func pdfViewWillClick(onLink sender: PDFView, with url: URL)
     }
 }

@@ -70,4 +70,10 @@ struct DesignTokens {
 
     static let animationFast: Double = 0.15
     static let animationNormal: Double = 0.25
+
+    // MARK: - PDF Viewer
+
+    static let pdfMinScale: CGFloat = 0.25
+    static let pdfMaxScale: CGFloat = 4.0
+    static let pdfDefaultScale: CGFloat = 1.0
 }

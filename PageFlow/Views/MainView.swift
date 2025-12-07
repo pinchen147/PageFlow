@@ -41,7 +41,8 @@ struct MainView: View {
         }
         .overlay(alignment: .topTrailing) {
             FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter)
-                .padding(DesignTokens.floatingToolbarPadding)
+                .padding(.top, DesignTokens.spacingXS)
+                .padding(.trailing, DesignTokens.floatingToolbarPadding)
         }
         .overlay(alignment: .center) {
             if isDragHovering {
@@ -125,7 +126,8 @@ struct MainView: View {
                 .allowsHitTesting(false)
         )
         .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
-        .padding(DesignTokens.spacingMD)
+        .padding(.bottom, DesignTokens.spacingXS)
+        .padding(.trailing, DesignTokens.spacingMD)
     }
 
     // MARK: - Go To Page Dialog

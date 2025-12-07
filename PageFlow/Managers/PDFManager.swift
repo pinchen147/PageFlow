@@ -128,20 +128,22 @@ class PDFManager {
 
     // MARK: - Zoom
 
+    private let zoomStep: CGFloat = 0.25
+
     func zoomIn() {
-        scaleFactor = min(scaleFactor + 0.25, 4.0)
+        scaleFactor = min(scaleFactor + zoomStep, DesignTokens.pdfMaxScale)
     }
 
     func zoomOut() {
-        scaleFactor = max(scaleFactor - 0.25, 0.25)
+        scaleFactor = max(scaleFactor - zoomStep, DesignTokens.pdfMinScale)
     }
 
     func resetZoom() {
-        scaleFactor = 1.0
+        scaleFactor = DesignTokens.pdfDefaultScale
     }
 
     func setZoom(_ scale: CGFloat) {
-        scaleFactor = max(0.25, min(scale, 4.0))
+        scaleFactor = max(DesignTokens.pdfMinScale, min(scale, DesignTokens.pdfMaxScale))
     }
 
     // MARK: - Save
