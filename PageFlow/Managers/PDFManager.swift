@@ -203,13 +203,20 @@ class PDFManager {
         printInfo.isHorizontallyCentered = true
         printInfo.isVerticallyCentered = false
 
-        let printOperation = document.printOperation(
+        guard let printOperation = document.printOperation(
             for: printInfo,
             scalingMode: .pageScaleToFit,
             autoRotate: true
-        )
+        ) else {
+            return
+        }
 
-        printOperation?.run()
+        printOperation.showsPrintPanel = true
+        printOperation.showsProgressPanel = true
+        printOperation.runModal(for: NSApp.keyWindow ?? NSWindow(),
+                               delegate: nil,
+                               didRun: nil,
+                               contextInfo: nil)
     }
 
     // MARK: - Export
