@@ -231,8 +231,8 @@
       "id": "F033",
       "category": "ui",
       "description": "Toggle toolbar visibility",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 9"
+      "passes": true,
+      "implementation": "FloatingToolbar.swift - collapsible toolbar with expand/collapse animation"
     },
     {
       "id": "F034",
@@ -261,12 +261,40 @@
       "description": "All standard keyboard shortcuts work",
       "passes": false,
       "implementation": "Partially implemented - Phase 9 will complete"
+    },
+    {
+      "id": "F038",
+      "category": "ui",
+      "description": "Custom window chrome with hover-reveal traffic lights",
+      "passes": true,
+      "implementation": "WindowConfigurator.swift hides system chrome; TrafficLightsView.swift custom traffic lights; WindowDragArea.swift for window dragging"
+    },
+    {
+      "id": "F039",
+      "category": "ui",
+      "description": "Unified glassmorphism design across all UI components",
+      "passes": true,
+      "implementation": "All floating UI components use consistent ultra-thin material, 0.12 opacity tint, 0.22 white border, 22pt corner radius, and unified shadow"
+    },
+    {
+      "id": "F040",
+      "category": "ui",
+      "description": "Stable scroll position during horizontal window resize",
+      "passes": true,
+      "implementation": "StablePDFView.swift preserves vertical scroll position when window width changes"
+    },
+    {
+      "id": "F041",
+      "category": "ui",
+      "description": "Consistent UI component spacing and margins",
+      "passes": true,
+      "implementation": "All floating UI components use DesignTokens.spacingXS (4pt) for edge margins"
     }
   ],
   "summary": {
-    "total": 37,
-    "passing": 9,
-    "failing": 28,
-    "percentComplete": 24
+    "total": 41,
+    "passing": 14,
+    "failing": 27,
+    "percentComplete": 34
   }
 }

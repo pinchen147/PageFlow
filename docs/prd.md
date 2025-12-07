@@ -618,6 +618,70 @@ struct DesignTokens {
 
 ---
 
+## UI Enhancements (Phase 1 Extensions)
+
+### Custom Window Chrome
+
+**Implementation:** Full-bleed PDF viewing experience with custom window controls
+
+**Components:**
+- `WindowConfigurator.swift` - Hides system title bar and traffic lights
+- `TrafficLightsView.swift` - Custom traffic lights that appear on hover
+- `WindowDragArea.swift` - Draggable area in top-left corner
+- `StablePDFView.swift` - Custom PDFView subclass for scroll stability
+
+**Features:**
+1. **Hidden Title Bar:** System title bar and traffic lights hidden for immersive viewing
+2. **Hover-Reveal Controls:** Custom traffic lights fade in when cursor hovers over top-left corner
+3. **Window Dragging:** Top-left region (180×40pt) enables window dragging
+4. **Full-Bleed Content:** PDF viewer extends edge-to-edge with no insets
+
+### Glassmorphism Design System
+
+**Consistency Across All UI Components:**
+
+| Component | Background | Tint | Border | Radius | Shadow |
+|-----------|-----------|------|--------|--------|---------|
+| Traffic Lights | `.ultraThinMaterial` | 0.12 opacity | 0.22 white | 22pt | `0.1, r:10, y:5` |
+| Floating Toolbar | `.ultraThinMaterial` | 0.12 opacity | 0.22 white | 22pt | `0.1, r:10, y:5` |
+| Page Indicator | `.ultraThinMaterial` | 0.12 opacity | 0.22 white | 22pt | `0.1, r:10, y:5` |
+
+**Design Tokens:**
+```swift
+// Glassmorphism constants
+static let floatingToolbarCornerRadius: CGFloat = 22
+static let floatingToolbarBase = Color(red: 0.196, green: 0.196, blue: 0.196)
+
+// Tint overlay: .fill(floatingToolbarBase.opacity(0.12))
+// Border: .strokeBorder(.white.opacity(0.22))
+// Shadow: .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+```
+
+### Scroll Stability
+
+**Problem:** Horizontal window resize causes unwanted vertical scroll jump
+**Solution:** `StablePDFView` subclass intercepts resize events and preserves scroll position
+
+**Implementation:**
+```swift
+override func setFrameSize(_ newSize: NSSize) {
+    let savedY = documentScrollView?.contentView.bounds.origin.y
+    let widthChanged = abs(lastWidth - newSize.width) > 0.5
+
+    super.setFrameSize(newSize)
+
+    if widthChanged { restoreVerticalScroll(savedY) }
+}
+```
+
+### Spacing Consistency
+
+**All floating UI components use unified margins:**
+- Vertical margins: `DesignTokens.spacingXS` (4pt) - matches traffic lights
+- Horizontal margins: Component-specific (16pt) - leaves room for scrollbar
+
+---
+
 ## Init Script
 
 ```bash
@@ -659,8 +723,10 @@ fi
 ## Success Criteria
 
 1. App opens PDFs under 1 second for files <50MB
-2. All 37 features pass verification
+2. All 41 features pass verification (currently 14/41 = 34% complete)
 3. Memory usage <200MB for typical PDF
 4. App bundle size <20MB
 5. Passes App Store review guidelines (for future consideration)
 6. Works on macOS 12+
+
+**Phase 1 Complete:** Core PDF viewing with custom UI chrome and glassmorphism design (14 features passing)
