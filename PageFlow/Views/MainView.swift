@@ -11,15 +11,18 @@ import UniformTypeIdentifiers
 
 struct MainView: View {
     @Bindable var pdfManager: PDFManager
+    var recentFilesManager: RecentFilesManager
+    @State private var searchManager = SearchManager()
     @State private var showingFileImporter = false
     @State private var showingGoToPage = false
+    @Binding var showingSearch: Bool
     @State private var goToPageInput = ""
     @State private var isDragHovering = false
 
     var body: some View {
         ZStack {
             if pdfManager.hasDocument {
-                PDFViewWrapper(pdfManager: pdfManager)
+                PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
                     .overlay(alignment: .bottomTrailing) {
                         pageIndicator
                     }
@@ -43,6 +46,13 @@ struct MainView: View {
             FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter)
                 .padding(.top, DesignTokens.spacingXS)
                 .padding(.trailing, DesignTokens.floatingToolbarPadding)
+        }
+        .overlay(alignment: .top) {
+            if showingSearch {
+                SearchBar(searchManager: searchManager, pdfManager: pdfManager, isVisible: $showingSearch)
+                    .padding(.top, 60)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
         .overlay(alignment: .center) {
             if isDragHovering {
@@ -68,6 +78,7 @@ struct MainView: View {
             handleOpenURL(url)
         }
         .animation(.easeInOut(duration: 0.15), value: isDragHovering)
+        .animation(.easeInOut(duration: 0.2), value: showingSearch)
         .background(WindowConfigurator())
         .ignoresSafeArea()
     }
@@ -171,8 +182,10 @@ struct MainView: View {
 
         // File importer returns security-scoped URLs - need explicit permission
         // Also ensure main thread for @Observable state updates
-        DispatchQueue.main.async { [pdfManager] in
-            _ = pdfManager.loadDocument(from: url, isSecurityScoped: true)
+        DispatchQueue.main.async { [pdfManager, recentFilesManager] in
+            if pdfManager.loadDocument(from: url, isSecurityScoped: true) {
+                recentFilesManager.addRecentFile(url)
+            }
         }
     }
 
@@ -181,15 +194,17 @@ struct MainView: View {
             return false
         }
 
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [recentFilesManager] item, error in
             guard let data = item as? Data,
                   let url = URL(dataRepresentation: data, relativeTo: nil),
                   url.pathExtension.lowercased() == "pdf" else {
                 return
             }
 
-            DispatchQueue.main.async {
-                _ = pdfManager.loadDocument(from: url)
+            DispatchQueue.main.async { [pdfManager] in
+                if pdfManager.loadDocument(from: url) {
+                    recentFilesManager.addRecentFile(url)
+                }
             }
         }
 
@@ -197,8 +212,10 @@ struct MainView: View {
     }
 
     private func handleOpenURL(_ url: URL) {
-        DispatchQueue.main.async { [pdfManager] in
-            _ = pdfManager.loadDocument(from: url, isSecurityScoped: true)
+        DispatchQueue.main.async { [pdfManager, recentFilesManager] in
+            if pdfManager.loadDocument(from: url, isSecurityScoped: true) {
+                recentFilesManager.addRecentFile(url)
+            }
         }
     }
 
@@ -241,5 +258,5 @@ struct MainView: View {
 }
 
 #Preview {
-    MainView(pdfManager: PDFManager())
+    MainView(pdfManager: PDFManager(), recentFilesManager: RecentFilesManager(), showingSearch: .constant(false))
 }

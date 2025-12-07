@@ -63,8 +63,8 @@
       "id": "F009",
       "category": "pdf-display",
       "description": "Search text within PDF",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 3"
+      "passes": true,
+      "implementation": "SearchManager.swift - search() method with PDFDocument.findString; SearchBar.swift - search UI; Cmd+F shortcut"
     },
     {
       "id": "F010",
@@ -77,8 +77,8 @@
       "id": "F011",
       "category": "pdf-display",
       "description": "Remember recently opened files",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 2"
+      "passes": true,
+      "implementation": "RecentFilesManager.swift - UserDefaults persistence; PageFlowApp.swift - Open Recent menu with clear option"
     },
     {
       "id": "F012",
@@ -343,22 +343,22 @@
       "id": "F049",
       "category": "search",
       "description": "Navigate to next search result",
-      "passes": false,
-      "implementation": "Not yet implemented - requires SearchManager"
+      "passes": true,
+      "implementation": "SearchManager.swift - nextResult() with wrap-around; SearchBar.swift - chevron.down button"
     },
     {
       "id": "F050",
       "category": "search",
       "description": "Navigate to previous search result",
-      "passes": false,
-      "implementation": "Not yet implemented - requires SearchManager"
+      "passes": true,
+      "implementation": "SearchManager.swift - previousResult() with wrap-around; SearchBar.swift - chevron.up button"
     },
     {
       "id": "F051",
       "category": "search",
       "description": "Highlight all search results with current result distinction",
-      "passes": false,
-      "implementation": "Not yet implemented - PDFView.highlightedSelections"
+      "passes": true,
+      "implementation": "SearchManager.swift - highlightedSelections() with color coding; PDFViewWrapper.swift - updateSearchHighlights() syncs to PDFView"
     },
     {
       "id": "F052",
@@ -412,8 +412,8 @@
   ],
   "summary": {
     "total": 58,
-    "passing": 21,
-    "failing": 37,
-    "percentComplete": 36
+    "passing": 25,
+    "failing": 33,
+    "percentComplete": 43
   }
 }

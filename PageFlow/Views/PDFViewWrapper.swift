@@ -10,6 +10,7 @@ import PDFKit
 
 struct PDFViewWrapper: NSViewRepresentable {
     @Bindable var pdfManager: PDFManager
+    var searchManager: SearchManager
 
     func makeNSView(context: Context) -> StablePDFView {
         let pdfView = StablePDFView()
@@ -63,6 +64,25 @@ struct PDFViewWrapper: NSViewRepresentable {
         } else if pdfManager.scaleNeedsUpdate {
             pdfView.scaleFactor = pdfManager.scaleFactor
             pdfManager.scaleNeedsUpdate = false
+        }
+
+        updateSearchHighlights(pdfView)
+    }
+
+    private func updateSearchHighlights(_ pdfView: StablePDFView) {
+        if searchManager.hasResults {
+            pdfView.highlightedSelections = searchManager.highlightedSelections(
+                currentColor: DesignTokens.searchCurrentResult,
+                othersColor: DesignTokens.searchOtherResults
+            )
+
+            if let currentSelection = searchManager.currentSelection() {
+                pdfView.go(to: currentSelection)
+                pdfView.setCurrentSelection(currentSelection, animate: true)
+            }
+        } else {
+            pdfView.highlightedSelections = nil
+            pdfView.setCurrentSelection(nil, animate: false)
         }
     }
 

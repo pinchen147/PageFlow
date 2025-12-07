@@ -32,6 +32,11 @@ struct DesignTokens {
     static let highlightPink = NSColor(red: 1.0, green: 0.0, blue: 0.5, alpha: 0.4)
     static let underlineColor = NSColor.black
 
+    // MARK: - Search Highlight Colors
+
+    static let searchCurrentResult = NSColor(red: 0.6, green: 0, blue: 0, alpha: 0.6)
+    static let searchOtherResults = NSColor(red: 0, green: 0, blue: 0.6, alpha: 0.6)
+
     // MARK: - Spacing
 
     static let spacingXS: CGFloat = 4
