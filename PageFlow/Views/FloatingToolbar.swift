@@ -14,22 +14,18 @@ struct FloatingToolbar: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            if isExpanded {
-                expandedContainer
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    ))
-            } else {
-                collapsedButton
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    ))
-            }
+            expandedContainer
+                .scaleEffect(x: isExpanded ? 1 : 0.01, y: 1, anchor: .trailing)
+                .opacity(isExpanded ? 1 : 0)
+                .allowsHitTesting(isExpanded)
+
+            collapsedButton
+                .scaleEffect(x: isExpanded ? 0.01 : 1, y: 1, anchor: .trailing)
+                .opacity(isExpanded ? 0 : 1)
+                .allowsHitTesting(!isExpanded)
         }
         .frame(height: DesignTokens.collapsedToolbarSize)
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: isExpanded)
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
     }
 
     private var expandedContainer: some View {
