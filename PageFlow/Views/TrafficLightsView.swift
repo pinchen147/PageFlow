@@ -19,7 +19,17 @@ struct TrafficLightsView: View {
             }
             .padding(DesignTokens.trafficLightContainerPadding)
             .background(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                    .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
+                    .allowsHitTesting(false)
+            )
             .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                    .strokeBorder(.white.opacity(0.22))
+                    .allowsHitTesting(false)
+            )
             .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
             .opacity(isHovering ? 1 : 0)
         }

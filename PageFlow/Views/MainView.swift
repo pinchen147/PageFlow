@@ -115,17 +115,17 @@ struct MainView: View {
         .padding(DesignTokens.spacingSM)
         .background(.ultraThinMaterial)
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.spacingMD)
+            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
                 .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
                 .allowsHitTesting(false)
         )
-        .cornerRadius(DesignTokens.spacingMD)
+        .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.spacingMD)
+            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
                 .strokeBorder(.white.opacity(0.22))
                 .allowsHitTesting(false)
         )
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
         .padding(.bottom, DesignTokens.spacingXS)
         .padding(.trailing, DesignTokens.spacingMD)
     }
