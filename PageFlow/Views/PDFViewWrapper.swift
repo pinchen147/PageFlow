@@ -61,6 +61,14 @@ struct PDFViewWrapper: NSViewRepresentable {
         Coordinator(pdfManager: pdfManager)
     }
 
+    static func dismantleNSView(_ pdfView: PDFView, coordinator: Coordinator) {
+        NotificationCenter.default.removeObserver(
+            coordinator,
+            name: .PDFViewPageChanged,
+            object: pdfView
+        )
+    }
+
     // MARK: - Coordinator
 
     class Coordinator: NSObject, PDFViewDelegate {

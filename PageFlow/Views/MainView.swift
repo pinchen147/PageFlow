@@ -40,7 +40,7 @@ struct MainView: View {
             handleDrop(providers: providers)
         }
         .onOpenURL { url in
-            _ = pdfManager.loadDocument(from: url)
+            handleOpenURL(url)
         }
         .toolbar {
             ToolbarItemGroup {
@@ -155,7 +155,7 @@ struct MainView: View {
 
             TextField("Page number", text: $goToPageInput)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
+                .frame(width: DesignTokens.textFieldWidth)
                 .onSubmit {
                     goToPage()
                 }
@@ -174,7 +174,7 @@ struct MainView: View {
             }
         }
         .padding(DesignTokens.spacingLG)
-        .frame(width: 300)
+        .frame(width: DesignTokens.dialogWidth)
     }
 
     // MARK: - Actions
@@ -210,6 +210,12 @@ struct MainView: View {
         }
 
         return true
+    }
+
+    private func handleOpenURL(_ url: URL) {
+        DispatchQueue.main.async { [pdfManager] in
+            _ = pdfManager.loadDocument(from: url, isSecurityScoped: true)
+        }
     }
 
     private func goToPage() {

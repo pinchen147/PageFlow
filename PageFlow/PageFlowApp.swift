@@ -14,33 +14,7 @@ struct PageFlowApp: App {
             MainView()
         }
         .commands {
-            CommandGroup(replacing: .newItem) {
-                // File menu is handled by MainView's fileImporter
-            }
-
-            CommandMenu("View") {
-                Button("Actual Size") {
-                    // Will be handled via FocusedValue in Phase 2
-                }
-                .keyboardShortcut("0", modifiers: .command)
-
-                Button("Zoom In") {
-                    // Will be handled via FocusedValue in Phase 2
-                }
-                .keyboardShortcut("+", modifiers: .command)
-
-                Button("Zoom Out") {
-                    // Will be handled via FocusedValue in Phase 2
-                }
-                .keyboardShortcut("-", modifiers: .command)
-
-                Divider()
-
-                Button("Go to Page...") {
-                    // Will be handled via FocusedValue in Phase 2
-                }
-                .keyboardShortcut("g", modifiers: .command)
-            }
+            CommandGroup(replacing: .newItem) { }
         }
     }
 }

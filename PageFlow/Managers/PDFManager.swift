@@ -31,27 +31,18 @@ class PDFManager {
     // MARK: - Document Loading
 
     func loadDocument(from url: URL, isSecurityScoped: Bool = false) -> Bool {
-        // Stop accessing previous security-scoped resource if any
-        if isAccessingSecurityScopedResource, let oldURL = documentURL {
-            oldURL.stopAccessingSecurityScopedResource()
-            isAccessingSecurityScopedResource = false
+        guard url.pathExtension.lowercased() == "pdf" else {
+            return false
         }
 
-        // Start accessing security-scoped resource if needed
-        if isSecurityScoped {
-            guard url.startAccessingSecurityScopedResource() else {
-                return false
-            }
-            isAccessingSecurityScopedResource = true
+        stopAccessingCurrentResource()
+
+        guard startAccessingResourceIfNeeded(url, isSecurityScoped: isSecurityScoped) else {
+            return false
         }
 
-        // Load the PDF document
         guard let pdfDocument = PDFDocument(url: url) else {
-            // Failed to load - stop accessing if we started
-            if isSecurityScoped {
-                url.stopAccessingSecurityScopedResource()
-                isAccessingSecurityScopedResource = false
-            }
+            stopAccessingResourceOnFailure(url, wasSecurityScoped: isSecurityScoped)
             return false
         }
 
@@ -61,6 +52,31 @@ class PDFManager {
         currentPage = pdfDocument.page(at: 0)
 
         return true
+    }
+
+    private func stopAccessingCurrentResource() {
+        if isAccessingSecurityScopedResource, let oldURL = documentURL {
+            oldURL.stopAccessingSecurityScopedResource()
+            isAccessingSecurityScopedResource = false
+        }
+    }
+
+    private func startAccessingResourceIfNeeded(_ url: URL, isSecurityScoped: Bool) -> Bool {
+        guard isSecurityScoped else { return true }
+
+        guard url.startAccessingSecurityScopedResource() else {
+            return false
+        }
+
+        isAccessingSecurityScopedResource = true
+        return true
+    }
+
+    private func stopAccessingResourceOnFailure(_ url: URL, wasSecurityScoped: Bool) {
+        if wasSecurityScoped {
+            url.stopAccessingSecurityScopedResource()
+            isAccessingSecurityScopedResource = false
+        }
     }
 
     func closeDocument() {
@@ -165,7 +181,7 @@ class PDFManager {
         for pageIndex in 0..<document.pageCount {
             guard let page = document.page(at: pageIndex) else { continue }
 
-            // Create a copy of the page without annotations
+            // PDFPage.copy() always returns PDFPage, force unwrap is safe
             let pageCopy = page.copy() as! PDFPage
 
             // Remove all annotations

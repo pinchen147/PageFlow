@@ -39,6 +39,8 @@ struct DesignTokens {
     static let sidebarWidth: CGFloat = 200
     static let thumbnailWidth: CGFloat = 120
     static let toolbarHeight: CGFloat = 38
+    static let dialogWidth: CGFloat = 300
+    static let textFieldWidth: CGFloat = 200
 
     // MARK: - Animation
 
