@@ -17,6 +17,7 @@ class PDFManager {
     var currentPage: PDFPage?
     var currentPageIndex: Int = 0
     var scaleFactor: CGFloat = 1.0
+    var isAutoScaling: Bool = false
     var documentURL: URL?
     private var isAccessingSecurityScopedResource = false
 
@@ -26,6 +27,19 @@ class PDFManager {
 
     var hasDocument: Bool {
         document != nil
+    }
+
+    var documentTitle: String {
+        guard let document = document else {
+            return "PageFlow"
+        }
+
+        if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String,
+           !title.isEmpty {
+            return title
+        }
+
+        return documentURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
     }
 
     // MARK: - Document Loading
@@ -131,19 +145,27 @@ class PDFManager {
     private let zoomStep: CGFloat = 0.25
 
     func zoomIn() {
+        isAutoScaling = false
         scaleFactor = min(scaleFactor + zoomStep, DesignTokens.pdfMaxScale)
     }
 
     func zoomOut() {
+        isAutoScaling = false
         scaleFactor = max(scaleFactor - zoomStep, DesignTokens.pdfMinScale)
     }
 
     func resetZoom() {
+        isAutoScaling = false
         scaleFactor = DesignTokens.pdfDefaultScale
     }
 
     func setZoom(_ scale: CGFloat) {
+        isAutoScaling = false
         scaleFactor = max(DesignTokens.pdfMinScale, min(scale, DesignTokens.pdfMaxScale))
+    }
+
+    func toggleAutoScale() {
+        isAutoScaling.toggle()
     }
 
     // MARK: - Save
@@ -168,6 +190,26 @@ class PDFManager {
         }
 
         return false
+    }
+
+    // MARK: - Print
+
+    func print() {
+        guard let document = document else { return }
+
+        let printInfo = NSPrintInfo.shared
+        printInfo.horizontalPagination = .fit
+        printInfo.verticalPagination = .automatic
+        printInfo.isHorizontallyCentered = true
+        printInfo.isVerticallyCentered = false
+
+        let printOperation = document.printOperation(
+            for: printInfo,
+            scalingMode: .pageScaleToFit,
+            autoRotate: true
+        )
+
+        printOperation?.run()
     }
 
     // MARK: - Export

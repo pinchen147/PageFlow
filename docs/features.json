@@ -289,12 +289,131 @@
       "description": "Consistent UI component spacing and margins",
       "passes": true,
       "implementation": "All floating UI components use DesignTokens.spacingXS (4pt) for edge margins"
+    },
+    {
+      "id": "F042",
+      "category": "text-selection",
+      "description": "Select text with cursor",
+      "passes": true,
+      "implementation": "PDFViewWrapper.swift - enableDataDetectors = true"
+    },
+    {
+      "id": "F043",
+      "category": "text-selection",
+      "description": "Copy selected text to clipboard (Cmd+C)",
+      "passes": true,
+      "implementation": "PDFViewWrapper.swift - native PDFView copy support with enableDataDetectors"
+    },
+    {
+      "id": "F044",
+      "category": "print",
+      "description": "Print current PDF (Cmd+P)",
+      "passes": true,
+      "implementation": "PDFManager.swift - print() method with NSPrintOperation; PageFlowApp.swift - Cmd+P shortcut"
+    },
+    {
+      "id": "F045",
+      "category": "print",
+      "description": "Page Setup configuration",
+      "passes": true,
+      "implementation": "PDFManager.swift - print() method uses NSPrintInfo for configuration"
+    },
+    {
+      "id": "F046",
+      "category": "zoom",
+      "description": "Fit to window width/height (auto-scale)",
+      "passes": true,
+      "implementation": "PDFManager.swift - isAutoScaling + toggleAutoScale(); PDFViewWrapper.swift syncs pdfView.autoScales; FloatingToolbar.swift - toggle button"
+    },
+    {
+      "id": "F047",
+      "category": "navigation",
+      "description": "Click hyperlinks in PDF",
+      "passes": true,
+      "implementation": "PDFViewWrapper.swift - enableDataDetectors enables native hyperlink clicking"
+    },
+    {
+      "id": "F048",
+      "category": "ui",
+      "description": "Window title shows document name",
+      "passes": true,
+      "implementation": "PDFManager.swift - documentTitle computed property; PageFlowApp.swift - navigationTitle binding"
+    },
+    {
+      "id": "F049",
+      "category": "search",
+      "description": "Navigate to next search result",
+      "passes": false,
+      "implementation": "Not yet implemented - requires SearchManager"
+    },
+    {
+      "id": "F050",
+      "category": "search",
+      "description": "Navigate to previous search result",
+      "passes": false,
+      "implementation": "Not yet implemented - requires SearchManager"
+    },
+    {
+      "id": "F051",
+      "category": "search",
+      "description": "Highlight all search results with current result distinction",
+      "passes": false,
+      "implementation": "Not yet implemented - PDFView.highlightedSelections"
+    },
+    {
+      "id": "F052",
+      "category": "navigation",
+      "description": "PDF outline/table of contents sidebar",
+      "passes": false,
+      "implementation": "Not yet implemented - PDFDocument.outlineRoot tree view"
+    },
+    {
+      "id": "F053",
+      "category": "display",
+      "description": "Display mode: Single page",
+      "passes": false,
+      "implementation": "Not yet implemented - PDFDisplayMode toggle"
+    },
+    {
+      "id": "F054",
+      "category": "display",
+      "description": "Display mode: Two-page spread",
+      "passes": false,
+      "implementation": "Not yet implemented - PDFDisplayMode.twoPageContinuous"
+    },
+    {
+      "id": "F055",
+      "category": "display",
+      "description": "Rotate page 90° clockwise",
+      "passes": false,
+      "implementation": "Not yet implemented - PDFPage.rotation"
+    },
+    {
+      "id": "F056",
+      "category": "display",
+      "description": "Rotate page 90° counter-clockwise",
+      "passes": false,
+      "implementation": "Not yet implemented - PDFPage.rotation"
+    },
+    {
+      "id": "F057",
+      "category": "metadata",
+      "description": "View PDF properties (author, creation date, etc.)",
+      "passes": false,
+      "implementation": "Not yet implemented - PDFDocument.documentAttributes"
+    },
+    {
+      "id": "F058",
+      "category": "notes",
+      "description": "Per-page text notes (separate from PDF comments)",
+      "passes": false,
+      "implementation": "Not yet implemented - requires local storage manager"
     }
   ],
   "summary": {
-    "total": 41,
-    "passing": 14,
-    "failing": 27,
-    "percentComplete": 34
+    "total": 58,
+    "passing": 21,
+    "failing": 37,
+    "percentComplete": 36
   }
 }

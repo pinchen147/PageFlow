@@ -24,6 +24,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.minScaleFactor = DesignTokens.pdfMinScale
         pdfView.maxScaleFactor = DesignTokens.pdfMaxScale
         pdfView.scaleFactor = pdfManager.scaleFactor
+        pdfView.enableDataDetectors = true
         pdfView.delegate = context.coordinator
 
         NotificationCenter.default.addObserver(
@@ -50,7 +51,11 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.go(to: currentPage)
         }
 
-        if pdfView.scaleFactor != pdfManager.scaleFactor {
+        if pdfView.autoScales != pdfManager.isAutoScaling {
+            pdfView.autoScales = pdfManager.isAutoScaling
+        }
+
+        if !pdfManager.isAutoScaling && pdfView.scaleFactor != pdfManager.scaleFactor {
             pdfView.scaleFactor = pdfManager.scaleFactor
         }
     }

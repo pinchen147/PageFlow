@@ -10,7 +10,7 @@ import PDFKit
 import UniformTypeIdentifiers
 
 struct MainView: View {
-    @State private var pdfManager = PDFManager()
+    @Bindable var pdfManager: PDFManager
     @State private var showingFileImporter = false
     @State private var showingGoToPage = false
     @State private var goToPageInput = ""
@@ -241,5 +241,5 @@ struct MainView: View {
 }
 
 #Preview {
-    MainView()
+    MainView(pdfManager: PDFManager())
 }
