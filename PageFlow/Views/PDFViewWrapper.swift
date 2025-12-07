@@ -15,10 +15,13 @@ struct PDFViewWrapper: NSViewRepresentable {
         let pdfView = PDFView()
 
         // Configure PDFView
+        pdfView.wantsLayer = true
+        pdfView.layer?.isOpaque = true
+        pdfView.layer?.backgroundColor = NSColor.black.cgColor
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = NSColor.windowBackgroundColor
+        pdfView.backgroundColor = NSColor.black
 
         // Set delegate
         pdfView.delegate = context.coordinator

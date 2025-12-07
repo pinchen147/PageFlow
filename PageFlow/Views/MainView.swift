@@ -14,6 +14,7 @@ struct MainView: View {
     @State private var showingFileImporter = false
     @State private var showingGoToPage = false
     @State private var goToPageInput = ""
+    @State private var isDragHovering = false
 
     var body: some View {
         ZStack {
@@ -34,6 +35,13 @@ struct MainView: View {
             FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter)
                 .padding(DesignTokens.floatingToolbarPadding)
         }
+        .overlay(alignment: .center) {
+            if isDragHovering {
+                dropTargetOverlay
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [.pdf],
@@ -44,12 +52,13 @@ struct MainView: View {
         .sheet(isPresented: $showingGoToPage) {
             goToPageDialog
         }
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+        .onDrop(of: [.fileURL], isTargeted: $isDragHovering) { providers in
             handleDrop(providers: providers)
         }
         .onOpenURL { url in
             handleOpenURL(url)
         }
+        .animation(.easeInOut(duration: 0.15), value: isDragHovering)
     }
 
     // MARK: - Empty State
@@ -191,6 +200,31 @@ struct MainView: View {
         pdfManager.goToPage(pageNumber - 1)
         showingGoToPage = false
         goToPageInput = ""
+    }
+
+    private var dropTargetOverlay: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DesignTokens.spacingMD)
+                .fill(.black.opacity(0.25))
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesignTokens.spacingMD)
+                        .stroke(style: StrokeStyle(lineWidth: 2, dash: [8]))
+                        .foregroundStyle(.white.opacity(0.65))
+                )
+
+            VStack(spacing: DesignTokens.spacingSM) {
+                Image(systemName: "arrow.down.doc")
+                    .font(.system(size: 28, weight: .semibold))
+                Text("Drop PDF to Open")
+                    .font(.headline)
+                Text("Drag a PDF anywhere in the window")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(DesignTokens.spacingLG)
+        }
+        .padding(DesignTokens.spacingLG)
+        .shadow(color: .black.opacity(0.2), radius: 16, y: 6)
     }
 }
 
