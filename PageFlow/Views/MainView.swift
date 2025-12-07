@@ -28,8 +28,16 @@ struct MainView: View {
             }
         }
         .overlay(alignment: .topLeading) {
+            WindowDragArea()
+                .frame(
+                    width: DesignTokens.trafficLightHotspotWidth,
+                    height: DesignTokens.trafficLightHotspotHeight
+                )
+                .padding(DesignTokens.spacingXS)
+        }
+        .overlay(alignment: .topLeading) {
             TrafficLightsView()
-                .padding(DesignTokens.floatingToolbarPadding)
+                .padding(DesignTokens.spacingXS)
         }
         .overlay(alignment: .topTrailing) {
             FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter)
@@ -59,6 +67,8 @@ struct MainView: View {
             handleOpenURL(url)
         }
         .animation(.easeInOut(duration: 0.15), value: isDragHovering)
+        .background(WindowConfigurator())
+        .ignoresSafeArea()
     }
 
     // MARK: - Empty State

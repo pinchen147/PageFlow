@@ -17,6 +17,12 @@ struct DesignTokens {
     static let secondaryText = NSColor.secondaryLabelColor
     static let accent = NSColor.controlAccentColor
     static let separator = NSColor.separatorColor
+    static let viewerBackground = NSColor(
+        red: 27.0 / 255.0,
+        green: 27.0 / 255.0,
+        blue: 27.0 / 255.0,
+        alpha: 1.0
+    )
 
     // MARK: - Annotation Colors
 
@@ -57,6 +63,8 @@ struct DesignTokens {
     static let trafficLightSize: CGFloat = 12
     static let trafficLightSpacing: CGFloat = 8
     static let trafficLightContainerPadding: CGFloat = 8
+    static let trafficLightHotspotWidth: CGFloat = 180
+    static let trafficLightHotspotHeight: CGFloat = 40
 
     // MARK: - Animation
 

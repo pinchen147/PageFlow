@@ -17,11 +17,11 @@ struct PDFViewWrapper: NSViewRepresentable {
         // Configure PDFView
         pdfView.wantsLayer = true
         pdfView.layer?.isOpaque = true
-        pdfView.layer?.backgroundColor = NSColor.black.cgColor
+        pdfView.layer?.backgroundColor = DesignTokens.viewerBackground.cgColor
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = NSColor.black
+        pdfView.backgroundColor = DesignTokens.viewerBackground
 
         // Set delegate
         pdfView.delegate = context.coordinator

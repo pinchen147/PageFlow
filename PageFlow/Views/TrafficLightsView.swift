@@ -11,16 +11,21 @@ struct TrafficLightsView: View {
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: DesignTokens.trafficLightSpacing) {
-            trafficLight(color: .red, action: closeWindow)
-            trafficLight(color: .yellow, action: minimizeWindow)
-            trafficLight(color: .green, action: maximizeWindow)
+        ZStack(alignment: .topLeading) {
+            HStack(spacing: DesignTokens.trafficLightSpacing) {
+                trafficLight(color: .red, action: closeWindow)
+                trafficLight(color: .yellow, action: minimizeWindow)
+                trafficLight(color: .green, action: maximizeWindow)
+            }
+            .padding(DesignTokens.trafficLightContainerPadding)
+            .background(.ultraThinMaterial)
+            .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
+            .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+            .opacity(isHovering ? 1 : 0)
         }
-        .padding(DesignTokens.trafficLightContainerPadding)
-        .background(.ultraThinMaterial)
-        .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
-        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
-        .opacity(isHovering ? 1 : 0)
+        .frame(height: DesignTokens.trafficLightHotspotHeight, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .contentShape(Rectangle())
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
