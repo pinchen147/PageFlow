@@ -55,7 +55,12 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.autoScales = pdfManager.isAutoScaling
         }
 
-        if pdfManager.scaleNeedsUpdate {
+        if pdfManager.fitOnceRequested {
+            let fitScale = pdfView.scaleFactorForSizeToFit
+            pdfView.scaleFactor = fitScale
+            pdfManager.scaleFactor = fitScale
+            pdfManager.fitOnceRequested = false
+        } else if pdfManager.scaleNeedsUpdate {
             pdfView.scaleFactor = pdfManager.scaleFactor
             pdfManager.scaleNeedsUpdate = false
         }

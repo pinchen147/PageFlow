@@ -11,6 +11,8 @@ struct FloatingToolbar: View {
     @Bindable var pdfManager: PDFManager
     @Binding var showingFileImporter: Bool
     @State private var isExpanded = true
+    @State private var lastFitTapTime: Date?
+    private let doubleTapWindow: TimeInterval = 0.3
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -54,7 +56,7 @@ struct FloatingToolbar: View {
             toolbarButton(icon: "plus.magnifyingglass", action: { pdfManager.zoomIn() }, disabled: !pdfManager.hasDocument)
             toolbarButton(
                 icon: pdfManager.isAutoScaling ? "arrow.down.forward.and.arrow.up.backward.circle.fill" : "arrow.down.forward.and.arrow.up.backward.circle",
-                action: { pdfManager.toggleAutoScale() },
+                action: handleFitButtonTap,
                 disabled: !pdfManager.hasDocument
             )
             Divider().frame(height: 20)
@@ -102,5 +104,18 @@ struct FloatingToolbar: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.3 : 1.0)
+    }
+
+    private func handleFitButtonTap() {
+        let now = Date()
+
+        if let lastTap = lastFitTapTime,
+           now.timeIntervalSince(lastTap) < doubleTapWindow {
+            pdfManager.toggleAutoScale()
+            lastFitTapTime = nil
+        } else {
+            pdfManager.requestFitOnce()
+            lastFitTapTime = now
+        }
     }
 }

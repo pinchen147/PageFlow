@@ -19,6 +19,7 @@ class PDFManager {
     var scaleFactor: CGFloat = 1.0
     var isAutoScaling: Bool = false
     var scaleNeedsUpdate: Bool = false
+    var fitOnceRequested: Bool = false
     var documentURL: URL?
     private var isAccessingSecurityScopedResource = false
 
@@ -171,6 +172,11 @@ class PDFManager {
 
     func toggleAutoScale() {
         isAutoScaling.toggle()
+    }
+
+    func requestFitOnce() {
+        isAutoScaling = false
+        fitOnceRequested = true
     }
 
     // MARK: - Save
