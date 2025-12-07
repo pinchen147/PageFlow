@@ -26,6 +26,14 @@ struct MainView: View {
                 emptyState
             }
         }
+        .overlay(alignment: .topLeading) {
+            TrafficLightsView()
+                .padding(DesignTokens.floatingToolbarPadding)
+        }
+        .overlay(alignment: .topTrailing) {
+            FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter)
+                .padding(DesignTokens.floatingToolbarPadding)
+        }
         .fileImporter(
             isPresented: $showingFileImporter,
             allowedContentTypes: [.pdf],
@@ -41,11 +49,6 @@ struct MainView: View {
         }
         .onOpenURL { url in
             handleOpenURL(url)
-        }
-        .toolbar {
-            ToolbarItemGroup {
-                toolbarContent
-            }
         }
     }
 
@@ -91,59 +94,19 @@ struct MainView: View {
         }
         .padding(DesignTokens.spacingSM)
         .background(.ultraThinMaterial)
-        .cornerRadius(DesignTokens.spacingSM)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.spacingMD)
+                .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
+                .allowsHitTesting(false)
+        )
+        .cornerRadius(DesignTokens.spacingMD)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.spacingMD)
+                .strokeBorder(.white.opacity(0.22))
+                .allowsHitTesting(false)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
         .padding(DesignTokens.spacingMD)
-    }
-
-    // MARK: - Toolbar
-
-    private var toolbarContent: some View {
-        Group {
-            Button {
-                showingFileImporter = true
-            } label: {
-                Label("Open", systemImage: "doc")
-            }
-
-            Divider()
-
-            Button {
-                pdfManager.zoomOut()
-            } label: {
-                Image(systemName: "minus.magnifyingglass")
-            }
-            .disabled(!pdfManager.hasDocument)
-
-            Button {
-                pdfManager.resetZoom()
-            } label: {
-                Image(systemName: "1.magnifyingglass")
-            }
-            .disabled(!pdfManager.hasDocument)
-
-            Button {
-                pdfManager.zoomIn()
-            } label: {
-                Image(systemName: "plus.magnifyingglass")
-            }
-            .disabled(!pdfManager.hasDocument)
-
-            Divider()
-
-            Button {
-                pdfManager.previousPage()
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-            .disabled(!pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
-
-            Button {
-                pdfManager.nextPage()
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-            .disabled(!pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
-        }
     }
 
     // MARK: - Go To Page Dialog

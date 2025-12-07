@@ -12,7 +12,9 @@ struct PageFlowApp: App {
     var body: some Scene {
         WindowGroup {
             MainView()
+                .navigationTitle("")
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }

@@ -42,6 +42,22 @@ struct DesignTokens {
     static let dialogWidth: CGFloat = 300
     static let textFieldWidth: CGFloat = 200
 
+    // MARK: - Floating Toolbar
+
+    static let floatingToolbarPadding: CGFloat = 16
+    static let floatingToolbarCornerRadius: CGFloat = 22
+    static let floatingToolbarHeight: CGFloat = 44
+    static let collapsedToolbarSize: CGFloat = 52
+    static let toolbarButtonSize: CGFloat = 40
+    static let toolbarIconSize: CGFloat = 14
+    static let floatingToolbarBase = Color(red: 0.196, green: 0.196, blue: 0.196)
+
+    // MARK: - Traffic Lights
+
+    static let trafficLightSize: CGFloat = 12
+    static let trafficLightSpacing: CGFloat = 8
+    static let trafficLightContainerPadding: CGFloat = 8
+
     // MARK: - Animation
 
     static let animationFast: Double = 0.15
