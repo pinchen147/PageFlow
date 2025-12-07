@@ -46,6 +46,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 pdfView.go(to: currentPage)
             }
 
+            pdfView.autoScales = pdfManager.isAutoScaling
             applyInitialScale(to: pdfView)
         } else if let currentPage = pdfManager.currentPage,
                   pdfView.currentPage !== currentPage {
@@ -104,6 +105,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         let fitScale = pdfView.scaleFactorForSizeToFit
         pdfView.scaleFactor = fitScale
         pdfManager.scaleFactor = fitScale
+        pdfManager.fitOnceRequested = false
+        pdfManager.scaleNeedsUpdate = false
     }
 
     // MARK: - Coordinator

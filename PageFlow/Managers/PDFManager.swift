@@ -66,6 +66,9 @@ class PDFManager {
         documentURL = url
         currentPageIndex = 0
         currentPage = pdfDocument.page(at: 0)
+        isAutoScaling = true
+        fitOnceRequested = true
+        scaleNeedsUpdate = false
 
         return true
     }
