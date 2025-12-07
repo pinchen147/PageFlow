@@ -102,14 +102,8 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     private func applyInitialScale(to pdfView: StablePDFView) {
         let fitScale = pdfView.scaleFactorForSizeToFit
-        let isDefaultScale = pdfManager.scaleFactor == DesignTokens.pdfDefaultScale
-        let targetScale = isDefaultScale ? fitScale : pdfManager.scaleFactor
-
-        pdfView.scaleFactor = targetScale
-
-        if pdfManager.scaleFactor != targetScale {
-            pdfManager.scaleFactor = targetScale
-        }
+        pdfView.scaleFactor = fitScale
+        pdfManager.scaleFactor = fitScale
     }
 
     // MARK: - Coordinator
