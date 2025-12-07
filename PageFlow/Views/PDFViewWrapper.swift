@@ -100,6 +100,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             let pageIndex = document.index(for: currentPage)
             pdfManager.currentPageIndex = pageIndex
             pdfManager.currentPage = currentPage
+            pdfManager.scaleFactor = pdfView.scaleFactor
         }
     }
 }
