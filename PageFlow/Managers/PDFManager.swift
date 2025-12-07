@@ -18,6 +18,7 @@ class PDFManager {
     var currentPageIndex: Int = 0
     var scaleFactor: CGFloat = 1.0
     var isAutoScaling: Bool = false
+    var scaleNeedsUpdate: Bool = false
     var documentURL: URL?
     private var isAccessingSecurityScopedResource = false
 
@@ -147,21 +148,25 @@ class PDFManager {
     func zoomIn() {
         isAutoScaling = false
         scaleFactor = min(scaleFactor + zoomStep, DesignTokens.pdfMaxScale)
+        scaleNeedsUpdate = true
     }
 
     func zoomOut() {
         isAutoScaling = false
         scaleFactor = max(scaleFactor - zoomStep, DesignTokens.pdfMinScale)
+        scaleNeedsUpdate = true
     }
 
     func resetZoom() {
         isAutoScaling = false
         scaleFactor = DesignTokens.pdfDefaultScale
+        scaleNeedsUpdate = true
     }
 
     func setZoom(_ scale: CGFloat) {
         isAutoScaling = false
         scaleFactor = max(DesignTokens.pdfMinScale, min(scale, DesignTokens.pdfMaxScale))
+        scaleNeedsUpdate = true
     }
 
     func toggleAutoScale() {
