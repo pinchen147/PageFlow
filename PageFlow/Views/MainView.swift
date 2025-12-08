@@ -47,11 +47,11 @@ struct MainView: View {
                 .padding(.top, DesignTokens.spacingXS)
                 .padding(.trailing, DesignTokens.floatingToolbarPadding)
         }
-        .overlay(alignment: .top) {
+        .overlay(alignment: .bottom) {
             if showingSearch {
                 SearchBar(searchManager: searchManager, pdfManager: pdfManager, isVisible: $showingSearch)
-                    .padding(.top, 60)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.bottom, DesignTokens.spacingXS)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .overlay(alignment: .center) {
