@@ -10,6 +10,7 @@ import SwiftUI
 struct FloatingToolbar: View {
     @Bindable var pdfManager: PDFManager
     @Binding var showingFileImporter: Bool
+    @Binding var isTopBarHovered: Bool
     @State private var isExpanded = true
     @State private var lastFitTapTime: Date?
     private let doubleTapWindow: TimeInterval = 0.3
@@ -23,22 +24,30 @@ struct FloatingToolbar: View {
 
             collapsedButton
                 .scaleEffect(x: isExpanded ? 0.01 : 1, y: 1, anchor: .trailing)
-                .opacity(isExpanded ? 0 : 1)
+                .opacity(collapsedButtonOpacity)
                 .allowsHitTesting(!isExpanded)
         }
         .frame(height: DesignTokens.collapsedToolbarSize)
         .animation(.easeInOut(duration: 0.2), value: isExpanded)
+        .animation(.easeInOut(duration: DesignTokens.animationFast), value: isTopBarHovered)
+    }
+
+    private var collapsedButtonOpacity: Double {
+        if isExpanded {
+            return 0
+        }
+        return isTopBarHovered ? 1 : 0
     }
 
     private var expandedContainer: some View {
         expandedToolbar
             .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius))
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
                     .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
                     .allowsHitTesting(false)
             )
-            .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
                     .strokeBorder(.white.opacity(0.22))
@@ -48,9 +57,9 @@ struct FloatingToolbar: View {
     }
 
     private var expandedToolbar: some View {
-        HStack(spacing: DesignTokens.spacingSM) {
+        HStack(spacing: DesignTokens.spacingXS) {
             toolbarButton(icon: "doc", action: { showingFileImporter = true })
-            Divider().frame(height: 20)
+            Divider().frame(height: 16)
             toolbarButton(icon: "minus.magnifyingglass", action: { pdfManager.zoomOut() }, disabled: !pdfManager.hasDocument)
             toolbarButton(icon: "1.magnifyingglass", action: { pdfManager.resetZoom() }, disabled: !pdfManager.hasDocument)
             toolbarButton(icon: "plus.magnifyingglass", action: { pdfManager.zoomIn() }, disabled: !pdfManager.hasDocument)
@@ -59,10 +68,10 @@ struct FloatingToolbar: View {
                 action: handleFitButtonTap,
                 disabled: !pdfManager.hasDocument
             )
-            Divider().frame(height: 20)
+            Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
             toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
-            Divider().frame(height: 20)
+            Divider().frame(height: 16)
             toolbarButton(icon: "xmark", action: { isExpanded.toggle() })
         }
         .padding(.horizontal, DesignTokens.spacingSM)
@@ -74,7 +83,7 @@ struct FloatingToolbar: View {
             isExpanded.toggle()
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .frame(width: DesignTokens.collapsedToolbarSize, height: DesignTokens.collapsedToolbarSize)
                 .contentShape(Circle())
         }

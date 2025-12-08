@@ -18,11 +18,13 @@ struct MainView: View {
     @Binding var showingSearch: Bool
     @State private var goToPageInput = ""
     @State private var isDragHovering = false
+    @State private var isTopBarHovered = false
 
     var body: some View {
         ZStack {
             if pdfManager.hasDocument {
                 PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
+                    .ignoresSafeArea(.all, edges: .all)
                     .overlay(alignment: .bottomTrailing) {
                         pageIndicator
                     }
@@ -30,20 +32,38 @@ struct MainView: View {
                 emptyState
             }
         }
-        .overlay(alignment: .topLeading) {
-            WindowDragArea()
-                .frame(
-                    width: DesignTokens.trafficLightHotspotWidth,
-                    height: DesignTokens.trafficLightHotspotHeight
-                )
-                .padding(DesignTokens.spacingXS)
+        .ignoresSafeArea(.all, edges: .all)
+        .overlay(alignment: .top) {
+            HStack {
+                WindowDragArea()
+                    .frame(
+                        width: DesignTokens.trafficLightHotspotWidth,
+                        height: DesignTokens.trafficLightHotspotHeight
+                    )
+                Spacer()
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: DesignTokens.trafficLightHotspotHeight)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                isTopBarHovered = hovering
+            }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    isTopBarHovered = true
+                case .ended:
+                    isTopBarHovered = false
+                }
+            }
+            .allowsHitTesting(true)
         }
         .overlay(alignment: .topLeading) {
-            TrafficLightsView()
+            TrafficLightsView(isHovering: $isTopBarHovered)
                 .padding(DesignTokens.spacingXS)
         }
         .overlay(alignment: .topTrailing) {
-            FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter)
+            FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter, isTopBarHovered: $isTopBarHovered)
                 .padding(.top, DesignTokens.spacingXS)
                 .padding(.trailing, DesignTokens.floatingToolbarPadding)
         }
@@ -79,8 +99,9 @@ struct MainView: View {
         }
         .animation(.easeInOut(duration: 0.15), value: isDragHovering)
         .animation(.easeInOut(duration: 0.2), value: showingSearch)
+        .toolbar(.hidden)
         .background(WindowConfigurator())
-        .ignoresSafeArea()
+        .ignoresSafeArea(.all, edges: .all)
     }
 
     // MARK: - Empty State

@@ -31,6 +31,10 @@ struct WindowConfigurator: NSViewRepresentable {
         window.isMovableByWindowBackground = false
         window.styleMask.insert(.fullSizeContentView)
 
+        // Set window background to match PDF viewer
+        window.backgroundColor = DesignTokens.viewerBackground
+        window.hasShadow = true
+
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true

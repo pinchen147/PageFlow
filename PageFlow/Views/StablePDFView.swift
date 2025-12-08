@@ -6,10 +6,22 @@
 //
 
 import PDFKit
+import AppKit
 
 final class StablePDFView: PDFView {
     private var lastWidth: CGFloat = 0
     private let widthChangeTolerance: CGFloat = 0.5
+
+    override func layout() {
+        super.layout()
+
+        // Remove content insets so scroll bar extends to top edge
+        if let scrollView = documentScrollView {
+            scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+            scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+            scrollView.automaticallyAdjustsContentInsets = false
+        }
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         let savedY = documentScrollView?.contentView.bounds.origin.y

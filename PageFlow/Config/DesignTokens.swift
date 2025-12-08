@@ -37,6 +37,10 @@ struct DesignTokens {
     static let searchCurrentResult = NSColor(red: 0.6, green: 0, blue: 0, alpha: 0.6)
     static let searchOtherResults = NSColor(red: 0, green: 0, blue: 0.6, alpha: 0.6)
 
+    // MARK: - Text Selection
+
+    static let textSelectionColor = NSColor(red: 0.494, green: 0.769, blue: 0.878, alpha: 0.3)
+
     // MARK: - Spacing
 
     static let spacingXS: CGFloat = 4
@@ -56,11 +60,11 @@ struct DesignTokens {
     // MARK: - Floating Toolbar
 
     static let floatingToolbarPadding: CGFloat = 16
-    static let floatingToolbarCornerRadius: CGFloat = 22
-    static let floatingToolbarHeight: CGFloat = 44
-    static let collapsedToolbarSize: CGFloat = 52
-    static let toolbarButtonSize: CGFloat = 40
-    static let toolbarIconSize: CGFloat = 14
+    static let floatingToolbarCornerRadius: CGFloat = 14
+    static let floatingToolbarHeight: CGFloat = 28
+    static let collapsedToolbarSize: CGFloat = 28
+    static let toolbarButtonSize: CGFloat = 20
+    static let toolbarIconSize: CGFloat = 10
     static let floatingToolbarBase = Color(red: 0.196, green: 0.196, blue: 0.196)
 
     // MARK: - Traffic Lights

@@ -8,46 +8,30 @@
 import SwiftUI
 
 struct TrafficLightsView: View {
-    @State private var isHovering = false
+    @Binding var isHovering: Bool
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            HStack(spacing: DesignTokens.trafficLightSpacing) {
-                trafficLight(color: .red, action: closeWindow)
-                trafficLight(color: .yellow, action: minimizeWindow)
-                trafficLight(color: .green, action: maximizeWindow)
-            }
-            .padding(DesignTokens.trafficLightContainerPadding)
-            .background(.ultraThinMaterial)
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                    .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
-                    .allowsHitTesting(false)
-            )
-            .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                    .strokeBorder(.white.opacity(0.22))
-                    .allowsHitTesting(false)
-            )
-            .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
-            .opacity(isHovering ? 1 : 0)
+        HStack(spacing: DesignTokens.trafficLightSpacing) {
+            trafficLight(color: .red, action: closeWindow)
+            trafficLight(color: .yellow, action: minimizeWindow)
+            trafficLight(color: .green, action: maximizeWindow)
         }
-        .frame(height: DesignTokens.trafficLightHotspotHeight, alignment: .topLeading)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
-        .contentShape(Rectangle())
+        .padding(DesignTokens.trafficLightContainerPadding)
+        .background(.ultraThinMaterial)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
+                .allowsHitTesting(false)
+        )
+        .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                .strokeBorder(.white.opacity(0.22))
+                .allowsHitTesting(false)
+        )
+        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+        .opacity(isHovering ? 1 : 0)
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-        .onContinuousHover { phase in
-            switch phase {
-            case .active:
-                isHovering = true
-            case .ended:
-                isHovering = false
-            }
-        }
     }
 
     private func trafficLight(color: Color, action: @escaping () -> Void) -> some View {

@@ -16,7 +16,6 @@ struct PageFlowApp: App {
     var body: some Scene {
         WindowGroup {
             MainView(pdfManager: pdfManager, recentFilesManager: recentFilesManager, showingSearch: $showingSearch)
-                .navigationTitle(pdfManager.documentTitle)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
