@@ -35,6 +35,9 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
 
+        // Setup scroll event monitor for Ctrl+Scroll zoom
+        context.coordinator.setupScrollMonitor(for: pdfView)
+
         return pdfView
     }
 
@@ -97,6 +100,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             name: .PDFViewPageChanged,
             object: pdfView
         )
+        coordinator.removeScrollMonitor()
     }
 
     // MARK: - Private
@@ -113,9 +117,107 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     class Coordinator: NSObject, PDFViewDelegate {
         let pdfManager: PDFManager
+        private var scrollMonitor: Any?
+        private weak var pdfView: StablePDFView?
 
         init(pdfManager: PDFManager) {
             self.pdfManager = pdfManager
+        }
+
+        func setupScrollMonitor(for pdfView: StablePDFView) {
+            self.pdfView = pdfView
+
+            scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self, weak pdfView] event in
+                guard let self = self,
+                      let pdfView = pdfView,
+                      event.modifierFlags.contains(.control) else {
+                    return event
+                }
+
+                // Check if mouse is over the PDF view
+                let mouseLocation = NSEvent.mouseLocation
+                guard let window = pdfView.window else { return event }
+
+                let windowPoint = window.convertPoint(fromScreen: mouseLocation)
+                let pointInView = pdfView.convert(windowPoint, from: nil)
+
+                guard pdfView.bounds.contains(pointInView) else {
+                    return event
+                }
+
+                // Disable auto-scaling when manually zooming
+                pdfView.autoScales = false
+                self.pdfManager.isAutoScaling = false
+
+                // Calculate new scale
+                let delta = event.scrollingDeltaY
+                guard delta != 0 else { return nil }
+
+                let oldScale = pdfView.scaleFactor
+                let zoomFactor: CGFloat = 1.1  // 10% per scroll
+                var newScale: CGFloat
+
+                if delta > 0 {
+                    // Zoom in
+                    newScale = oldScale * zoomFactor
+                } else {
+                    // Zoom out
+                    newScale = oldScale / zoomFactor
+                }
+
+                // Clamp to min/max
+                newScale = max(DesignTokens.pdfMinScale, min(newScale, DesignTokens.pdfMaxScale))
+
+                guard newScale != oldScale else { return nil }
+
+                // Find the page at cursor location
+                guard let page = pdfView.page(for: pointInView, nearest: true) else {
+                    pdfView.scaleFactor = newScale
+                    self.pdfManager.scaleFactor = newScale
+                    return nil
+                }
+
+                // Convert view point to page coordinates
+                let pointInPage = pdfView.convert(pointInView, to: page)
+
+                // Apply the new scale
+                pdfView.scaleFactor = newScale
+
+                // Convert the page point back to view coordinates (now scaled)
+                let pointInViewAfterZoom = pdfView.convert(pointInPage, from: page)
+
+                // Calculate the offset
+                let offsetX = pointInViewAfterZoom.x - pointInView.x
+                let offsetY = pointInViewAfterZoom.y - pointInView.y
+
+                // Get current scroll position
+                guard let scrollView = pdfView.documentScrollView else {
+                    self.pdfManager.scaleFactor = newScale
+                    return nil
+                }
+
+                let visibleRect = scrollView.documentVisibleRect
+
+                // Adjust scroll to keep point under cursor
+                let newOrigin = NSPoint(
+                    x: visibleRect.origin.x + offsetX,
+                    y: visibleRect.origin.y + offsetY
+                )
+
+                scrollView.contentView.setBoundsOrigin(newOrigin)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+
+                self.pdfManager.scaleFactor = newScale
+
+                return nil
+            }
+        }
+
+        func removeScrollMonitor() {
+            if let monitor = scrollMonitor {
+                NSEvent.removeMonitor(monitor)
+                scrollMonitor = nil
+            }
         }
 
         @objc func pageChanged(_ notification: Notification) {

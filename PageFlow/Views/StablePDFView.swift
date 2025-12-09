@@ -54,7 +54,7 @@ final class StablePDFView: PDFView {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    private var documentScrollView: NSScrollView? {
+    var documentScrollView: NSScrollView? {
         subviews.first { $0 is NSScrollView } as? NSScrollView
     }
 }
