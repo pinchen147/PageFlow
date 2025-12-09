@@ -85,4 +85,15 @@ struct DesignTokens {
     static let pdfMinScale: CGFloat = 0.25
     static let pdfMaxScale: CGFloat = 4.0
     static let pdfDefaultScale: CGFloat = 1.0
+
+    // MARK: - Tabs
+
+    static let tabBarHeight: CGFloat = 32
+    static let tabHeight: CGFloat = 26
+    static let tabMaxWidth: CGFloat = 160
+    static let tabMinWidth: CGFloat = 80
+    static let tabSpacing: CGFloat = 2
+    static let tabCornerRadius: CGFloat = 6
+    static let tabBarLeftMargin: CGFloat = 80
+    static let tabCloseButtonSize: CGFloat = 14
 }

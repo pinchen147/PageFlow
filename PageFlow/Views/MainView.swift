@@ -11,14 +11,17 @@ import UniformTypeIdentifiers
 
 struct MainView: View {
     @Bindable var pdfManager: PDFManager
+    var searchManager: SearchManager
     var recentFilesManager: RecentFilesManager
-    @State private var searchManager = SearchManager()
+    @Binding var showingSearch: Bool
+    @Binding var isTopBarHovered: Bool
+    @Bindable var tabManager: TabManager
+    var onOpenFile: (URL, Bool) -> Void
+
     @State private var showingFileImporter = false
     @State private var showingGoToPage = false
-    @Binding var showingSearch: Bool
     @State private var goToPageInput = ""
     @State private var isDragHovering = false
-    @State private var isTopBarHovered = false
 
     var body: some View {
         ZStack {
@@ -34,13 +37,19 @@ struct MainView: View {
         }
         .ignoresSafeArea(.all, edges: .all)
         .overlay(alignment: .top) {
-            HStack {
-                WindowDragArea()
-                    .frame(
-                        width: DesignTokens.trafficLightHotspotWidth,
-                        height: DesignTokens.trafficLightHotspotHeight
-                    )
-                Spacer()
+            HStack(spacing: 0) {
+                // Traffic lights
+                TrafficLightsView(isHovering: $isTopBarHovered)
+                    .padding(DesignTokens.spacingXS)
+
+                // Tab bar - fills remaining space between traffic lights and toolbar
+                TabBarView(tabManager: tabManager, isHovering: $isTopBarHovered)
+                    .frame(maxWidth: .infinity)
+
+                // Floating toolbar
+                FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter, isTopBarHovered: $isTopBarHovered)
+                    .padding(.top, DesignTokens.spacingXS)
+                    .padding(.trailing, DesignTokens.floatingToolbarPadding)
             }
             .frame(maxWidth: .infinity)
             .frame(height: DesignTokens.trafficLightHotspotHeight)
@@ -57,15 +66,6 @@ struct MainView: View {
                 }
             }
             .allowsHitTesting(true)
-        }
-        .overlay(alignment: .topLeading) {
-            TrafficLightsView(isHovering: $isTopBarHovered)
-                .padding(DesignTokens.spacingXS)
-        }
-        .overlay(alignment: .topTrailing) {
-            FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter, isTopBarHovered: $isTopBarHovered)
-                .padding(.top, DesignTokens.spacingXS)
-                .padding(.trailing, DesignTokens.floatingToolbarPadding)
         }
         .overlay(alignment: .bottom) {
             if showingSearch {
@@ -201,12 +201,9 @@ struct MainView: View {
             return
         }
 
-        // File importer returns security-scoped URLs - need explicit permission
-        // Also ensure main thread for @Observable state updates
-        DispatchQueue.main.async { [pdfManager, recentFilesManager] in
-            if pdfManager.loadDocument(from: url, isSecurityScoped: true) {
-                recentFilesManager.addRecentFile(url)
-            }
+        // File importer returns security-scoped URLs - use callback to open in new tab
+        DispatchQueue.main.async {
+            onOpenFile(url, true)
         }
     }
 
@@ -215,17 +212,15 @@ struct MainView: View {
             return false
         }
 
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [recentFilesManager] item, error in
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             guard let data = item as? Data,
                   let url = URL(dataRepresentation: data, relativeTo: nil),
                   url.pathExtension.lowercased() == "pdf" else {
                 return
             }
 
-            DispatchQueue.main.async { [pdfManager] in
-                if pdfManager.loadDocument(from: url) {
-                    recentFilesManager.addRecentFile(url)
-                }
+            DispatchQueue.main.async {
+                onOpenFile(url, false)
             }
         }
 
@@ -233,10 +228,8 @@ struct MainView: View {
     }
 
     private func handleOpenURL(_ url: URL) {
-        DispatchQueue.main.async { [pdfManager, recentFilesManager] in
-            if pdfManager.loadDocument(from: url, isSecurityScoped: true) {
-                recentFilesManager.addRecentFile(url)
-            }
+        DispatchQueue.main.async {
+            onOpenFile(url, true)
         }
     }
 
@@ -279,5 +272,13 @@ struct MainView: View {
 }
 
 #Preview {
-    MainView(pdfManager: PDFManager(), recentFilesManager: RecentFilesManager(), showingSearch: .constant(false))
+    MainView(
+        pdfManager: PDFManager(),
+        searchManager: SearchManager(),
+        recentFilesManager: RecentFilesManager(),
+        showingSearch: .constant(false),
+        isTopBarHovered: .constant(false),
+        tabManager: TabManager(),
+        onOpenFile: { _, _ in }
+    )
 }
