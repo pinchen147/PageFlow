@@ -97,6 +97,12 @@ struct PageFlowApp: App {
                 }
                 .keyboardShortcut("u", modifiers: [.command])
                 .disabled(tabManager.activePDFManager?.hasDocument != true)
+
+                Button("Highlight Selection") {
+                    tabManager.activeAnnotationManager?.highlightSelection()
+                }
+                .keyboardShortcut("y", modifiers: [.command])
+                .disabled(tabManager.activePDFManager?.hasDocument != true)
             }
 
             // Tab navigation commands

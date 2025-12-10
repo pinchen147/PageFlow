@@ -17,6 +17,7 @@ final class AnnotationManager {
 
     var selectedAnnotation: PDFAnnotation?
     var underlineColor: NSColor = DesignTokens.underlineColor
+    var highlightColor: NSColor = DesignTokens.highlightYellow
 
     private weak var pdfManager: PDFManager?
     private var selectionProvider: (() -> (PDFSelection?, PDFPage?))?
@@ -33,7 +34,30 @@ final class AnnotationManager {
 
     // MARK: - Actions
 
+    func highlightSelection(color: NSColor? = nil) {
+        addMarkup(
+            subtype: .highlight,
+            markupType: .highlight,
+            color: color ?? highlightColor,
+            actionName: "Add Highlight"
+        )
+    }
+
     func underlineSelection(color: NSColor? = nil) {
+        addMarkup(
+            subtype: .underline,
+            markupType: .underline,
+            color: color ?? underlineColor,
+            actionName: "Add Underline"
+        )
+    }
+
+    private func addMarkup(
+        subtype: PDFAnnotationSubtype,
+        markupType: PDFMarkupType,
+        color: NSColor,
+        actionName: String
+    ) {
         guard let (selectionOptional, pageOptional) = selectionProvider?(),
               let selectionCopy = selectionOptional?.copy() as? PDFSelection,
               let page = pageOptional else {
@@ -51,13 +75,13 @@ final class AnnotationManager {
             partial.union(rect)
         }
 
-        let annotation = PDFAnnotation(bounds: union, forType: PDFAnnotationSubtype.underline, withProperties: nil)
-        annotation.markupType = .underline
-        annotation.color = color ?? underlineColor
+        let annotation = PDFAnnotation(bounds: union, forType: subtype, withProperties: nil)
+        annotation.markupType = markupType
+        annotation.color = color
         annotation.quadrilateralPoints = buildQuadrilateralPoints(from: lineRects, relativeTo: union)
 
         page.addAnnotation(annotation)
-        registerUndoAdd(annotation, on: page)
+        registerUndoAdd(annotation, on: page, actionName: actionName)
 
         selectedAnnotation = annotation
         pdfManager?.isDirty = true
@@ -79,7 +103,11 @@ final class AnnotationManager {
         let previousColor = annotation.color
 
         annotation.color = color
-        underlineColor = color
+        if annotation.markupType == .underline {
+            underlineColor = color
+        } else if annotation.markupType == .highlight {
+            highlightColor = color
+        }
         pdfManager?.isDirty = true
 
         if let undoManager = NSApp.keyWindow?.undoManager {
@@ -112,13 +140,13 @@ final class AnnotationManager {
         return quadPoints
     }
 
-    private func registerUndoAdd(_ annotation: PDFAnnotation, on page: PDFPage) {
+    private func registerUndoAdd(_ annotation: PDFAnnotation, on page: PDFPage, actionName: String) {
         guard let undoManager = NSApp.keyWindow?.undoManager else { return }
 
         undoManager.registerUndo(withTarget: self) { target in
             target.remove(annotation, from: page, registerRedo: true)
         }
-        undoManager.setActionName("Add Underline")
+        undoManager.setActionName(actionName)
     }
 
     private func remove(_ annotation: PDFAnnotation, from page: PDFPage, registerRedo: Bool) {

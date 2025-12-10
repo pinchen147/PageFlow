@@ -63,16 +63,26 @@ struct FloatingToolbar: View {
             )
             toolbarButton(icon: "rotate.right", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.hasDocument)
             Divider().frame(height: 16)
-            toolbarButton(
-                icon: "underline",
+            paletteControl(
+                actionIcon: "underline",
                 action: { annotationManager.underlineSelection(color: annotationManager.underlineColor) },
+                options: underlinePalette,
+                selectedColor: annotationManager.underlineColor,
+                onSelect: { annotationManager.underlineColor = $0 },
                 disabled: !pdfManager.hasDocument
             )
-            underlineColorMenu
+            paletteControl(
+                actionIcon: "highlighter",
+                action: { annotationManager.highlightSelection(color: annotationManager.highlightColor) },
+                options: highlightPalette,
+                selectedColor: annotationManager.highlightColor,
+                onSelect: { annotationManager.highlightColor = $0 },
+                disabled: !pdfManager.hasDocument
+            )
             toolbarButton(
-                icon: "eraser",
-                action: { annotationManager.removeSelectedAnnotation() },
-                disabled: annotationManager.selectedAnnotation == nil
+                icon: "arrow.uturn.backward",
+                action: { NSApp.sendAction(#selector(UndoManager.undo), to: nil, from: nil) },
+                disabled: !(NSApp.keyWindow?.undoManager?.canUndo ?? false)
             )
             Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
@@ -82,19 +92,23 @@ struct FloatingToolbar: View {
         .padding(.vertical, DesignTokens.spacingXS)
     }
 
-    private var underlineColorMenu: some View {
-        Menu {
-            underlineColorItem(label: "Default", color: DesignTokens.underlineColor)
-            underlineColorItem(label: "Yellow", color: DesignTokens.underlineYellow)
-            underlineColorItem(label: "Green", color: DesignTokens.underlineGreen)
-            underlineColorItem(label: "Red", color: DesignTokens.underlineRed)
-            underlineColorItem(label: "Blue", color: DesignTokens.underlineBlue)
-        } label: {
-            menuLabel(icon: "paintpalette")
-        }
-        .fixedSize()
-        .disabled(!pdfManager.hasDocument)
-        .opacity(pdfManager.hasDocument ? 1 : 0.3)
+    private var underlinePalette: [(String, NSColor)] {
+        [
+            ("Default", DesignTokens.underlineColor),
+            ("Yellow", DesignTokens.underlineYellow),
+            ("Green", DesignTokens.underlineGreen),
+            ("Red", DesignTokens.underlineRed),
+            ("Blue", DesignTokens.underlineBlue)
+        ]
+    }
+
+    private var highlightPalette: [(String, NSColor)] {
+        [
+            ("Yellow", DesignTokens.highlightYellow),
+            ("Green", DesignTokens.highlightGreen),
+            ("Red", DesignTokens.highlightRed),
+            ("Blue", DesignTokens.highlightBlue)
+        ]
     }
 
     private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
@@ -116,17 +130,69 @@ struct FloatingToolbar: View {
             .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
     }
 
-    private func underlineColorItem(label: String, color: NSColor) -> some View {
-        Button {
-            annotationManager.underlineColor = color
-        } label: {
-            HStack {
-                Circle()
-                    .fill(Color(nsColor: color))
-                    .frame(width: 12, height: 12)
-                Text(label)
+    private func paletteControl(
+        actionIcon: String,
+        action: @escaping () -> Void,
+        options: [(String, NSColor)],
+        selectedColor: NSColor,
+        onSelect: @escaping (NSColor) -> Void,
+        disabled: Bool
+    ) -> some View {
+        let cornerRadius = DesignTokens.floatingToolbarCornerRadius
+        let controlHeight = DesignTokens.floatingToolbarHeight
+
+        return HStack(spacing: 0) {
+            Button(action: action) {
+                Image(systemName: actionIcon)
+                    .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .disabled(disabled)
+            .opacity(disabled ? 0.3 : 1.0)
+            .frame(width: DesignTokens.toolbarButtonSize + DesignTokens.spacingXS, height: controlHeight)
+
+            Divider()
+                .frame(height: controlHeight - 8)
+                .padding(.horizontal, DesignTokens.spacingXS / 3)
+
+            Menu {
+                ForEach(options, id: \.0) { label, color in
+                    Button {
+                        onSelect(color)
+                    } label: {
+                        HStack {
+                            Circle()
+                                .fill(Color(nsColor: color))
+                                .frame(width: 12, height: 12)
+                            Text(label)
+                            if color.isEqual(to: selectedColor) {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .disabled(disabled)
+            .opacity(disabled ? 0.3 : 1.0)
+            .frame(width: DesignTokens.toolbarButtonSize + DesignTokens.spacingXS, height: controlHeight)
         }
+        .frame(height: controlHeight)
+        .padding(.horizontal, DesignTokens.spacingXS / 2)
+        .padding(.vertical, DesignTokens.spacingXS / 2)
+        .background(
+            RoundedRectangle(cornerRadius: cornerRadius)
+                .fill(.ultraThinMaterial)
+        )
     }
 
     private func handleFitButtonTap() {
