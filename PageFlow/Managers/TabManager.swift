@@ -67,7 +67,7 @@ class TabManager {
     // MARK: - Tab Operations
 
     func createNewTab(with url: URL? = nil, isSecurityScoped: Bool = false) {
-        var newTab = TabModel(documentURL: url, isSecurityScoped: isSecurityScoped)
+        let newTab = TabModel(documentURL: url, isSecurityScoped: isSecurityScoped)
 
         tabs.append(newTab)
         createManagersForTab(newTab)

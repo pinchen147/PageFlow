@@ -20,6 +20,78 @@ final class StablePDFView: PDFView {
             scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
             scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
             scrollView.automaticallyAdjustsContentInsets = false
+            
+            configureScrollers(scrollView)
+        }
+    }
+
+    // MARK: - Scrollbar Management
+
+    private var verticalTrackingArea: NSTrackingArea?
+    private var horizontalTrackingArea: NSTrackingArea?
+    private let hoverZoneSize: CGFloat = 40.0
+
+    private func configureScrollers(_ scrollView: NSScrollView) {
+        // Enforce overlay style and manual visibility control
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = false
+
+        // Force hide initially if tracking hasn't started
+        if verticalTrackingArea == nil {
+            scrollView.verticalScroller?.alphaValue = 0
+            scrollView.horizontalScroller?.alphaValue = 0
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+
+        if let vArea = verticalTrackingArea { removeTrackingArea(vArea) }
+        if let hArea = horizontalTrackingArea { removeTrackingArea(hArea) }
+
+        // Right edge (Vertical Scroller)
+        let vRect = NSRect(x: bounds.width - hoverZoneSize, y: 0, width: hoverZoneSize, height: bounds.height)
+        let vArea = NSTrackingArea(
+            rect: vRect,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],
+            owner: self,
+            userInfo: ["type": "vertical"]
+        )
+        addTrackingArea(vArea)
+        verticalTrackingArea = vArea
+
+        // Bottom edge (Horizontal Scroller)
+        let hRect = NSRect(x: 0, y: 0, width: bounds.width, height: hoverZoneSize)
+        let hArea = NSTrackingArea(
+            rect: hRect,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],
+            owner: self,
+            userInfo: ["type": "horizontal"]
+        )
+        addTrackingArea(hArea)
+        horizontalTrackingArea = hArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        setScrollerAlpha(1.0, for: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        setScrollerAlpha(0.0, for: event)
+    }
+
+    private func setScrollerAlpha(_ alpha: CGFloat, for event: NSEvent) {
+        guard let scrollView = documentScrollView,
+              let userInfo = event.trackingArea?.userInfo as? [String: String],
+              let type = userInfo["type"] else { return }
+
+        let scroller = (type == "vertical") ? scrollView.verticalScroller : scrollView.horizontalScroller
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            scroller?.animator().alphaValue = alpha
         }
     }
 
