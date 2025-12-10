@@ -63,22 +63,17 @@ struct FloatingToolbar: View {
             )
             toolbarButton(icon: "rotate.right", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.hasDocument)
             Divider().frame(height: 16)
-            paletteControl(
-                actionIcon: "underline",
+            toolbarButton(
+                icon: "underline",
                 action: { annotationManager.underlineSelection(color: annotationManager.underlineColor) },
-                options: underlinePalette,
-                selectedColor: annotationManager.underlineColor,
-                onSelect: { annotationManager.underlineColor = $0 },
                 disabled: !pdfManager.hasDocument
             )
-            paletteControl(
-                actionIcon: "highlighter",
+            toolbarButton(
+                icon: "highlighter",
                 action: { annotationManager.highlightSelection(color: annotationManager.highlightColor) },
-                options: highlightPalette,
-                selectedColor: annotationManager.highlightColor,
-                onSelect: { annotationManager.highlightColor = $0 },
                 disabled: !pdfManager.hasDocument
             )
+            colorMenu
             Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
             toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
@@ -106,6 +101,50 @@ struct FloatingToolbar: View {
         ]
     }
 
+    private var colorMenu: some View {
+        Menu {
+            Text("Underline").font(.caption)
+            ForEach(underlinePalette, id: \.0) { label, color in
+                Button {
+                    annotationManager.underlineColor = color
+                } label: {
+                    HStack {
+                        Circle().fill(Color(nsColor: color)).frame(width: 12, height: 12)
+                        Text(label)
+                        if color.isEqual(to: annotationManager.underlineColor) {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+            Divider()
+            Text("Highlight").font(.caption)
+            ForEach(highlightPalette, id: \.0) { label, color in
+                Button {
+                    annotationManager.highlightColor = color
+                } label: {
+                    HStack {
+                        Circle().fill(Color(nsColor: color)).frame(width: 12, height: 12)
+                        Text(label)
+                        if color.isEqual(to: annotationManager.highlightColor) {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "paintpalette")
+                .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
+                .frame(width: DesignTokens.toolbarButtonSize, height: DesignTokens.toolbarButtonSize)
+                .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
+        }
+        .buttonStyle(.plain)
+        .disabled(!pdfManager.hasDocument)
+        .opacity(pdfManager.hasDocument ? 1 : 0.3)
+    }
+
     private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
         Button(action: action) {
             Image(systemName: icon)
@@ -116,78 +155,6 @@ struct FloatingToolbar: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.3 : 1.0)
-    }
-
-    private func menuLabel(icon: String) -> some View {
-        Image(systemName: icon)
-            .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
-            .frame(width: DesignTokens.toolbarButtonSize, height: DesignTokens.toolbarButtonSize)
-            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
-    }
-
-    private func paletteControl(
-        actionIcon: String,
-        action: @escaping () -> Void,
-        options: [(String, NSColor)],
-        selectedColor: NSColor,
-        onSelect: @escaping (NSColor) -> Void,
-        disabled: Bool
-    ) -> some View {
-        let cornerRadius = DesignTokens.floatingToolbarCornerRadius
-        let controlHeight = DesignTokens.floatingToolbarHeight
-
-        return HStack(spacing: 0) {
-            Button(action: action) {
-                Image(systemName: actionIcon)
-                    .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(disabled)
-            .opacity(disabled ? 0.3 : 1.0)
-            .frame(width: DesignTokens.toolbarButtonSize + DesignTokens.spacingXS, height: controlHeight)
-
-            Divider()
-                .frame(height: controlHeight - 8)
-                .padding(.horizontal, DesignTokens.spacingXS / 3)
-
-            Menu {
-                ForEach(options, id: \.0) { label, color in
-                    Button {
-                        onSelect(color)
-                    } label: {
-                        HStack {
-                            Circle()
-                                .fill(Color(nsColor: color))
-                                .frame(width: 12, height: 12)
-                            Text(label)
-                            if color.isEqual(to: selectedColor) {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .disabled(disabled)
-            .opacity(disabled ? 0.3 : 1.0)
-            .frame(width: DesignTokens.toolbarButtonSize + DesignTokens.spacingXS, height: controlHeight)
-        }
-        .frame(height: controlHeight)
-        .padding(.horizontal, DesignTokens.spacingXS / 2)
-        .padding(.vertical, DesignTokens.spacingXS / 2)
-        .background(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(.ultraThinMaterial)
-        )
     }
 
     private func handleFitButtonTap() {
