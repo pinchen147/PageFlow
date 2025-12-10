@@ -12,7 +12,6 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @Bindable var pdfManager: PDFManager
     var searchManager: SearchManager
-    var recentFilesManager: RecentFilesManager
     @Binding var showingSearch: Bool
     @Binding var isTopBarHovered: Bool
     @Bindable var tabManager: TabManager
@@ -26,19 +25,15 @@ struct MainView: View {
     @State private var showingOutline = false
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            // Main content shifted right when the outline is visible to simulate push while allowing overlay transparency
-            Group {
-                if pdfManager.hasDocument {
-                    PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
-                        .ignoresSafeArea(.all, edges: .all)
-                } else {
-                    emptyState
-                }
+        ZStack {
+            if pdfManager.hasDocument {
+                PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
+            } else {
+                emptyState
             }
-            .offset(x: showingOutline && pdfManager.hasDocument ? DesignTokens.sidebarWidth + DesignTokens.spacingXS : 0)
-
-            // Overlayed glass sidebar
+        }
+        .ignoresSafeArea(.all, edges: .all)
+        .overlay(alignment: .topLeading) {
             if showingOutline, pdfManager.hasDocument {
                 OutlineSidebar(pdfManager: pdfManager, items: pdfManager.outlineItems())
                     .frame(width: DesignTokens.sidebarWidth)
@@ -48,8 +43,6 @@ struct MainView: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingOutline)
-        .ignoresSafeArea(.all, edges: .all)
         .overlay(alignment: .top) {
             HStack(spacing: 0) {
                 // Traffic lights
@@ -73,9 +66,6 @@ struct MainView: View {
             .frame(maxWidth: .infinity)
             .frame(height: DesignTokens.trafficLightHotspotHeight)
             .contentShape(Rectangle())
-            .onHover { hovering in
-                isTopBarHovered = hovering
-            }
             .onContinuousHover { phase in
                 switch phase {
                 case .active:
@@ -204,9 +194,6 @@ struct MainView: View {
         .frame(maxWidth: .infinity)
         .frame(height: DesignTokens.trafficLightHotspotHeight)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            isBottomBarHovered = hovering
-        }
         .onContinuousHover { phase in
             switch phase {
             case .active:
@@ -330,7 +317,6 @@ struct MainView: View {
     MainView(
         pdfManager: PDFManager(),
         searchManager: SearchManager(),
-        recentFilesManager: RecentFilesManager(),
         showingSearch: .constant(false),
         isTopBarHovered: .constant(false),
         tabManager: TabManager(),

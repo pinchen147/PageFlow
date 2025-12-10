@@ -25,7 +25,6 @@ struct TabContainerView: View {
                     MainView(
                         pdfManager: pdfManager,
                         searchManager: searchManager,
-                        recentFilesManager: recentFilesManager,
                         showingSearch: $showingSearch,
                         isTopBarHovered: $isTopBarHovered,
                         tabManager: tabManager,
