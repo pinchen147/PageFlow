@@ -11,37 +11,18 @@ struct FloatingToolbar: View {
     @Bindable var pdfManager: PDFManager
     @Binding var showingFileImporter: Bool
     @Binding var isTopBarHovered: Bool
-    @State private var isExpanded = true
     @State private var lastFitTapTime: Date?
     private let doubleTapWindow: TimeInterval = 0.3
 
     var body: some View {
         let isVisible = isTopBarHovered
 
-        ZStack(alignment: .trailing) {
-            expandedContainer
-                .scaleEffect(x: isExpanded ? 1 : 0.01, y: 1, anchor: .trailing)
-                .opacity(isExpanded ? 1 : 0)
-                .allowsHitTesting(isExpanded)
-
-            collapsedButton
-                .scaleEffect(x: isExpanded ? 0.01 : 1, y: 1, anchor: .trailing)
-                .opacity(collapsedButtonOpacity)
-                .allowsHitTesting(!isExpanded)
-        }
+        expandedContainer
         .frame(height: DesignTokens.collapsedToolbarSize)
-        .animation(.easeInOut(duration: 0.2), value: isExpanded)
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: isTopBarHovered)
         .opacity(isVisible ? 1 : 0)
         .allowsHitTesting(isVisible)
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: isVisible)
-    }
-
-    private var collapsedButtonOpacity: Double {
-        if isExpanded {
-            return 0
-        }
-        return isTopBarHovered ? 1 : 0
     }
 
     private var expandedContainer: some View {
@@ -77,36 +58,9 @@ struct FloatingToolbar: View {
             Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
             toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
-            Divider().frame(height: 16)
-            toolbarButton(icon: "xmark", action: { isExpanded.toggle() })
         }
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
-    }
-
-    private var collapsedButton: some View {
-        Button {
-            isExpanded.toggle()
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: DesignTokens.collapsedToolbarSize, height: DesignTokens.collapsedToolbarSize)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .background(.ultraThinMaterial)
-        .overlay(
-            Circle()
-                .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
-                .allowsHitTesting(false)
-        )
-        .clipShape(Circle())
-        .overlay(
-            Circle()
-                .strokeBorder(.white.opacity(0.22))
-                .allowsHitTesting(false)
-        )
-        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
     }
 
     private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
