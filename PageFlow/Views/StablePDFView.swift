@@ -29,11 +29,13 @@ final class StablePDFView: PDFView {
 
     private var verticalTrackingArea: NSTrackingArea?
     private var horizontalTrackingArea: NSTrackingArea?
-    private let hoverZoneSize: CGFloat = 40.0
+    private let verticalHoverZoneSize: CGFloat = 120.0 // 3x the original 40.0
+    private let horizontalHoverZoneSize: CGFloat = 40.0
 
     private func configureScrollers(_ scrollView: NSScrollView) {
         // Enforce overlay style and manual visibility control
         scrollView.scrollerStyle = .overlay
+        scrollView.scrollerKnobStyle = .default
         scrollView.autohidesScrollers = false
         
         // Swap vertical scroller with custom GlassScroller if needed
@@ -62,7 +64,7 @@ final class StablePDFView: PDFView {
         if let hArea = horizontalTrackingArea { removeTrackingArea(hArea) }
 
         // Right edge (Vertical Scroller)
-        let vRect = NSRect(x: bounds.width - hoverZoneSize, y: 0, width: hoverZoneSize, height: bounds.height)
+        let vRect = NSRect(x: bounds.width - verticalHoverZoneSize, y: 0, width: verticalHoverZoneSize, height: bounds.height)
         let vArea = NSTrackingArea(
             rect: vRect,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],
@@ -74,7 +76,7 @@ final class StablePDFView: PDFView {
 
         // Bottom edge (Horizontal Scroller)
         // Note: PDFView is flipped, so y: bounds.height is the bottom
-        let hRect = NSRect(x: 0, y: bounds.height - hoverZoneSize, width: bounds.width, height: hoverZoneSize)
+        let hRect = NSRect(x: 0, y: bounds.height - horizontalHoverZoneSize, width: bounds.width, height: horizontalHoverZoneSize)
         let hArea = NSTrackingArea(
             rect: hRect,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],

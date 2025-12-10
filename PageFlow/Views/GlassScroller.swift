@@ -26,42 +26,35 @@ class GlassScroller: NSScroller {
     }
     
     override func drawKnob() {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.saveGState()
+        let knobRect = rect(for: .knob)
         
-        // Inset the knob slightly to make it look floating
-        // Standard knob fills the width; we want a pill shape
-        let knobRect = self.rect(for: .knob)
+        // Calculate corner radius for capsule shape (half of the shorter side)
         let radius = min(knobRect.width, knobRect.height) / 2
+        let path = NSBezierPath(roundedRect: knobRect, xRadius: radius, yRadius: radius)
+        
+        NSGraphicsContext.saveGraphicsState()
         
         // 1. Shadow
         // Matches DesignTokens: color: .black.opacity(0.1), radius: 10, y: 5
-        // Note: CoreGraphics Y axis is inverted relative to SwiftUI
-        let shadowColor = CGColor(gray: 0, alpha: 0.1)
-        context.setShadow(offset: CGSize(width: 0, height: -5), blur: 10, color: shadowColor)
-        
-        // Path construction
-        let path = CGPath(roundedRect: knobRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
-        context.addPath(path)
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.1)
+        shadow.shadowOffset = NSSize(width: 0, height: -5) // Downward shadow in standard coords
+        shadow.shadowBlurRadius = 10
+        shadow.set()
         
         // 2. Fill
         // Matches DesignTokens.floatingToolbarBase (RGB 0.196, 0.196, 0.196)
-        // Opacity needs to be high enough to be visible without blur (since we can't do live blur easily here)
-        // We use 0.8 opacity to simulate the dark glass look
-        context.setFillColor(red: 0.196, green: 0.196, blue: 0.196, alpha: 0.8)
-        context.fillPath()
+        let fillColor = NSColor(red: 0.196, green: 0.196, blue: 0.196, alpha: 0.8)
+        fillColor.setFill()
+        path.fill()
         
-        // Restore state to draw border without shadow
-        context.restoreGState()
-        context.saveGState()
+        NSGraphicsContext.restoreGraphicsState()
         
         // 3. Border
         // Matches DesignTokens: .white.opacity(0.22)
-        context.addPath(path)
-        context.setStrokeColor(red: 1, green: 1, blue: 1, alpha: 0.22)
-        context.setLineWidth(1.0)
-        context.strokePath()
-        
-        context.restoreGState()
+        let borderColor = NSColor(white: 1, alpha: 0.22)
+        borderColor.setStroke()
+        path.lineWidth = 1.0
+        path.stroke()
     }
 }
