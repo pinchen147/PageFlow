@@ -35,6 +35,18 @@ final class StablePDFView: PDFView {
         // Enforce overlay style and manual visibility control
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = false
+        
+        // Swap vertical scroller with custom GlassScroller if needed
+        if !(scrollView.verticalScroller is GlassScroller) {
+            let vScroller = GlassScroller()
+            scrollView.verticalScroller = vScroller
+        }
+        
+        // Swap horizontal scroller with custom GlassScroller if needed
+        if !(scrollView.horizontalScroller is GlassScroller) {
+            let hScroller = GlassScroller()
+            scrollView.horizontalScroller = hScroller
+        }
 
         // Force hide initially if tracking hasn't started
         if verticalTrackingArea == nil {
