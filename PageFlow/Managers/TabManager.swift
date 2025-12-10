@@ -8,6 +8,7 @@
 import Foundation
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @Observable
 class TabManager {
@@ -229,6 +230,79 @@ class TabManager {
     func updateScrollPosition(for tabID: UUID, scrollY: CGFloat) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         tabs[index].savedScrollY = scrollY
+    }
+
+    // MARK: - Dirty State
+
+    func isTabDirty(_ tabID: UUID) -> Bool {
+        pdfManagers[tabID]?.isDirty ?? false
+    }
+
+    // MARK: - Save Operations
+
+    enum SaveResult {
+        case success(message: String)
+        case failure(message: String)
+    }
+
+    func saveActiveDocument() -> SaveResult {
+        guard let id = activeTabID,
+              let pdfManager = pdfManagers[id] else {
+            return .failure(message: "No active document to save.")
+        }
+
+        guard pdfManager.hasDocument else {
+            return .failure(message: "Open a document before saving.")
+        }
+
+        let saved = pdfManager.save()
+        let result: SaveResult = saved ? .success(message: "Saved") : .failure(message: "Save failed.")
+        postSaveNotification(result)
+        return result
+    }
+
+    func saveActiveDocumentAs() -> SaveResult {
+        guard let id = activeTabID,
+              let pdfManager = pdfManagers[id] else {
+            return .failure(message: "No active document to save.")
+        }
+
+        guard let originalURL = pdfManager.documentURL else {
+            return .failure(message: "Open a document before saving.")
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType.pdf]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = originalURL.lastPathComponent
+
+        let response = panel.runModal()
+        guard response == .OK, let url = panel.url else {
+            return .failure(message: "Save As cancelled.")
+        }
+
+        let saved = pdfManager.saveAs(to: url)
+        if saved, let index = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[index].documentURL = url
+        }
+
+        let result: SaveResult = saved ? .success(message: "Saved As") : .failure(message: "Save As failed.")
+        postSaveNotification(result)
+        return result
+    }
+
+    // MARK: - Notifications
+    private func postSaveNotification(_ result: SaveResult) {
+        switch result {
+        case .success(let message):
+            NotificationCenter.default.post(
+                name: .saveResult,
+                object: nil,
+                userInfo: ["message": message]
+            )
+        case .failure:
+            break
+        }
     }
 
     // MARK: - Session Persistence

@@ -18,9 +18,11 @@ struct TabBarView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: DesignTokens.tabSpacing) {
                     ForEach(tabManager.tabs) { tab in
+                        let isDirty = tabManager.isTabDirty(tab.id)
                         TabItemView(
                             tab: tab,
                             isActive: tab.id == tabManager.activeTabID,
+                            isDirty: isDirty,
                             onSelect: { tabManager.selectTab(tab.id) },
                             onClose: { tabManager.closeTab(tab.id) }
                         )

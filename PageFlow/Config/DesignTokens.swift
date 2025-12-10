@@ -96,4 +96,5 @@ struct DesignTokens {
     static let tabCornerRadius: CGFloat = 6
     static let tabBarLeftMargin: CGFloat = 80
     static let tabCloseButtonSize: CGFloat = 14
+    static let tabDirtyIndicatorSize: CGFloat = 6
 }

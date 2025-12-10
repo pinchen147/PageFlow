@@ -10,6 +10,7 @@ import SwiftUI
 struct TabItemView: View {
     let tab: TabModel
     let isActive: Bool
+    let isDirty: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
 
@@ -17,12 +18,19 @@ struct TabItemView: View {
 
     var body: some View {
         HStack(spacing: DesignTokens.spacingXS) {
-            Text(tab.displayTitle)
-                .font(.system(size: 11, weight: isActive ? .medium : .regular))
-                .foregroundStyle(.white.opacity(isActive ? 0.95 : 0.7))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: DesignTokens.tabMaxWidth - DesignTokens.tabCloseButtonSize - DesignTokens.spacingSM)
+            HStack(spacing: DesignTokens.spacingXS) {
+                if isDirty {
+                    Circle()
+                        .fill(Color.white.opacity(0.9))
+                        .frame(width: DesignTokens.tabDirtyIndicatorSize, height: DesignTokens.tabDirtyIndicatorSize)
+                }
+                Text(tab.displayTitle)
+                    .font(.system(size: 11, weight: isActive ? .medium : .regular))
+                    .foregroundStyle(.white.opacity(isActive ? 0.95 : 0.7))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: DesignTokens.tabMaxWidth - DesignTokens.tabCloseButtonSize - DesignTokens.spacingSM)
+            }
 
             if isHovering || isActive {
                 Button(action: onClose) {

@@ -70,8 +70,8 @@
       "id": "F010",
       "category": "pdf-display",
       "description": "Open multiple PDFs in tabs",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 2"
+      "passes": true,
+      "implementation": "TabManager.swift - TabModel; TabView; PDFManager.swift - documentURL binding"
     },
     {
       "id": "F011",
@@ -204,21 +204,21 @@
       "category": "save",
       "description": "Auto-save annotations to PDF",
       "passes": false,
-      "implementation": "Not yet implemented - Phase 8"
+      "implementation": "Not implemented (manual save only)"
     },
     {
       "id": "F030",
       "category": "save",
       "description": "Manual save with Cmd+S",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 8"
+      "passes": true,
+      "implementation": "TabManager.saveActiveDocument; PageFlowApp commands (Cmd+S); save notification toast"
     },
     {
       "id": "F031",
       "category": "save",
       "description": "Save As with new filename",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 8"
+      "passes": true,
+      "implementation": "TabManager.saveActiveDocumentAs with NSSavePanel; PageFlowApp Cmd+Shift+S"
     },
     {
       "id": "F032",
@@ -365,7 +365,7 @@
       "category": "navigation",
       "description": "PDF outline/table of contents sidebar",
       "passes": true,
-      "implementation": "OutlineSidebar shows PDF outline; PDFManager.outlineItems; toolbar toggle"
+      "implementation": "OutlineSidebar overlay toggle; OutlineItem model; PDFManager.outlineItems() builds tree from outlineRoot"
     },
     {
       "id": "F053",
@@ -387,13 +387,6 @@
       "description": "Rotate page 90\u00b0 clockwise",
       "passes": true,
       "implementation": "PDFManager.rotateClockwise with toolbar rotate button"
-    },
-    {
-      "id": "F056",
-      "category": "display",
-      "description": "Rotate page 90\u00b0 counter-clockwise",
-      "passes": false,
-      "implementation": "Not implemented"
     },
     {
       "id": "F057",

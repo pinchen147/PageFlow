@@ -21,6 +21,7 @@ class PDFManager {
     var scaleNeedsUpdate: Bool = false
     var fitOnceRequested: Bool = false
     var documentURL: URL?
+    var isDirty: Bool = false
     private var isAccessingSecurityScopedResource = false
 
     var pageCount: Int {
@@ -70,6 +71,7 @@ class PDFManager {
         fitOnceRequested = true
         scaleNeedsUpdate = false
         scaleFactor = DesignTokens.pdfDefaultScale
+        isDirty = false
 
         return true
     }
@@ -111,6 +113,7 @@ class PDFManager {
         currentPage = nil
         currentPageIndex = 0
         scaleFactor = 1.0
+        isDirty = false
     }
 
     // MARK: - Navigation
@@ -186,6 +189,7 @@ class PDFManager {
     func rotateClockwise() {
         guard let page = currentPage else { return }
         page.rotation = (page.rotation + 90) % 360
+        isDirty = true
     }
 
     // MARK: - Outline
@@ -213,7 +217,11 @@ class PDFManager {
             return false
         }
 
-        return document.write(to: url)
+        let result = document.write(to: url)
+        if result {
+            isDirty = false
+        }
+        return result
     }
 
     func saveAs(to url: URL) -> Bool {
@@ -221,12 +229,13 @@ class PDFManager {
             return false
         }
 
-        if document.write(to: url) {
+        let result = document.write(to: url)
+        if result {
+            stopAccessingCurrentResource()
             documentURL = url
-            return true
+            isDirty = false
         }
-
-        return false
+        return result
     }
 
     // MARK: - Print

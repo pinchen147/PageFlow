@@ -52,6 +52,20 @@ struct PageFlowApp: App {
 
                 Divider()
 
+                Button("Save") {
+                    handleSave()
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(tabManager.activePDFManager?.hasDocument != true)
+
+                Button("Save As…") {
+                    handleSaveAs()
+                }
+                .keyboardShortcut("S", modifiers: [.command, .shift])
+                .disabled(tabManager.activePDFManager?.hasDocument != true)
+
+                Divider()
+
                 Menu("Open Recent") {
                     ForEach(recentFilesManager.recentFiles, id: \.self) { url in
                         Button(url.deletingPathExtension().lastPathComponent) {
@@ -110,6 +124,27 @@ struct PageFlowApp: App {
     private func openRecentFile(_ url: URL) {
         tabManager.openDocument(url: url, isSecurityScoped: false)
         recentFilesManager.addRecentFile(url)
+    }
+
+    private func handleSave() {
+        let result = tabManager.saveActiveDocument()
+        if case .failure(let message) = result {
+            showAlert(message: message)
+        }
+    }
+
+    private func handleSaveAs() {
+        let result = tabManager.saveActiveDocumentAs()
+        if case .failure(let message) = result {
+            showAlert(message: message)
+        }
+    }
+
+    private func showAlert(message: String) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func openNewWindow() {

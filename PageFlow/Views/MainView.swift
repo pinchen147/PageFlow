@@ -23,6 +23,8 @@ struct MainView: View {
     @State private var isDragHovering = false
     @State private var isBottomBarHovered = false
     @State private var showingOutline = false
+    @State private var toastMessage: String?
+    @State private var toastWorkItem: DispatchWorkItem?
 
     var body: some View {
         ZStack {
@@ -119,6 +121,18 @@ struct MainView: View {
         .onChange(of: pdfManager.hasDocument) { _, hasDoc in
             if !hasDoc {
                 showingOutline = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .saveResult)) { notification in
+            guard let info = notification.userInfo as? [String: String],
+                  let message = info["message"] else { return }
+            showToast(message)
+        }
+        .overlay(alignment: .bottom) {
+            if let toastMessage {
+                toastView(message: toastMessage)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .padding(.bottom, DesignTokens.spacingMD)
             }
         }
     }
@@ -310,6 +324,36 @@ struct MainView: View {
         }
         .padding(DesignTokens.spacingLG)
         .shadow(color: .black.opacity(0.2), radius: 16, y: 6)
+    }
+
+    // MARK: - Toast
+
+    private func showToast(_ message: String) {
+        toastWorkItem?.cancel()
+        toastMessage = message
+        let workItem = DispatchWorkItem { self.toastMessage = nil }
+        toastWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+    }
+
+    private func toastView(message: String) -> some View {
+        Text(message)
+            .font(.caption)
+            .padding(.horizontal, DesignTokens.spacingMD)
+            .padding(.vertical, DesignTokens.spacingXS)
+            .background(.ultraThinMaterial)
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                    .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
+                    .allowsHitTesting(false)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                    .strokeBorder(.white.opacity(0.22))
+                    .allowsHitTesting(false)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius))
+            .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
     }
 }
 
