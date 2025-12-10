@@ -198,7 +198,7 @@ class PDFManager {
         if childCount > 0 {
             for index in 0..<childCount {
                 guard let child = root.child(at: index),
-                      let item = OutlineItem(outline: child) else { continue }
+                      let item = OutlineItem(outline: child, path: "root-\(index)") else { continue }
                 items.append(item)
             }
         }

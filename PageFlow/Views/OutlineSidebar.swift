@@ -42,23 +42,42 @@ struct OutlineSidebar: View {
                         .disabled(item.pageIndex == nil)
                     }
                 }
-                .padding(.horizontal, DesignTokens.spacingMD)
+                .padding(.horizontal, DesignTokens.spacingMD + DesignTokens.spacingSM)
                 .padding(.bottom, DesignTokens.spacingMD)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.clear)
+            .hideScrollBackgroundIfAvailable()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial)
+        .padding(.horizontal, DesignTokens.spacingXS)
+        .padding(.vertical, DesignTokens.spacingXS)
+        .background(
+            .ultraThinMaterial,
+            in: RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
                 .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
                 .allowsHitTesting(false)
         )
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
                 .strokeBorder(.white.opacity(0.22))
                 .allowsHitTesting(false)
         )
         .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+    }
+}
+
+// MARK: - Helpers
+
+private extension View {
+    @ViewBuilder
+    func hideScrollBackgroundIfAvailable() -> some View {
+        if #available(macOS 13.0, *) {
+            self.scrollContentBackground(.hidden)
+        } else {
+            self
+        }
     }
 }

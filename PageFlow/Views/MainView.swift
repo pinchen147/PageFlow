@@ -26,23 +26,26 @@ struct MainView: View {
     @State private var showingOutline = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            if showingOutline, pdfManager.hasDocument {
-                OutlineSidebar(pdfManager: pdfManager, items: pdfManager.outlineItems())
-                    .frame(width: DesignTokens.sidebarWidth)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                    .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
-                    .padding(.bottom, DesignTokens.spacingMD)
-                    .padding(.leading, DesignTokens.spacingXS)
-            }
-
-            ZStack {
+        ZStack(alignment: .topLeading) {
+            // Main content shifted right when the outline is visible to simulate push while allowing overlay transparency
+            Group {
                 if pdfManager.hasDocument {
                     PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
                         .ignoresSafeArea(.all, edges: .all)
                 } else {
                     emptyState
                 }
+            }
+            .offset(x: showingOutline && pdfManager.hasDocument ? DesignTokens.sidebarWidth + DesignTokens.spacingXS : 0)
+
+            // Overlayed glass sidebar
+            if showingOutline, pdfManager.hasDocument {
+                OutlineSidebar(pdfManager: pdfManager, items: pdfManager.outlineItems())
+                    .frame(width: DesignTokens.sidebarWidth)
+                    .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
+                    .padding(.bottom, DesignTokens.spacingMD)
+                    .padding(.leading, DesignTokens.spacingXS)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingOutline)
