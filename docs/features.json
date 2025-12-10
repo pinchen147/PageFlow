@@ -384,16 +384,16 @@
     {
       "id": "F055",
       "category": "display",
-      "description": "Rotate page 90° clockwise",
-      "passes": false,
-      "implementation": "Not yet implemented - PDFPage.rotation"
+      "description": "Rotate page 90\u00b0 clockwise",
+      "passes": true,
+      "implementation": "PDFManager.rotateClockwise with toolbar rotate button"
     },
     {
       "id": "F056",
       "category": "display",
-      "description": "Rotate page 90° counter-clockwise",
+      "description": "Rotate page 90\u00b0 counter-clockwise",
       "passes": false,
-      "implementation": "Not yet implemented - PDFPage.rotation"
+      "implementation": "Not implemented"
     },
     {
       "id": "F057",
@@ -440,8 +440,8 @@
   ],
   "summary": {
     "total": 62,
-    "passing": 29,
-    "failing": 33,
-    "percentComplete": 47
+    "passing": 31,
+    "failing": 31,
+    "percentComplete": 50
   }
 }

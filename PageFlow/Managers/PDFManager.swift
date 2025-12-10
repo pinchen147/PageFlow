@@ -183,6 +183,11 @@ class PDFManager {
         fitOnceRequested = true
     }
 
+    func rotateClockwise() {
+        guard let page = currentPage else { return }
+        page.rotation = (page.rotation + 90) % 360
+    }
+
     // MARK: - Save
 
     func save() -> Bool {
