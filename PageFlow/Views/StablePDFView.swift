@@ -32,6 +32,15 @@ final class StablePDFView: PDFView {
     private let verticalHoverZoneSize: CGFloat = 120.0 // 3x the original 40.0
     private let horizontalHoverZoneSize: CGFloat = 40.0
 
+    // State tracking to ensure robustness during layout updates
+    private var isHoveringVertical = false
+    private var isHoveringHorizontal = false
+    private var isObservingScroll = false
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     private func configureScrollers(_ scrollView: NSScrollView) {
         // Enforce overlay style and manual visibility control
         scrollView.scrollerStyle = .overlay
@@ -50,11 +59,31 @@ final class StablePDFView: PDFView {
             scrollView.horizontalScroller = hScroller
         }
 
-        // Force hide initially if tracking hasn't started
-        if verticalTrackingArea == nil {
-            scrollView.verticalScroller?.alphaValue = 0
-            scrollView.horizontalScroller?.alphaValue = 0
+        // Enforce visibility state
+        scrollView.verticalScroller?.alphaValue = isHoveringVertical ? 1.0 : 0.0
+        scrollView.horizontalScroller?.alphaValue = isHoveringHorizontal ? 1.0 : 0.0
+        
+        // Observe scrolling to enforce visibility
+        if !isObservingScroll {
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleScrollChanged(_:)),
+                name: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView
+            )
+            isObservingScroll = true
         }
+    }
+
+    @objc private func handleScrollChanged(_ notification: Notification) {
+        guard let scrollView = documentScrollView else { return }
+        // Enforce visibility state during scroll to prevent system override
+        // We use animator() proxy to match the active animation state if any, 
+        // or just set it directly if we want strict enforcement. 
+        // Direct set is safer to fight system "flash" logic.
+        scrollView.verticalScroller?.alphaValue = isHoveringVertical ? 1.0 : 0.0
+        scrollView.horizontalScroller?.alphaValue = isHoveringHorizontal ? 1.0 : 0.0
     }
 
     override func updateTrackingAreas() {
@@ -89,24 +118,32 @@ final class StablePDFView: PDFView {
 
     override func mouseEntered(with event: NSEvent) {
         super.mouseEntered(with: event)
-        setScrollerAlpha(1.0, for: event)
+        updateHoverState(isEntering: true, event: event)
     }
 
     override func mouseExited(with event: NSEvent) {
         super.mouseExited(with: event)
-        setScrollerAlpha(0.0, for: event)
+        updateHoverState(isEntering: false, event: event)
     }
 
-    private func setScrollerAlpha(_ alpha: CGFloat, for event: NSEvent) {
+    private func updateHoverState(isEntering: Bool, event: NSEvent) {
         guard let scrollView = documentScrollView,
               let userInfo = event.trackingArea?.userInfo as? [String: String],
               let type = userInfo["type"] else { return }
 
-        let scroller = (type == "vertical") ? scrollView.verticalScroller : scrollView.horizontalScroller
+        let scroller: NSScroller?
+        
+        if type == "vertical" {
+            isHoveringVertical = isEntering
+            scroller = scrollView.verticalScroller
+        } else {
+            isHoveringHorizontal = isEntering
+            scroller = scrollView.horizontalScroller
+        }
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
-            scroller?.animator().alphaValue = alpha
+            scroller?.animator().alphaValue = isEntering ? 1.0 : 0.0
         }
     }
 
