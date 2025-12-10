@@ -37,7 +37,15 @@ struct MainView: View {
         .ignoresSafeArea(.all, edges: .all)
         .overlay(alignment: .topLeading) {
             if showingOutline, pdfManager.hasDocument {
-                OutlineSidebar(pdfManager: pdfManager, items: pdfManager.outlineItems())
+                OutlineSidebar(
+                    pdfManager: pdfManager,
+                    items: pdfManager.outlineItems(),
+                    onClose: {
+                        withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
+                            showingOutline = false
+                        }
+                    }
+                )
                     .frame(width: DesignTokens.sidebarWidth)
                     .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
                     .padding(.bottom, DesignTokens.spacingMD)

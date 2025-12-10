@@ -10,13 +10,25 @@ import SwiftUI
 struct OutlineSidebar: View {
     @Bindable var pdfManager: PDFManager
     let items: [OutlineItem]
+    let onClose: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
-            Text("Contents")
-                .font(.headline)
-                .padding(.horizontal, DesignTokens.spacingMD)
-                .padding(.top, DesignTokens.spacingMD)
+            HStack {
+                Text("Contents")
+                    .font(.headline)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+            }
+            .padding(.leading, DesignTokens.spacingMD)
+            .padding(.trailing, DesignTokens.spacingSM)
+            .padding(.top, DesignTokens.spacingSM)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
