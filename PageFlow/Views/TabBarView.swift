@@ -58,6 +58,9 @@ struct TabBarView: View {
                     }
                     .buttonStyle(.plain)
                     .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
+                    .onHover { hovering in
+                        (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+                    }
                 }
                 .padding(.horizontal, DesignTokens.spacingXS)
             }

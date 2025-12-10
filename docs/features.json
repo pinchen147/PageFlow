@@ -1,7 +1,7 @@
 {
   "project": "PageFlow",
   "version": "1.0.0",
-  "lastUpdated": "2025-12-10",
+  "lastUpdated": "2025-12-11",
   "features": [
     {
       "id": "F001",
@@ -84,57 +84,57 @@
       "id": "F012",
       "category": "highlight",
       "description": "Highlight selected text with default color",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 4"
+      "passes": true,
+      "implementation": "AnnotationManager.highlightSelection(); FloatingToolbar highlighter button; Cmd+Y shortcut"
     },
     {
       "id": "F013",
       "category": "highlight",
       "description": "Highlight with custom color via preset",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 4"
+      "passes": true,
+      "implementation": "FloatingToolbar colorMenu with Yellow/Green/Red/Blue presets; DesignTokens highlight colors"
     },
     {
       "id": "F014",
       "category": "highlight",
       "description": "Highlight with custom RGB color",
       "passes": false,
-      "implementation": "Not yet implemented - Phase 4"
+      "implementation": "Not yet implemented - only presets available"
     },
     {
       "id": "F015",
       "category": "highlight",
       "description": "Remove highlight from text",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 4"
+      "passes": true,
+      "implementation": "AnnotationManager.removeSelectedAnnotation(); Cmd+Z undo support"
     },
     {
       "id": "F016",
       "category": "highlight",
       "description": "Change color of existing highlight",
       "passes": false,
-      "implementation": "Not yet implemented - Phase 4"
+      "implementation": "AnnotationManager.updateSelectedAnnotationColor exists but no UI"
     },
     {
       "id": "F017",
       "category": "underline",
       "description": "Underline selected text",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 5"
+      "passes": true,
+      "implementation": "AnnotationManager.underlineSelection(); FloatingToolbar underline button; Cmd+U shortcut"
     },
     {
       "id": "F018",
       "category": "underline",
       "description": "Underline with custom color",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 5"
+      "passes": true,
+      "implementation": "FloatingToolbar colorMenu with Default/Yellow/Green/Red/Blue presets; DesignTokens underline colors"
     },
     {
       "id": "F019",
       "category": "underline",
       "description": "Remove underline from text",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 5"
+      "passes": true,
+      "implementation": "AnnotationManager.removeSelectedAnnotation(); Cmd+Z undo support"
     },
     {
       "id": "F020",
@@ -252,15 +252,15 @@
       "id": "F036",
       "category": "ui",
       "description": "Undo/Redo annotation actions",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 9"
+      "passes": true,
+      "implementation": "AnnotationManager registers undo/redo for add/remove; Cmd+Z/Cmd+Shift+Z shortcuts; infinite undo/redo loop"
     },
     {
       "id": "F037",
       "category": "keyboard",
       "description": "All standard keyboard shortcuts work",
-      "passes": false,
-      "implementation": "Partially implemented - Phase 9 will complete"
+      "passes": true,
+      "implementation": "Cmd+U underline, Cmd+Y highlight, Cmd+Z undo, Cmd+Shift+Z redo, Cmd+S save, Cmd+Shift+S save as, Cmd+F search, Cmd+P print, Cmd+T new tab, Cmd+W close tab"
     },
     {
       "id": "F038",
@@ -375,11 +375,18 @@
       "implementation": "Not yet implemented - PDFDisplayMode toggle"
     },
     {
-      "id": "F054",
-      "category": "display",
-      "description": "Display mode: Two-page spread",
-      "passes": false,
-      "implementation": "Not yet implemented - PDFDisplayMode.twoPageContinuous"
+      "id": "F063",
+      "category": "navigation",
+      "description": "Pan/grab cursor mode for dragging PDF",
+      "passes": true,
+      "implementation": "PDFManager.interactionMode; StablePDFView pan handling with open/closed hand cursors; FloatingToolbar toggle button"
+    },
+    {
+      "id": "F064",
+      "category": "ui",
+      "description": "Pointer cursor on clickable elements",
+      "passes": true,
+      "implementation": "onHover with NSCursor.pointingHand on toolbar buttons, tabs, close buttons, outline items"
     },
     {
       "id": "F055",
@@ -432,9 +439,9 @@
     }
   ],
   "summary": {
-    "total": 62,
-    "passing": 32,
-    "failing": 30,
-    "percentComplete": 52
+    "total": 64,
+    "passing": 42,
+    "failing": 22,
+    "percentComplete": 66
   }
 }

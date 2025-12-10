@@ -12,6 +12,16 @@ final class StablePDFView: PDFView {
     private var lastWidth: CGFloat = 0
     private let widthChangeTolerance: CGFloat = 0.5
 
+    // MARK: - Interaction Mode (Pan vs Select)
+
+    var interactionMode: InteractionMode = .select {
+        didSet {
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    private var lastPanLocation: NSPoint?
+    private var isPanning = false
+
     override func layout() {
         super.layout()
 
@@ -180,5 +190,69 @@ final class StablePDFView: PDFView {
 
     var documentScrollView: NSScrollView? {
         subviews.first { $0 is NSScrollView } as? NSScrollView
+    }
+
+    // MARK: - Cursor Management
+
+    override func resetCursorRects() {
+        if interactionMode == .pan {
+            addCursorRect(bounds, cursor: .openHand)
+        } else {
+            super.resetCursorRects()
+        }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if interactionMode == .pan {
+            (isPanning ? NSCursor.closedHand : NSCursor.openHand).set()
+        } else {
+            super.cursorUpdate(with: event)
+        }
+    }
+
+    // MARK: - Pan Mouse Handling
+
+    override func mouseDown(with event: NSEvent) {
+        guard interactionMode == .pan else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        lastPanLocation = convert(event.locationInWindow, from: nil)
+        isPanning = true
+        NSCursor.closedHand.push()
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard interactionMode == .pan, let lastLocation = lastPanLocation else {
+            super.mouseDragged(with: event)
+            return
+        }
+
+        guard let scrollView = documentScrollView else { return }
+
+        let currentLocation = convert(event.locationInWindow, from: nil)
+        let dx = currentLocation.x - lastLocation.x
+        let dy = currentLocation.y - lastLocation.y
+
+        var origin = scrollView.contentView.bounds.origin
+        origin.x -= dx
+        origin.y -= dy
+
+        scrollView.contentView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+
+        lastPanLocation = currentLocation
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard interactionMode == .pan else {
+            super.mouseUp(with: event)
+            return
+        }
+
+        lastPanLocation = nil
+        isPanning = false
+        NSCursor.pop()
     }
 }

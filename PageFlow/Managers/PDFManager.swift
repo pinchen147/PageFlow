@@ -10,6 +10,11 @@ import AppKit
 import PDFKit
 import Observation
 
+enum InteractionMode {
+    case select
+    case pan
+}
+
 @Observable
 class PDFManager {
     // MARK: - Properties
@@ -23,6 +28,7 @@ class PDFManager {
     var fitOnceRequested: Bool = false
     var documentURL: URL?
     var isDirty: Bool = false
+    var interactionMode: InteractionMode = .select
     private var isAccessingSecurityScopedResource = false
 
     var pageCount: Int {
@@ -234,11 +240,17 @@ class PDFManager {
             return false
         }
 
-        let result = document.write(to: url)
-        if result {
-            isDirty = false
+        guard let data = document.dataRepresentation() else {
+            return false
         }
-        return result
+
+        do {
+            try data.write(to: url)
+            isDirty = false
+            return true
+        } catch {
+            return false
+        }
     }
 
     func saveAs(to url: URL) -> Bool {
@@ -246,13 +258,19 @@ class PDFManager {
             return false
         }
 
-        let result = document.write(to: url)
-        if result {
+        guard let data = document.dataRepresentation() else {
+            return false
+        }
+
+        do {
+            try data.write(to: url)
             stopAccessingCurrentResource()
             documentURL = url
             isDirty = false
+            return true
+        } catch {
+            return false
         }
-        return result
     }
 
     // MARK: - Print

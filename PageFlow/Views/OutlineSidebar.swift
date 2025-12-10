@@ -25,6 +25,9 @@ struct OutlineSidebar: View {
                 }
                 .buttonStyle(.plain)
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+                .onHover { hovering in
+                    (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+                }
             }
             .padding(.leading, DesignTokens.spacingMD)
             .padding(.trailing, DesignTokens.spacingSM)
@@ -52,6 +55,11 @@ struct OutlineSidebar: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(item.pageIndex == nil)
+                        .onHover { hovering in
+                            if item.pageIndex != nil {
+                                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, DesignTokens.spacingMD + DesignTokens.spacingSM)

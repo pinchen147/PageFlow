@@ -48,6 +48,11 @@ struct FloatingToolbar: View {
         HStack(spacing: DesignTokens.spacingXS) {
             toolbarButton(icon: "doc", action: { showingFileImporter = true })
             Divider().frame(height: 16)
+            toolbarButton(
+                icon: pdfManager.interactionMode == .pan ? "cursorarrow" : "hand.raised",
+                action: { pdfManager.interactionMode = pdfManager.interactionMode == .pan ? .select : .pan },
+                disabled: !pdfManager.hasDocument
+            )
             toolbarButton(icon: "minus.magnifyingglass", action: { pdfManager.zoomOut() }, disabled: !pdfManager.hasDocument)
             toolbarButton(icon: "1.magnifyingglass", action: { pdfManager.resetZoom() }, disabled: !pdfManager.hasDocument)
             toolbarButton(icon: "plus.magnifyingglass", action: { pdfManager.zoomIn() }, disabled: !pdfManager.hasDocument)
@@ -143,6 +148,11 @@ struct FloatingToolbar: View {
         .buttonStyle(.plain)
         .disabled(!pdfManager.hasDocument)
         .opacity(pdfManager.hasDocument ? 1 : 0.3)
+        .onHover { hovering in
+            if pdfManager.hasDocument {
+                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+            }
+        }
     }
 
     private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
@@ -155,6 +165,11 @@ struct FloatingToolbar: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.3 : 1.0)
+        .onHover { hovering in
+            if !disabled {
+                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+            }
+        }
     }
 
     private func handleFitButtonTap() {

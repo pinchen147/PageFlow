@@ -40,6 +40,9 @@ struct TabItemView: View {
                 }
                 .buttonStyle(.plain)
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+                .onHover { hovering in
+                    (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+                }
             }
         }
         .padding(.horizontal, DesignTokens.spacingSM)
@@ -57,6 +60,7 @@ struct TabItemView: View {
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovering = hovering
+            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
         }
         .onTapGesture {
             onSelect()

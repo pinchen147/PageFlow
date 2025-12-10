@@ -93,6 +93,10 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.autoScales = pdfManager.isAutoScaling
         }
 
+        if pdfView.interactionMode != pdfManager.interactionMode {
+            pdfView.interactionMode = pdfManager.interactionMode
+        }
+
         if pdfManager.fitOnceRequested {
             performOneTimeFit(on: pdfView)
         } else if pdfManager.scaleNeedsUpdate {
