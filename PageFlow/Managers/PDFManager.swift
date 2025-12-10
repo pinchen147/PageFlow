@@ -151,17 +151,15 @@ class PDFManager {
 
     // MARK: - Zoom
 
-    private let zoomStep: CGFloat = 0.25
-
     func zoomIn() {
         isAutoScaling = false
-        scaleFactor = min(scaleFactor + zoomStep, DesignTokens.pdfMaxScale)
+        scaleFactor = min(scaleFactor + DesignTokens.pdfZoomStep, DesignTokens.pdfMaxScale)
         scaleNeedsUpdate = true
     }
 
     func zoomOut() {
         isAutoScaling = false
-        scaleFactor = max(scaleFactor - zoomStep, DesignTokens.pdfMinScale)
+        scaleFactor = max(scaleFactor - DesignTokens.pdfZoomStep, DesignTokens.pdfMinScale)
         scaleNeedsUpdate = true
     }
 

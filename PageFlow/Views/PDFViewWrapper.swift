@@ -154,10 +154,13 @@ struct PDFViewWrapper: NSViewRepresentable {
                 return
             }
 
-            // Apply valid scale
-            if fitScale > 0 && fitScale != pdfView.scaleFactor {
-                pdfView.scaleFactor = fitScale
-                self.pdfManager.scaleFactor = fitScale
+            // Apply valid scale with one zoom step increase
+            if fitScale > 0 {
+                let adjustedScale = min(fitScale + DesignTokens.pdfZoomStep, DesignTokens.pdfMaxScale)
+                if adjustedScale != pdfView.scaleFactor {
+                    pdfView.scaleFactor = adjustedScale
+                    self.pdfManager.scaleFactor = adjustedScale
+                }
             }
 
             // Ensure we stay on the current page
