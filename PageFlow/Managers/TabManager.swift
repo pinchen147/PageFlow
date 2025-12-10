@@ -67,6 +67,9 @@ class TabManager {
     // MARK: - Tab Operations
 
     func createNewTab(with url: URL? = nil, isSecurityScoped: Bool = false) {
+        // Preserve state of current tab before switching away
+        saveCurrentTabState()
+
         let newTab = TabModel(documentURL: url, isSecurityScoped: isSecurityScoped)
 
         tabs.append(newTab)
@@ -168,6 +171,7 @@ class TabManager {
             }
         } else {
             // Current tab has a document, create new tab
+            saveCurrentTabState()
             createNewTab(with: url, isSecurityScoped: isSecurityScoped)
         }
     }
@@ -175,6 +179,14 @@ class TabManager {
     func updateTabDocument(_ tabID: UUID, url: URL) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         tabs[index].documentURL = url
+    }
+
+    func managers(for tabID: UUID) -> (PDFManager, SearchManager)? {
+        guard let pdfManager = pdfManagers[tabID],
+              let searchManager = searchManagers[tabID] else {
+            return nil
+        }
+        return (pdfManager, searchManager)
     }
 
     // MARK: - State Management

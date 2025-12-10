@@ -37,6 +37,13 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
 
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.scaleChanged(_:)),
+            name: .PDFViewScaleChanged,
+            object: pdfView
+        )
+
         // Setup scroll event monitor for Ctrl+Scroll zoom
         context.coordinator.setupScrollMonitor(for: pdfView)
 
@@ -59,6 +66,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
         } else if let currentPage = pdfManager.currentPage,
                   pdfView.currentPage !== currentPage {
+            // Only update page if it actually changed in the manager
             pdfView.go(to: currentPage)
         }
 
@@ -69,6 +77,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         if pdfManager.fitOnceRequested {
             performOneTimeFit(on: pdfView)
         } else if pdfManager.scaleNeedsUpdate {
+            // Only update scale if explicitly requested
             pdfView.scaleFactor = pdfManager.scaleFactor
             pdfManager.scaleNeedsUpdate = false
         }
@@ -103,27 +112,54 @@ struct PDFViewWrapper: NSViewRepresentable {
             name: .PDFViewPageChanged,
             object: pdfView
         )
+        NotificationCenter.default.removeObserver(
+            coordinator,
+            name: .PDFViewScaleChanged,
+            object: pdfView
+        )
         coordinator.removeScrollMonitor()
     }
 
     // MARK: - Private
 
     private func performOneTimeFit(on pdfView: StablePDFView) {
+        performFit(on: pdfView, retryCount: 0)
+    }
+
+    private func performFit(on pdfView: StablePDFView, retryCount: Int) {
         DispatchQueue.main.async {
             guard self.pdfManager.fitOnceRequested else { return }
-            
+
+            // Check if view is ready (has bounds and document)
+            // If not, retry up to 10 times (1 second total)
+            if (pdfView.bounds.isEmpty || pdfView.document == nil) && retryCount < 10 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.performFit(on: pdfView, retryCount: retryCount + 1)
+                }
+                return
+            }
+
             // Temporarily enable autoScales to get the correct fit scale
             let originalAutoScale = pdfView.autoScales
             pdfView.autoScales = true
-            
+
             let fitScale = pdfView.scaleFactorForSizeToFit
-            
-            // Only apply if we got a valid scale
+
+            // If scale is invalid (0) and we haven't timed out, retry
+            if fitScale <= 0 && retryCount < 10 {
+                pdfView.autoScales = originalAutoScale
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.performFit(on: pdfView, retryCount: retryCount + 1)
+                }
+                return
+            }
+
+            // Apply valid scale
             if fitScale > 0 && fitScale != pdfView.scaleFactor {
                 pdfView.scaleFactor = fitScale
                 self.pdfManager.scaleFactor = fitScale
             }
-            
+
             // Ensure we stay on the current page
             if let currentPage = pdfView.currentPage {
                 let pageBounds = currentPage.bounds(for: pdfView.displayBox)
@@ -131,10 +167,10 @@ struct PDFViewWrapper: NSViewRepresentable {
                 let destination = PDFDestination(page: currentPage, at: CGPoint(x: pageBounds.minX, y: pageBounds.maxY))
                 pdfView.go(to: destination)
             }
-            
+
             self.pdfManager.fitOnceRequested = false
             self.pdfManager.scaleNeedsUpdate = false
-            
+
             pdfView.autoScales = originalAutoScale
         }
     }
@@ -145,6 +181,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         let pdfManager: PDFManager
         private var scrollMonitor: Any?
         private weak var pdfView: StablePDFView?
+        private var lastKnownScale: CGFloat?
 
         init(pdfManager: PDFManager) {
             self.pdfManager = pdfManager
@@ -257,6 +294,16 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfManager.currentPageIndex = pageIndex
             pdfManager.currentPage = currentPage
             pdfManager.scaleFactor = pdfView.scaleFactor
+        }
+
+        @objc func scaleChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            let newScale = pdfView.scaleFactor
+
+            guard lastKnownScale != newScale else { return }
+            lastKnownScale = newScale
+
+            pdfManager.scaleFactor = newScale
         }
     }
 }
