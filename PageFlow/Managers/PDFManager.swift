@@ -188,6 +188,23 @@ class PDFManager {
         page.rotation = (page.rotation + 90) % 360
     }
 
+    // MARK: - Outline
+
+    func outlineItems() -> [OutlineItem] {
+        guard let root = document?.outlineRoot else { return [] }
+
+        var items: [OutlineItem] = []
+        let childCount = root.numberOfChildren
+        if childCount > 0 {
+            for index in 0..<childCount {
+                guard let child = root.child(at: index),
+                      let item = OutlineItem(outline: child) else { continue }
+                items.append(item)
+            }
+        }
+        return items
+    }
+
     // MARK: - Save
 
     func save() -> Bool {

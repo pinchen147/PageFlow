@@ -364,8 +364,8 @@
       "id": "F052",
       "category": "navigation",
       "description": "PDF outline/table of contents sidebar",
-      "passes": false,
-      "implementation": "Not yet implemented - PDFDocument.outlineRoot tree view"
+      "passes": true,
+      "implementation": "OutlineSidebar shows PDF outline; PDFManager.outlineItems; toolbar toggle"
     },
     {
       "id": "F053",
@@ -440,8 +440,8 @@
   ],
   "summary": {
     "total": 62,
-    "passing": 31,
-    "failing": 31,
-    "percentComplete": 50
+    "passing": 32,
+    "failing": 30,
+    "percentComplete": 52
   }
 }

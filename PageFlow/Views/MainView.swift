@@ -23,16 +23,29 @@ struct MainView: View {
     @State private var goToPageInput = ""
     @State private var isDragHovering = false
     @State private var isBottomBarHovered = false
+    @State private var showingOutline = false
 
     var body: some View {
-        ZStack {
-            if pdfManager.hasDocument {
-                PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
-                    .ignoresSafeArea(.all, edges: .all)
-            } else {
-                emptyState
+        HStack(alignment: .top, spacing: 0) {
+            if showingOutline, pdfManager.hasDocument {
+                OutlineSidebar(pdfManager: pdfManager, items: pdfManager.outlineItems())
+                    .frame(width: DesignTokens.sidebarWidth)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
+                    .padding(.bottom, DesignTokens.spacingMD)
+                    .padding(.leading, DesignTokens.spacingXS)
+            }
+
+            ZStack {
+                if pdfManager.hasDocument {
+                    PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
+                        .ignoresSafeArea(.all, edges: .all)
+                } else {
+                    emptyState
+                }
             }
         }
+        .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingOutline)
         .ignoresSafeArea(.all, edges: .all)
         .overlay(alignment: .top) {
             HStack(spacing: 0) {
@@ -45,7 +58,12 @@ struct MainView: View {
                     .frame(maxWidth: .infinity)
 
                 // Floating toolbar
-                FloatingToolbar(pdfManager: pdfManager, showingFileImporter: $showingFileImporter, isTopBarHovered: $isTopBarHovered)
+                FloatingToolbar(
+                    pdfManager: pdfManager,
+                    showingFileImporter: $showingFileImporter,
+                    isTopBarHovered: $isTopBarHovered,
+                    showingOutline: $showingOutline
+                )
                     .padding(.top, DesignTokens.spacingXS)
                     .padding(.trailing, DesignTokens.floatingToolbarPadding)
             }
@@ -105,6 +123,11 @@ struct MainView: View {
         .toolbar(.hidden)
         .background(WindowConfigurator())
         .ignoresSafeArea(.all, edges: .all)
+        .onChange(of: pdfManager.hasDocument) { _, hasDoc in
+            if !hasDoc {
+                showingOutline = false
+            }
+        }
     }
 
     // MARK: - Empty State

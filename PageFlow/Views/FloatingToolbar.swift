@@ -11,6 +11,7 @@ struct FloatingToolbar: View {
     @Bindable var pdfManager: PDFManager
     @Binding var showingFileImporter: Bool
     @Binding var isTopBarHovered: Bool
+    @Binding var showingOutline: Bool
     @State private var lastFitTapTime: Date?
     private let doubleTapWindow: TimeInterval = 0.3
 
@@ -52,6 +53,11 @@ struct FloatingToolbar: View {
             toolbarButton(
                 icon: pdfManager.isAutoScaling ? "arrow.down.forward.and.arrow.up.backward.circle.fill" : "arrow.down.forward.and.arrow.up.backward.circle",
                 action: handleFitButtonTap,
+                disabled: !pdfManager.hasDocument
+            )
+            toolbarButton(
+                icon: showingOutline ? "sidebar.leading" : "sidebar.leading",
+                action: { withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { showingOutline.toggle() } },
                 disabled: !pdfManager.hasDocument
             )
             toolbarButton(icon: "rotate.right", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.hasDocument)
