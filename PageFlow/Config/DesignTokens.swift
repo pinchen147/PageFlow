@@ -31,6 +31,10 @@ struct DesignTokens {
     static let highlightBlue = NSColor(red: 0.0, green: 0.5, blue: 1.0, alpha: 0.4)
     static let highlightPink = NSColor(red: 1.0, green: 0.0, blue: 0.5, alpha: 0.4)
     static let underlineColor = NSColor.black
+    static let underlineYellow = NSColor(red: 1.0, green: 1.0, blue: 0.0, alpha: 1.0) // #FFFF00
+    static let underlineGreen = NSColor(red: 0.0, green: 0.7, blue: 0.258, alpha: 1.0) // #00B342
+    static let underlineRed = NSColor(red: 0.824, green: 0.0, blue: 0.0, alpha: 1.0) // #D20000
+    static let underlineBlue = NSColor(red: 0.0, green: 0.447, blue: 0.776, alpha: 1.0) // #0072C6
 
     // MARK: - Search Highlight Colors
 

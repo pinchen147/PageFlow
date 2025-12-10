@@ -85,10 +85,10 @@ struct FloatingToolbar: View {
     private var underlineColorMenu: some View {
         Menu {
             underlineColorItem(label: "Default", color: DesignTokens.underlineColor)
-            underlineColorItem(label: "Yellow", color: DesignTokens.highlightYellow)
-            underlineColorItem(label: "Green", color: DesignTokens.highlightGreen)
-            underlineColorItem(label: "Blue", color: DesignTokens.highlightBlue)
-            underlineColorItem(label: "Pink", color: DesignTokens.highlightPink)
+            underlineColorItem(label: "Yellow", color: DesignTokens.underlineYellow)
+            underlineColorItem(label: "Green", color: DesignTokens.underlineGreen)
+            underlineColorItem(label: "Red", color: DesignTokens.underlineRed)
+            underlineColorItem(label: "Blue", color: DesignTokens.underlineBlue)
         } label: {
             menuLabel(icon: "paintpalette")
         }
