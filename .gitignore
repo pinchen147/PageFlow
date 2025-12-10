@@ -6,3 +6,6 @@ build/
 *.xcworkspace
 xcuserdata/
 xcshareddata/WorkspaceSettings.xcsettings
+OSX-PDF-Viewer-master/
+Reader/
+
