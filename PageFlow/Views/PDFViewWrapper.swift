@@ -314,11 +314,17 @@ struct PDFViewWrapper: NSViewRepresentable {
             let pointInView = gesture.location(in: pdfView)
             guard let page = pdfView.page(for: pointInView, nearest: true) else {
                 annotationManager.selectedAnnotation = nil
+                pdfView.clearSelection()
                 return
             }
 
             let pointOnPage = pdfView.convert(pointInView, to: page)
-            annotationManager.selectedAnnotation = page.annotation(at: pointOnPage)
+            if let annotation = page.annotation(at: pointOnPage) {
+                annotationManager.selectedAnnotation = annotation
+            } else {
+                annotationManager.selectedAnnotation = nil
+                pdfView.clearSelection()
+            }
         }
 
         func removeScrollMonitor() {
