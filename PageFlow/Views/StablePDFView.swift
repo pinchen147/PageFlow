@@ -73,7 +73,8 @@ final class StablePDFView: PDFView {
         verticalTrackingArea = vArea
 
         // Bottom edge (Horizontal Scroller)
-        let hRect = NSRect(x: 0, y: 0, width: bounds.width, height: hoverZoneSize)
+        // Note: PDFView is flipped, so y: bounds.height is the bottom
+        let hRect = NSRect(x: 0, y: bounds.height - hoverZoneSize, width: bounds.width, height: hoverZoneSize)
         let hArea = NSTrackingArea(
             rect: hRect,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],

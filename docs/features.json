@@ -1,7 +1,7 @@
 {
   "project": "PageFlow",
   "version": "1.0.0",
-  "lastUpdated": "2025-12-08",
+  "lastUpdated": "2025-12-10",
   "features": [
     {
       "id": "F001",
@@ -408,12 +408,40 @@
       "description": "Per-page text notes (separate from PDF comments)",
       "passes": false,
       "implementation": "Not yet implemented - requires local storage manager"
+    },
+    {
+      "id": "F059",
+      "category": "ui",
+      "description": "Glassmorphic scrollbar knob",
+      "passes": true,
+      "implementation": "GlassScroller.swift - custom drawKnob with DesignTokens styling"
+    },
+    {
+      "id": "F060",
+      "category": "ui",
+      "description": "Robust hover-reveal scrollbar mechanism",
+      "passes": true,
+      "implementation": "StablePDFView.swift - native NSTrackingArea detection for vertical and horizontal zones"
+    },
+    {
+      "id": "F061",
+      "category": "ui",
+      "description": "Strict scrollbar visibility (override system prefs)",
+      "passes": true,
+      "implementation": "StablePDFView.swift - autohidesScrollers=false + manual alpha control"
+    },
+    {
+      "id": "F062",
+      "category": "zoom",
+      "description": "Fit to Window maintains current page context",
+      "passes": true,
+      "implementation": "PDFViewWrapper.swift - performOneTimeFit uses pdfView.currentPage"
     }
   ],
   "summary": {
-    "total": 58,
-    "passing": 25,
+    "total": 62,
+    "passing": 29,
     "failing": 33,
-    "percentComplete": 43
+    "percentComplete": 47
   }
 }

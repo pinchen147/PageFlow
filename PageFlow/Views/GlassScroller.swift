@@ -32,7 +32,7 @@ class GlassScroller: NSScroller {
         // Inset the knob slightly to make it look floating
         // Standard knob fills the width; we want a pill shape
         let knobRect = self.rect(for: .knob)
-        let radius = knobRect.width / 2
+        let radius = min(knobRect.width, knobRect.height) / 2
         
         // 1. Shadow
         // Matches DesignTokens: color: .black.opacity(0.1), radius: 10, y: 5
