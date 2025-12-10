@@ -7,10 +7,12 @@
 
 import SwiftUI
 import PDFKit
+import AppKit
 
 struct PDFViewWrapper: NSViewRepresentable {
     @Bindable var pdfManager: PDFManager
     var searchManager: SearchManager
+    @Bindable var annotationManager: AnnotationManager
 
     func makeNSView(context: Context) -> StablePDFView {
         let pdfView = StablePDFView()
@@ -29,6 +31,22 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.enableDataDetectors = true
         }
         pdfView.delegate = context.coordinator
+
+        annotationManager.configure(
+            pdfManager: pdfManager,
+            selectionProvider: { [weak pdfView] in
+                guard let pdfView = pdfView else { return (nil, nil) }
+                return (pdfView.currentSelection, pdfView.currentPage)
+            }
+        )
+
+        let clickRecognizer = NSClickGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleAnnotationClick(_:))
+        )
+        pdfView.addGestureRecognizer(clickRecognizer)
+
+        context.coordinator.setPDFView(pdfView)
 
         NotificationCenter.default.addObserver(
             context.coordinator,
@@ -52,6 +70,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     func updateNSView(_ pdfView: StablePDFView, context: Context) {
         if pdfView.document !== pdfManager.document {
+            annotationManager.selectedAnnotation = nil
             pdfView.document = pdfManager.document
 
             if let currentPage = pdfManager.currentPage {
@@ -103,7 +122,7 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(pdfManager: pdfManager)
+        Coordinator(pdfManager: pdfManager, annotationManager: annotationManager)
     }
 
     static func dismantleNSView(_ pdfView: StablePDFView, coordinator: Coordinator) {
@@ -182,12 +201,14 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     class Coordinator: NSObject, PDFViewDelegate {
         let pdfManager: PDFManager
+        let annotationManager: AnnotationManager
         private var scrollMonitor: Any?
         private weak var pdfView: StablePDFView?
         private var lastKnownScale: CGFloat?
 
-        init(pdfManager: PDFManager) {
+        init(pdfManager: PDFManager, annotationManager: AnnotationManager) {
             self.pdfManager = pdfManager
+            self.annotationManager = annotationManager
         }
 
         func setupScrollMonitor(for pdfView: StablePDFView) {
@@ -277,6 +298,27 @@ struct PDFViewWrapper: NSViewRepresentable {
 
                 return nil
             }
+        }
+
+        func setPDFView(_ pdfView: StablePDFView) {
+            self.pdfView = pdfView
+        }
+
+        @objc
+        func handleAnnotationClick(_ gesture: NSClickGestureRecognizer) {
+            guard let pdfView = gesture.view as? PDFView else {
+                annotationManager.selectedAnnotation = nil
+                return
+            }
+
+            let pointInView = gesture.location(in: pdfView)
+            guard let page = pdfView.page(for: pointInView, nearest: true) else {
+                annotationManager.selectedAnnotation = nil
+                return
+            }
+
+            let pointOnPage = pdfView.convert(pointInView, to: page)
+            annotationManager.selectedAnnotation = page.annotation(at: pointOnPage)
         }
 
         func removeScrollMonitor() {

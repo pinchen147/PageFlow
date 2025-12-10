@@ -9,6 +9,7 @@ import SwiftUI
 
 struct FloatingToolbar: View {
     @Bindable var pdfManager: PDFManager
+    @Bindable var annotationManager: AnnotationManager
     @Binding var showingFileImporter: Bool
     @Binding var isTopBarHovered: Bool
     @Binding var showingOutline: Bool
@@ -62,11 +63,38 @@ struct FloatingToolbar: View {
             )
             toolbarButton(icon: "rotate.right", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.hasDocument)
             Divider().frame(height: 16)
+            toolbarButton(
+                icon: "underline",
+                action: { annotationManager.underlineSelection(color: annotationManager.underlineColor) },
+                disabled: !pdfManager.hasDocument
+            )
+            underlineColorMenu
+            toolbarButton(
+                icon: "eraser",
+                action: { annotationManager.removeSelectedAnnotation() },
+                disabled: annotationManager.selectedAnnotation == nil
+            )
+            Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
             toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
         }
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
+    }
+
+    private var underlineColorMenu: some View {
+        Menu {
+            underlineColorItem(label: "Default", color: DesignTokens.underlineColor)
+            underlineColorItem(label: "Yellow", color: DesignTokens.highlightYellow)
+            underlineColorItem(label: "Green", color: DesignTokens.highlightGreen)
+            underlineColorItem(label: "Blue", color: DesignTokens.highlightBlue)
+            underlineColorItem(label: "Pink", color: DesignTokens.highlightPink)
+        } label: {
+            menuLabel(icon: "paintpalette")
+        }
+        .fixedSize()
+        .disabled(!pdfManager.hasDocument)
+        .opacity(pdfManager.hasDocument ? 1 : 0.3)
     }
 
     private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
@@ -79,6 +107,26 @@ struct FloatingToolbar: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.3 : 1.0)
+    }
+
+    private func menuLabel(icon: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
+            .frame(width: DesignTokens.toolbarButtonSize, height: DesignTokens.toolbarButtonSize)
+            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
+    }
+
+    private func underlineColorItem(label: String, color: NSColor) -> some View {
+        Button {
+            annotationManager.underlineColor = color
+        } label: {
+            HStack {
+                Circle()
+                    .fill(Color(nsColor: color))
+                    .frame(width: 12, height: 12)
+                Text(label)
+            }
+        }
     }
 
     private func handleFitButtonTap() {

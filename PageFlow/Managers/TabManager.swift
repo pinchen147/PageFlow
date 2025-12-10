@@ -20,6 +20,7 @@ class TabManager {
     // Per-tab runtime state (not persisted)
     private var pdfManagers: [UUID: PDFManager] = [:]
     private var searchManagers: [UUID: SearchManager] = [:]
+    private var annotationManagers: [UUID: AnnotationManager] = [:]
 
     // Session persistence
     private let sessionKey = "tabSession"
@@ -46,6 +47,11 @@ class TabManager {
     var activeSearchManager: SearchManager? {
         guard let id = activeTabID else { return nil }
         return searchManagers[id]
+    }
+
+    var activeAnnotationManager: AnnotationManager? {
+        guard let id = activeTabID else { return nil }
+        return annotationManagers[id]
     }
 
     var hasMultipleTabs: Bool {
@@ -93,6 +99,7 @@ class TabManager {
         pdfManagers[tabID]?.closeDocument()
         pdfManagers.removeValue(forKey: tabID)
         searchManagers.removeValue(forKey: tabID)
+        annotationManagers.removeValue(forKey: tabID)
 
         tabs.remove(at: index)
 
@@ -182,12 +189,13 @@ class TabManager {
         tabs[index].documentURL = url
     }
 
-    func managers(for tabID: UUID) -> (PDFManager, SearchManager)? {
+    func managers(for tabID: UUID) -> (PDFManager, SearchManager, AnnotationManager)? {
         guard let pdfManager = pdfManagers[tabID],
-              let searchManager = searchManagers[tabID] else {
+              let searchManager = searchManagers[tabID],
+              let annotationManager = annotationManagers[tabID] else {
             return nil
         }
-        return (pdfManager, searchManager)
+        return (pdfManager, searchManager, annotationManager)
     }
 
     // MARK: - State Management
@@ -195,6 +203,7 @@ class TabManager {
     private func createManagersForTab(_ tab: TabModel) {
         pdfManagers[tab.id] = PDFManager()
         searchManagers[tab.id] = SearchManager()
+        annotationManagers[tab.id] = AnnotationManager()
     }
 
     private func saveCurrentTabState() {
@@ -335,6 +344,7 @@ class TabManager {
         tabs.removeAll()
         pdfManagers.removeAll()
         searchManagers.removeAll()
+        annotationManagers.removeAll()
 
         // Restore each tab - only keep if document loads successfully
         for tab in savedTabs {

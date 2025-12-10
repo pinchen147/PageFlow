@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @Bindable var pdfManager: PDFManager
     var searchManager: SearchManager
+    @Bindable var annotationManager: AnnotationManager
     @Binding var showingSearch: Bool
     @Binding var isTopBarHovered: Bool
     @Bindable var tabManager: TabManager
@@ -29,7 +30,11 @@ struct MainView: View {
     var body: some View {
         ZStack {
             if pdfManager.hasDocument {
-                PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
+                PDFViewWrapper(
+                    pdfManager: pdfManager,
+                    searchManager: searchManager,
+                    annotationManager: annotationManager
+                )
             } else {
                 emptyState
             }
@@ -66,6 +71,7 @@ struct MainView: View {
                 // Floating toolbar
                 FloatingToolbar(
                     pdfManager: pdfManager,
+                    annotationManager: annotationManager,
                     showingFileImporter: $showingFileImporter,
                     isTopBarHovered: $isTopBarHovered,
                     showingOutline: $showingOutline
@@ -369,6 +375,7 @@ struct MainView: View {
     MainView(
         pdfManager: PDFManager(),
         searchManager: SearchManager(),
+        annotationManager: AnnotationManager(),
         showingSearch: .constant(false),
         isTopBarHovered: .constant(false),
         tabManager: TabManager(),

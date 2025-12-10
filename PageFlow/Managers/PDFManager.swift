@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AppKit
 import PDFKit
 import Observation
 
@@ -185,9 +186,27 @@ class PDFManager {
     }
 
     func rotateClockwise() {
+        applyRotation(delta: 90, actionName: "Rotate Page")
+    }
+
+    func rotateCounterClockwise() {
+        applyRotation(delta: -90, actionName: "Rotate Page")
+    }
+
+    private func applyRotation(delta: Int, actionName: String) {
         guard let page = currentPage else { return }
-        page.rotation = (page.rotation + 90) % 360
+
+        let oldRotation = page.rotation
+        let newRotation = (oldRotation + delta + 360) % 360
+        page.rotation = newRotation
         isDirty = true
+
+        if let undoManager = NSApp.keyWindow?.undoManager {
+            undoManager.registerUndo(withTarget: self) { target in
+                target.applyRotation(delta: oldRotation - newRotation, actionName: actionName)
+            }
+            undoManager.setActionName(actionName)
+        }
     }
 
     // MARK: - Outline

@@ -118,6 +118,17 @@ struct PageFlowApp: App {
                     .disabled(index > tabManager.tabCount)
                 }
             }
+            CommandGroup(before: .pasteboard) {
+                Button("Undo") {
+                    NSApp.sendAction(#selector(UndoManager.undo), to: nil, from: nil)
+                }
+                .keyboardShortcut("z", modifiers: [.command])
+
+                Button("Redo") {
+                    NSApp.sendAction(#selector(UndoManager.redo), to: nil, from: nil)
+                }
+                .keyboardShortcut("Z", modifiers: [.command, .shift])
+            }
         }
     }
 
