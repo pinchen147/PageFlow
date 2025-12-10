@@ -13,6 +13,7 @@ struct MainView: View {
     @Bindable var pdfManager: PDFManager
     var searchManager: SearchManager
     @Bindable var annotationManager: AnnotationManager
+    @Bindable var commentManager: CommentManager
     @Binding var showingSearch: Bool
     @Binding var isTopBarHovered: Bool
     @Bindable var tabManager: TabManager
@@ -24,6 +25,7 @@ struct MainView: View {
     @State private var isDragHovering = false
     @State private var isBottomBarHovered = false
     @State private var showingOutline = false
+    @State private var showingComments = false
     @State private var toastMessage: String?
     @State private var toastWorkItem: DispatchWorkItem?
 
@@ -33,7 +35,8 @@ struct MainView: View {
                 PDFViewWrapper(
                     pdfManager: pdfManager,
                     searchManager: searchManager,
-                    annotationManager: annotationManager
+                    annotationManager: annotationManager,
+                    commentManager: commentManager
                 )
             } else {
                 emptyState
@@ -58,6 +61,22 @@ struct MainView: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
+        .overlay(alignment: .topTrailing) {
+            if showingComments, pdfManager.hasDocument {
+                CommentsSidebar(
+                    commentManager: commentManager,
+                    onClose: {
+                        withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
+                            showingComments = false
+                        }
+                    }
+                )
+                    .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
+                    .padding(.bottom, DesignTokens.spacingMD)
+                    .padding(.trailing, DesignTokens.spacingXS)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
         .overlay(alignment: .top) {
             HStack(spacing: 0) {
                 // Traffic lights
@@ -72,9 +91,11 @@ struct MainView: View {
                 FloatingToolbar(
                     pdfManager: pdfManager,
                     annotationManager: annotationManager,
+                    commentManager: commentManager,
                     showingFileImporter: $showingFileImporter,
                     isTopBarHovered: $isTopBarHovered,
-                    showingOutline: $showingOutline
+                    showingOutline: $showingOutline,
+                    showingComments: $showingComments
                 )
                     .padding(.top, DesignTokens.spacingXS)
                     .padding(.trailing, DesignTokens.floatingToolbarPadding)
@@ -135,6 +156,7 @@ struct MainView: View {
         .onChange(of: pdfManager.hasDocument) { _, hasDoc in
             if !hasDoc {
                 showingOutline = false
+                showingComments = false
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .saveResult)) { notification in
@@ -376,6 +398,7 @@ struct MainView: View {
         pdfManager: PDFManager(),
         searchManager: SearchManager(),
         annotationManager: AnnotationManager(),
+        commentManager: CommentManager(),
         showingSearch: .constant(false),
         isTopBarHovered: .constant(false),
         tabManager: TabManager(),

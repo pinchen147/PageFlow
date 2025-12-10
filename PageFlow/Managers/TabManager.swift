@@ -21,6 +21,7 @@ class TabManager {
     private var pdfManagers: [UUID: PDFManager] = [:]
     private var searchManagers: [UUID: SearchManager] = [:]
     private var annotationManagers: [UUID: AnnotationManager] = [:]
+    private var commentManagers: [UUID: CommentManager] = [:]
 
     // Session persistence
     private let sessionKey = "tabSession"
@@ -52,6 +53,11 @@ class TabManager {
     var activeAnnotationManager: AnnotationManager? {
         guard let id = activeTabID else { return nil }
         return annotationManagers[id]
+    }
+
+    var activeCommentManager: CommentManager? {
+        guard let id = activeTabID else { return nil }
+        return commentManagers[id]
     }
 
     var hasMultipleTabs: Bool {
@@ -97,9 +103,11 @@ class TabManager {
 
         // Clean up managers
         pdfManagers[tabID]?.closeDocument()
+        commentManagers[tabID]?.clearComments()
         pdfManagers.removeValue(forKey: tabID)
         searchManagers.removeValue(forKey: tabID)
         annotationManagers.removeValue(forKey: tabID)
+        commentManagers.removeValue(forKey: tabID)
 
         tabs.remove(at: index)
 
@@ -189,13 +197,14 @@ class TabManager {
         tabs[index].documentURL = url
     }
 
-    func managers(for tabID: UUID) -> (PDFManager, SearchManager, AnnotationManager)? {
+    func managers(for tabID: UUID) -> (PDFManager, SearchManager, AnnotationManager, CommentManager)? {
         guard let pdfManager = pdfManagers[tabID],
               let searchManager = searchManagers[tabID],
-              let annotationManager = annotationManagers[tabID] else {
+              let annotationManager = annotationManagers[tabID],
+              let commentManager = commentManagers[tabID] else {
             return nil
         }
-        return (pdfManager, searchManager, annotationManager)
+        return (pdfManager, searchManager, annotationManager, commentManager)
     }
 
     // MARK: - State Management
@@ -204,6 +213,7 @@ class TabManager {
         pdfManagers[tab.id] = PDFManager()
         searchManagers[tab.id] = SearchManager()
         annotationManagers[tab.id] = AnnotationManager()
+        commentManagers[tab.id] = CommentManager()
     }
 
     private func saveCurrentTabState() {
@@ -340,11 +350,13 @@ class TabManager {
         // Clear initial empty tab
         for tab in tabs {
             pdfManagers[tab.id]?.closeDocument()
+            commentManagers[tab.id]?.clearComments()
         }
         tabs.removeAll()
         pdfManagers.removeAll()
         searchManagers.removeAll()
         annotationManagers.removeAll()
+        commentManagers.removeAll()
 
         // Restore each tab - only keep if document loads successfully
         for tab in savedTabs {
@@ -360,6 +372,8 @@ class TabManager {
                 // Clean up managers if load failed
                 pdfManagers.removeValue(forKey: tab.id)
                 searchManagers.removeValue(forKey: tab.id)
+                annotationManagers.removeValue(forKey: tab.id)
+                commentManagers.removeValue(forKey: tab.id)
             }
         }
 

@@ -10,9 +10,11 @@ import SwiftUI
 struct FloatingToolbar: View {
     @Bindable var pdfManager: PDFManager
     @Bindable var annotationManager: AnnotationManager
+    @Bindable var commentManager: CommentManager
     @Binding var showingFileImporter: Bool
     @Binding var isTopBarHovered: Bool
     @Binding var showingOutline: Bool
+    @Binding var showingComments: Bool
     @State private var lastFitTapTime: Date?
     private let doubleTapWindow: TimeInterval = 0.3
 
@@ -78,7 +80,17 @@ struct FloatingToolbar: View {
                 action: { annotationManager.highlightSelection(color: annotationManager.highlightColor) },
                 disabled: !pdfManager.hasDocument
             )
+            toolbarButton(
+                icon: "text.bubble",
+                action: { _ = commentManager.addComment() },
+                disabled: !pdfManager.hasDocument
+            )
             colorMenu
+            toolbarButton(
+                icon: showingComments ? "bubble.right.fill" : "bubble.right",
+                action: { withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { showingComments.toggle() } },
+                disabled: !pdfManager.hasDocument
+            )
             Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
             toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)

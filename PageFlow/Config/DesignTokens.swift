@@ -91,6 +91,13 @@ struct DesignTokens {
     static let pdfDefaultScale: CGFloat = 1.0
     static let pdfZoomStep: CGFloat = 0.25
 
+    // MARK: - Comments
+
+    static let commentHighlightColor = NSColor.gray.withAlphaComponent(0.6)
+    static let commentSidebarWidth: CGFloat = 260
+    static let commentBubbleCornerRadius: CGFloat = 12
+    static let commentTailSize: CGFloat = 8
+
     // MARK: - Tabs
 
     static let tabBarHeight: CGFloat = 32

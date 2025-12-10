@@ -13,6 +13,7 @@ struct PDFViewWrapper: NSViewRepresentable {
     @Bindable var pdfManager: PDFManager
     var searchManager: SearchManager
     @Bindable var annotationManager: AnnotationManager
+    @Bindable var commentManager: CommentManager
 
     func makeNSView(context: Context) -> StablePDFView {
         let pdfView = StablePDFView()
@@ -33,6 +34,14 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.delegate = context.coordinator
 
         annotationManager.configure(
+            pdfManager: pdfManager,
+            selectionProvider: { [weak pdfView] in
+                guard let pdfView = pdfView else { return (nil, nil) }
+                return (pdfView.currentSelection, pdfView.currentPage)
+            }
+        )
+
+        commentManager.configure(
             pdfManager: pdfManager,
             selectionProvider: { [weak pdfView] in
                 guard let pdfView = pdfView else { return (nil, nil) }
@@ -75,6 +84,12 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             if let currentPage = pdfManager.currentPage {
                 pdfView.go(to: currentPage)
+            }
+
+            if let document = pdfManager.document {
+                commentManager.loadComments(from: document)
+            } else {
+                commentManager.clearComments()
             }
 
             pdfView.autoScales = pdfManager.isAutoScaling

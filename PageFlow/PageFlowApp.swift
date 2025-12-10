@@ -92,6 +92,12 @@ struct PageFlowApp: App {
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(tabManager.activePDFManager?.hasDocument != true)
 
+                Button("Add Comment") {
+                    tabManager.activeCommentManager?.addComment()
+                }
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(tabManager.activePDFManager?.hasDocument != true)
+
                 Button("Underline Selection") {
                     tabManager.activeAnnotationManager?.underlineSelection()
                 }
