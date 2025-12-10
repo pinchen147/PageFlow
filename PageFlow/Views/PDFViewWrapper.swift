@@ -124,10 +124,11 @@ struct PDFViewWrapper: NSViewRepresentable {
                 self.pdfManager.scaleFactor = fitScale
             }
             
-            // Ensure we are at the top of the first page
-            if let firstPage = pdfView.document?.page(at: 0) {
-                let pageBounds = firstPage.bounds(for: pdfView.displayBox)
-                let destination = PDFDestination(page: firstPage, at: CGPoint(x: pageBounds.minX, y: pageBounds.maxY))
+            // Ensure we stay on the current page
+            if let currentPage = pdfView.currentPage {
+                let pageBounds = currentPage.bounds(for: pdfView.displayBox)
+                // Maintain current scroll position relative to page if possible, or go to top
+                let destination = PDFDestination(page: currentPage, at: CGPoint(x: pageBounds.minX, y: pageBounds.maxY))
                 pdfView.go(to: destination)
             }
             
