@@ -22,15 +22,13 @@ struct MainView: View {
     @State private var showingGoToPage = false
     @State private var goToPageInput = ""
     @State private var isDragHovering = false
+    @State private var isBottomBarHovered = false
 
     var body: some View {
         ZStack {
             if pdfManager.hasDocument {
                 PDFViewWrapper(pdfManager: pdfManager, searchManager: searchManager)
                     .ignoresSafeArea(.all, edges: .all)
-                    .overlay(alignment: .bottomTrailing) {
-                        pageIndicator
-                    }
             } else {
                 emptyState
             }
@@ -66,6 +64,11 @@ struct MainView: View {
                 }
             }
             .allowsHitTesting(true)
+        }
+        .overlay(alignment: .bottom) {
+            if pdfManager.hasDocument {
+                bottomHoverBar
+            }
         }
         .overlay(alignment: .bottom) {
             if showingSearch {
@@ -160,6 +163,32 @@ struct MainView: View {
         .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
         .padding(.bottom, DesignTokens.spacingXS)
         .padding(.trailing, DesignTokens.spacingMD)
+    }
+
+    private var bottomHoverBar: some View {
+        let isIndicatorVisible = isBottomBarHovered || showingGoToPage
+
+        return HStack {
+            Spacer()
+            pageIndicator
+                .opacity(isIndicatorVisible ? 1 : 0)
+                .allowsHitTesting(isIndicatorVisible)
+                .animation(.easeInOut(duration: DesignTokens.animationFast), value: isIndicatorVisible)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: DesignTokens.trafficLightHotspotHeight)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isBottomBarHovered = hovering
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active:
+                isBottomBarHovered = true
+            case .ended:
+                isBottomBarHovered = false
+            }
+        }
     }
 
     // MARK: - Go To Page Dialog

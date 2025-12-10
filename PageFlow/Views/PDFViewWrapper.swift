@@ -25,7 +25,9 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.minScaleFactor = DesignTokens.pdfMinScale
         pdfView.maxScaleFactor = DesignTokens.pdfMaxScale
         pdfView.scaleFactor = pdfManager.scaleFactor
-        pdfView.enableDataDetectors = true
+        if #unavailable(macOS 15.0) {
+            pdfView.enableDataDetectors = true
+        }
         pdfView.delegate = context.coordinator
 
         NotificationCenter.default.addObserver(
@@ -50,7 +52,11 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
 
             pdfView.autoScales = pdfManager.isAutoScaling
-            applyInitialScale(to: pdfView)
+            if pdfManager.fitOnceRequested {
+                performOneTimeFit(on: pdfView)
+            } else {
+                pdfView.scaleFactor = pdfManager.scaleFactor
+            }
         } else if let currentPage = pdfManager.currentPage,
                   pdfView.currentPage !== currentPage {
             pdfView.go(to: currentPage)
@@ -61,10 +67,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         if pdfManager.fitOnceRequested {
-            let fitScale = pdfView.scaleFactorForSizeToFit
-            pdfView.scaleFactor = fitScale
-            pdfManager.scaleFactor = fitScale
-            pdfManager.fitOnceRequested = false
+            performOneTimeFit(on: pdfView)
         } else if pdfManager.scaleNeedsUpdate {
             pdfView.scaleFactor = pdfManager.scaleFactor
             pdfManager.scaleNeedsUpdate = false
@@ -105,12 +108,34 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     // MARK: - Private
 
-    private func applyInitialScale(to pdfView: StablePDFView) {
-        let fitScale = pdfView.scaleFactorForSizeToFit
-        pdfView.scaleFactor = fitScale
-        pdfManager.scaleFactor = fitScale
-        pdfManager.fitOnceRequested = false
-        pdfManager.scaleNeedsUpdate = false
+    private func performOneTimeFit(on pdfView: StablePDFView) {
+        DispatchQueue.main.async {
+            guard self.pdfManager.fitOnceRequested else { return }
+            
+            // Temporarily enable autoScales to get the correct fit scale
+            let originalAutoScale = pdfView.autoScales
+            pdfView.autoScales = true
+            
+            let fitScale = pdfView.scaleFactorForSizeToFit
+            
+            // Only apply if we got a valid scale
+            if fitScale > 0 && fitScale != pdfView.scaleFactor {
+                pdfView.scaleFactor = fitScale
+                self.pdfManager.scaleFactor = fitScale
+            }
+            
+            // Ensure we are at the top of the first page
+            if let firstPage = pdfView.document?.page(at: 0) {
+                let pageBounds = firstPage.bounds(for: pdfView.displayBox)
+                let destination = PDFDestination(page: firstPage, at: CGPoint(x: pageBounds.minX, y: pageBounds.maxY))
+                pdfView.go(to: destination)
+            }
+            
+            self.pdfManager.fitOnceRequested = false
+            self.pdfManager.scaleNeedsUpdate = false
+            
+            pdfView.autoScales = originalAutoScale
+        }
     }
 
     // MARK: - Coordinator

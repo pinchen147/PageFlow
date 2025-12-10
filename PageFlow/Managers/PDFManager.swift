@@ -66,9 +66,10 @@ class PDFManager {
         documentURL = url
         currentPageIndex = 0
         currentPage = pdfDocument.page(at: 0)
-        isAutoScaling = true
+        isAutoScaling = false
         fitOnceRequested = true
         scaleNeedsUpdate = false
+        scaleFactor = DesignTokens.pdfDefaultScale
 
         return true
     }

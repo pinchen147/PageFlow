@@ -16,6 +16,8 @@ struct FloatingToolbar: View {
     private let doubleTapWindow: TimeInterval = 0.3
 
     var body: some View {
+        let isVisible = isTopBarHovered
+
         ZStack(alignment: .trailing) {
             expandedContainer
                 .scaleEffect(x: isExpanded ? 1 : 0.01, y: 1, anchor: .trailing)
@@ -30,6 +32,9 @@ struct FloatingToolbar: View {
         .frame(height: DesignTokens.collapsedToolbarSize)
         .animation(.easeInOut(duration: 0.2), value: isExpanded)
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: isTopBarHovered)
+        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible)
+        .animation(.easeInOut(duration: DesignTokens.animationFast), value: isVisible)
     }
 
     private var collapsedButtonOpacity: Double {
