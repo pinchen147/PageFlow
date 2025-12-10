@@ -163,5 +163,13 @@ final class AnnotationManager {
     private func reAdd(_ annotation: PDFAnnotation, to page: PDFPage) {
         page.addAnnotation(annotation)
         pdfManager?.isDirty = true
+
+        // Register undo to enable infinite undo/redo cycle
+        if let undoManager = NSApp.keyWindow?.undoManager {
+            undoManager.registerUndo(withTarget: self) { target in
+                target.remove(annotation, from: page, registerRedo: true)
+            }
+            undoManager.setActionName("Add Annotation")
+        }
     }
 }

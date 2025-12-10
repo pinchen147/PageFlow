@@ -14,6 +14,8 @@ struct FloatingToolbar: View {
     @Binding var isTopBarHovered: Bool
     @Binding var showingOutline: Bool
     @State private var lastFitTapTime: Date?
+    @State private var canUndo = false
+    @State private var canRedo = false
     private let doubleTapWindow: TimeInterval = 0.3
 
     var body: some View {
@@ -65,7 +67,10 @@ struct FloatingToolbar: View {
             Divider().frame(height: 16)
             paletteControl(
                 actionIcon: "underline",
-                action: { annotationManager.underlineSelection(color: annotationManager.underlineColor) },
+                action: {
+                    annotationManager.underlineSelection(color: annotationManager.underlineColor)
+                    refreshUndoState()
+                },
                 options: underlinePalette,
                 selectedColor: annotationManager.underlineColor,
                 onSelect: { annotationManager.underlineColor = $0 },
@@ -73,7 +78,10 @@ struct FloatingToolbar: View {
             )
             paletteControl(
                 actionIcon: "highlighter",
-                action: { annotationManager.highlightSelection(color: annotationManager.highlightColor) },
+                action: {
+                    annotationManager.highlightSelection(color: annotationManager.highlightColor)
+                    refreshUndoState()
+                },
                 options: highlightPalette,
                 selectedColor: annotationManager.highlightColor,
                 onSelect: { annotationManager.highlightColor = $0 },
@@ -81,8 +89,19 @@ struct FloatingToolbar: View {
             )
             toolbarButton(
                 icon: "arrow.uturn.backward",
-                action: { NSApp.sendAction(#selector(UndoManager.undo), to: nil, from: nil) },
-                disabled: !(NSApp.keyWindow?.undoManager?.canUndo ?? false)
+                action: {
+                    NSApp.sendAction(#selector(UndoManager.undo), to: nil, from: nil)
+                    refreshUndoState()
+                },
+                disabled: !canUndo
+            )
+            toolbarButton(
+                icon: "arrow.uturn.forward",
+                action: {
+                    NSApp.sendAction(#selector(UndoManager.redo), to: nil, from: nil)
+                    refreshUndoState()
+                },
+                disabled: !canRedo
             )
             Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
@@ -90,6 +109,8 @@ struct FloatingToolbar: View {
         }
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
+        .onAppear { refreshUndoState() }
+        .onChange(of: pdfManager.hasDocument) { _, _ in refreshUndoState() }
     }
 
     private var underlinePalette: [(String, NSColor)] {
@@ -206,5 +227,11 @@ struct FloatingToolbar: View {
             pdfManager.requestFitOnce()
             lastFitTapTime = now
         }
+    }
+
+    private func refreshUndoState() {
+        let undoManager = NSApp.keyWindow?.undoManager
+        canUndo = undoManager?.canUndo ?? false
+        canRedo = undoManager?.canRedo ?? false
     }
 }
