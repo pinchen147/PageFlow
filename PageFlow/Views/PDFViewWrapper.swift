@@ -196,9 +196,11 @@ struct PDFViewWrapper: NSViewRepresentable {
                 return
             }
 
-            // Apply valid scale with a fit-to-window scale
+            // Apply valid scale with a fit-to-window scale + slight zoom bump
             if fitScale > 0 {
-                let adjustedScale = min(fitScale, DesignTokens.pdfMaxScale)
+                let zoomBump: CGFloat = 0.1
+                let adjustedScale = min(fitScale + zoomBump, DesignTokens.pdfMaxScale)
+                
                 if adjustedScale != pdfView.scaleFactor {
                     pdfView.scaleFactor = adjustedScale
                     self.pdfManager.scaleFactor = adjustedScale
@@ -206,11 +208,19 @@ struct PDFViewWrapper: NSViewRepresentable {
 
                 if let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage {
                     let pageBounds = currentPage.bounds(for: .mediaBox)
+                    // Set destination to top-left initially to set vertical position
                     let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
                     let destination = PDFDestination(page: currentPage, at: topLeft)
                     pdfView.go(to: destination)
+                    
                     if let scrollView = pdfView.documentScrollView {
-                        let origin = NSPoint(x: pageBounds.minX, y: scrollView.documentVisibleRect.origin.y)
+                        // Center horizontally
+                        let docViewWidth = scrollView.documentView?.bounds.width ?? 0
+                        let clipViewWidth = scrollView.contentView.bounds.width
+                        let centeredX = max(0, (docViewWidth - clipViewWidth) / 2.0)
+                        
+                        // Keep current Y (set by go(to:))
+                        let origin = NSPoint(x: centeredX, y: scrollView.documentVisibleRect.origin.y)
                         scrollView.contentView.scroll(to: origin)
                         scrollView.reflectScrolledClipView(scrollView.contentView)
                     }
