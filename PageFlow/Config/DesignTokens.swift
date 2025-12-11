@@ -102,6 +102,14 @@ struct DesignTokens {
     static let commentNoteIconSize: CGFloat = 24
     static let commentNoteOffset: CGFloat = 12
 
+    // MARK: - Sidebar Toggle
+
+    static let sidebarToggleButtonSize: CGFloat = 24
+    static let sidebarToggleIconSize: CGFloat = 12
+    static let sidebarToggleCornerRadius: CGFloat = 4
+    static let sidebarToggleContainerCornerRadius: CGFloat = 6
+    static let sidebarToggleContainerPadding: CGFloat = 2
+
     // MARK: - Tabs
 
     static let tabBarHeight: CGFloat = 32

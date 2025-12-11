@@ -29,6 +29,10 @@ class PDFManager {
     var documentURL: URL?
     var isDirty: Bool = false
     var interactionMode: InteractionMode = .select
+    
+    // Weak reference to the active PDFView to support PDFThumbnailView linking
+    weak var activePDFView: PDFView?
+    
     private var isAccessingSecurityScopedResource = false
 
     var pageCount: Int {

@@ -32,6 +32,9 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.enableDataDetectors = true
         }
         pdfView.delegate = context.coordinator
+        
+        // Link to manager for Thumbnail support
+        pdfManager.activePDFView = pdfView
 
         // Setup click callbacks for annotation selection
         pdfView.onAnnotationClick = { [weak commentManager, weak annotationManager] annotation in
@@ -168,6 +171,11 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
         coordinator.removeScrollMonitor()
+
+        // Clear the activePDFView reference if it points to this view
+        if coordinator.pdfManager.activePDFView === pdfView {
+            coordinator.pdfManager.activePDFView = nil
+        }
     }
 
     // MARK: - Private

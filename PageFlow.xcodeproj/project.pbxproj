@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		00CE87292EEA8D6A004DFC38 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 00SPARKLE022EE4A10600E48813 /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		00985C722EE4A10600E48813 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				00CE87292EEA8D6A004DFC38 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = PageFlow;
 			packageProductDependencies = (
+				00SPARKLE022EE4A10600E48813 /* Sparkle */,
 			);
 			productName = PageFlow;
 			productReference = 00985C642EE4A10500E48813 /* PageFlow.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 00985C5B2EE4A10500E48813;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				00SPARKLE012EE4A10600E48813 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 00985C652EE4A10500E48813 /* Products */;
 			projectDirPath = "";
@@ -445,6 +454,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) ENABLE_SPARKLE";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -573,6 +583,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		00SPARKLE012EE4A10600E48813 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		00SPARKLE022EE4A10600E48813 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 00SPARKLE012EE4A10600E48813 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 00985C5C2EE4A10500E48813 /* Project object */;
 }

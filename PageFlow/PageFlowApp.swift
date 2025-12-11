@@ -13,6 +13,9 @@ struct PageFlowApp: App {
     @State private var tabManager = TabManager()
     @State private var recentFilesManager = RecentFilesManager()
     @State private var showingSearch = false
+    #if ENABLE_SPARKLE
+    @State private var updateManager = UpdateManager()
+    #endif
 
     var body: some Scene {
         WindowGroup {
@@ -27,6 +30,14 @@ struct PageFlowApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
+            #if ENABLE_SPARKLE
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updateManager.checkForUpdates()
+                }
+                .disabled(!updateManager.canCheckForUpdates)
+            }
+            #endif
             CommandGroup(replacing: .newItem) {
                 Button("New Tab") {
                     tabManager.createNewTab()

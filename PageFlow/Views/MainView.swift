@@ -45,7 +45,7 @@ struct MainView: View {
         .ignoresSafeArea(.all, edges: .all)
         .overlay(alignment: .topLeading) {
             if showingOutline, pdfManager.hasDocument {
-                OutlineSidebar(
+                SidebarView(
                     pdfManager: pdfManager,
                     items: pdfManager.outlineItems(),
                     onClose: {
