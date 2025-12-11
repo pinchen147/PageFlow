@@ -274,7 +274,7 @@ final class StablePDFView: PDFView {
         case 2:
             // Double click: select word
             if let selection = page.selectionForWord(at: pagePoint) {
-                setCurrentSelection(selection, animate: true)
+                setCurrentSelection(selection, animate: false)
                 onAnnotationDeselect?()
             } else {
                 super.mouseDown(with: event)
@@ -282,7 +282,7 @@ final class StablePDFView: PDFView {
         case 3:
             // Triple click: select line
             if let selection = page.selectionForLine(at: pagePoint) {
-                setCurrentSelection(selection, animate: true)
+                setCurrentSelection(selection, animate: false)
                 onAnnotationDeselect?()
             } else {
                 super.mouseDown(with: event)
