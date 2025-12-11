@@ -33,6 +33,20 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
         pdfView.delegate = context.coordinator
 
+        // Setup click callbacks for annotation selection
+        pdfView.onAnnotationClick = { [weak commentManager, weak annotationManager] annotation in
+            guard let commentManager = commentManager,
+                  let annotationManager = annotationManager else { return }
+            
+            if !commentManager.selectAnnotation(annotation) {
+                annotationManager.selectedAnnotation = annotation
+            }
+        }
+        
+        pdfView.onAnnotationDeselect = { [weak annotationManager] in
+            annotationManager?.selectedAnnotation = nil
+        }
+
         annotationManager.configure(
             pdfManager: pdfManager,
             selectionProvider: { [weak pdfView] in
@@ -48,12 +62,6 @@ struct PDFViewWrapper: NSViewRepresentable {
                 return (pdfView.currentSelection, pdfView.currentPage)
             }
         )
-
-        let clickRecognizer = NSClickGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleAnnotationClick(_:))
-        )
-        pdfView.addGestureRecognizer(clickRecognizer)
 
         context.coordinator.setPDFView(pdfView)
 
@@ -248,6 +256,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             self.pdfManager = pdfManager
             self.annotationManager = annotationManager
             self.commentManager = commentManager
+            super.init()
         }
 
         func setupScrollMonitor(for pdfView: StablePDFView) {
@@ -260,112 +269,91 @@ struct PDFViewWrapper: NSViewRepresentable {
                     return event
                 }
 
-                // Check if mouse is over the PDF view
-                let mouseLocation = NSEvent.mouseLocation
-                guard let window = pdfView.window else { return event }
+                return self.handleZoomScroll(event: event, pdfView: pdfView)
+            }
+        }
 
-                let windowPoint = window.convertPoint(fromScreen: mouseLocation)
-                let pointInView = pdfView.convert(windowPoint, from: nil)
+        private func handleZoomScroll(event: NSEvent, pdfView: StablePDFView) -> NSEvent? {
+            // Check if mouse is over the PDF view
+            let mouseLocation = NSEvent.mouseLocation
+            guard let window = pdfView.window else { return event }
 
-                guard pdfView.bounds.contains(pointInView) else {
-                    return event
-                }
+            let windowPoint = window.convertPoint(fromScreen: mouseLocation)
+            let pointInView = pdfView.convert(windowPoint, from: nil)
 
-                // Disable auto-scaling when manually zooming
-                pdfView.autoScales = false
-                self.pdfManager.isAutoScaling = false
+            guard pdfView.bounds.contains(pointInView) else {
+                return event
+            }
 
-                // Calculate new scale
-                let delta = event.scrollingDeltaY
-                guard delta != 0 else { return nil }
+            // Disable auto-scaling when manually zooming
+            pdfView.autoScales = false
+            self.pdfManager.isAutoScaling = false
 
-                let oldScale = pdfView.scaleFactor
-                let zoomFactor: CGFloat = 1.1  // 10% per scroll
-                var newScale: CGFloat
+            // Calculate new scale
+            let delta = event.scrollingDeltaY
+            guard delta != 0 else { return nil }
 
-                if delta > 0 {
-                    // Zoom in
-                    newScale = oldScale * zoomFactor
-                } else {
-                    // Zoom out
-                    newScale = oldScale / zoomFactor
-                }
+            let oldScale = pdfView.scaleFactor
+            let zoomFactor: CGFloat = 1.1  // 10% per scroll
+            var newScale: CGFloat
 
-                // Clamp to min/max
-                newScale = max(DesignTokens.pdfMinScale, min(newScale, DesignTokens.pdfMaxScale))
+            if delta > 0 {
+                // Zoom in
+                newScale = oldScale * zoomFactor
+            } else {
+                // Zoom out
+                newScale = oldScale / zoomFactor
+            }
 
-                guard newScale != oldScale else { return nil }
+            // Clamp to min/max
+            newScale = max(DesignTokens.pdfMinScale, min(newScale, DesignTokens.pdfMaxScale))
 
-                // Find the page at cursor location
-                guard let page = pdfView.page(for: pointInView, nearest: true) else {
-                    pdfView.scaleFactor = newScale
-                    self.pdfManager.scaleFactor = newScale
-                    return nil
-                }
+            guard newScale != oldScale else { return nil }
 
-                // Convert view point to page coordinates
-                let pointInPage = pdfView.convert(pointInView, to: page)
-
-                // Apply the new scale
+            // Find the page at cursor location
+            guard let page = pdfView.page(for: pointInView, nearest: true) else {
                 pdfView.scaleFactor = newScale
-
-                // Convert the page point back to view coordinates (now scaled)
-                let pointInViewAfterZoom = pdfView.convert(pointInPage, from: page)
-
-                // Calculate the offset
-                let offsetX = pointInViewAfterZoom.x - pointInView.x
-                let offsetY = pointInViewAfterZoom.y - pointInView.y
-
-                // Get current scroll position
-                guard let scrollView = pdfView.documentScrollView else {
-                    self.pdfManager.scaleFactor = newScale
-                    return nil
-                }
-
-                let visibleRect = scrollView.documentVisibleRect
-
-                // Adjust scroll to keep point under cursor
-                let newOrigin = NSPoint(
-                    x: visibleRect.origin.x + offsetX,
-                    y: visibleRect.origin.y + offsetY
-                )
-
-                scrollView.contentView.setBoundsOrigin(newOrigin)
-                scrollView.reflectScrolledClipView(scrollView.contentView)
-
                 self.pdfManager.scaleFactor = newScale
-
                 return nil
             }
+
+            // Convert view point to page coordinates
+            let pointInPage = pdfView.convert(pointInView, to: page)
+
+            // Apply the new scale
+            pdfView.scaleFactor = newScale
+
+            // Convert the page point back to view coordinates (now scaled)
+            let pointInViewAfterZoom = pdfView.convert(pointInPage, from: page)
+
+            // Calculate the offset
+            let offsetX = pointInViewAfterZoom.x - pointInView.x
+            let offsetY = pointInViewAfterZoom.y - pointInView.y
+
+            // Get current scroll position
+            guard let scrollView = pdfView.documentScrollView else {
+                self.pdfManager.scaleFactor = newScale
+                return nil
+            }
+
+            let visibleRect = scrollView.documentVisibleRect
+
+            // Adjust scroll to keep point under cursor
+            let newOrigin = NSPoint(
+                x: visibleRect.origin.x + offsetX,
+                y: visibleRect.origin.y + offsetY
+            )
+
+            scrollView.contentView.setBoundsOrigin(newOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+
+            self.pdfManager.scaleFactor = newScale
+
+            return nil
         }
 
         func setPDFView(_ pdfView: StablePDFView) {
             self.pdfView = pdfView
-        }
-
-        @objc
-        func handleAnnotationClick(_ gesture: NSClickGestureRecognizer) {
-            guard let pdfView = gesture.view as? PDFView else {
-                annotationManager.selectedAnnotation = nil
-                return
-            }
-
-            let pointInView = gesture.location(in: pdfView)
-            guard let page = pdfView.page(for: pointInView, nearest: true) else {
-                annotationManager.selectedAnnotation = nil
-                pdfView.clearSelection()
-                return
-            }
-
-            let pointOnPage = pdfView.convert(pointInView, to: page)
-            if let annotation = page.annotation(at: pointOnPage) {
-                if !commentManager.selectAnnotation(annotation) {
-                    annotationManager.selectedAnnotation = annotation
-                }
-            } else {
-                annotationManager.selectedAnnotation = nil
-                pdfView.clearSelection()
-            }
         }
 
         func removeScrollMonitor() {
@@ -397,11 +385,5 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             pdfManager.scaleFactor = newScale
         }
-    }
-}
-
-private extension CGRect {
-    var center: CGPoint {
-        CGPoint(x: midX, y: midY)
     }
 }

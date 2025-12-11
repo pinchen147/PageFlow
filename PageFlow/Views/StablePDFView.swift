@@ -60,6 +60,11 @@ final class StablePDFView: PDFView {
 
     // MARK: - Scrollbar Management
 
+    private enum ScrollerType: String {
+        case vertical
+        case horizontal
+    }
+
     private var verticalTrackingArea: NSTrackingArea?
     private var horizontalTrackingArea: NSTrackingArea?
     private let verticalHoverZoneSize: CGFloat = 120.0 // 3x the original 40.0
@@ -69,6 +74,10 @@ final class StablePDFView: PDFView {
     private var isHoveringVertical = false
     private var isHoveringHorizontal = false
     private var isObservingScroll = false
+
+    // MARK: - Callbacks for Click Handling
+    var onAnnotationClick: ((PDFAnnotation) -> Void)?
+    var onAnnotationDeselect: (() -> Void)?
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -131,7 +140,7 @@ final class StablePDFView: PDFView {
             rect: vRect,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],
             owner: self,
-            userInfo: ["type": "vertical"]
+            userInfo: ["type": ScrollerType.vertical.rawValue]
         )
         addTrackingArea(vArea)
         verticalTrackingArea = vArea
@@ -143,7 +152,7 @@ final class StablePDFView: PDFView {
             rect: hRect,
             options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],
             owner: self,
-            userInfo: ["type": "horizontal"]
+            userInfo: ["type": ScrollerType.horizontal.rawValue]
         )
         addTrackingArea(hArea)
         horizontalTrackingArea = hArea
@@ -162,14 +171,16 @@ final class StablePDFView: PDFView {
     private func updateHoverState(isEntering: Bool, event: NSEvent) {
         guard let scrollView = documentScrollView,
               let userInfo = event.trackingArea?.userInfo as? [String: String],
-              let type = userInfo["type"] else { return }
+              let typeString = userInfo["type"],
+              let type = ScrollerType(rawValue: typeString) else { return }
 
         let scroller: NSScroller?
         
-        if type == "vertical" {
+        switch type {
+        case .vertical:
             isHoveringVertical = isEntering
             scroller = scrollView.verticalScroller
-        } else {
+        case .horizontal:
             isHoveringHorizontal = isEntering
             scroller = scrollView.horizontalScroller
         }
@@ -233,17 +244,52 @@ final class StablePDFView: PDFView {
         }
     }
 
-    // MARK: - Pan Mouse Handling
+    // MARK: - Mouse Handling
 
     override func mouseDown(with event: NSEvent) {
-        guard interactionMode == .pan else {
+        guard interactionMode == .select else {
             super.mouseDown(with: event)
             return
         }
 
-        lastPanLocation = convert(event.locationInWindow, from: nil)
-        isPanning = true
-        NSCursor.closedHand.push()
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        guard let page = page(for: viewPoint, nearest: true) else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        let pagePoint = convert(viewPoint, to: page)
+
+        switch event.clickCount {
+        case 1:
+            // Single click: check for annotation
+            if let annotation = page.annotation(at: pagePoint) {
+                onAnnotationClick?(annotation)
+                // Consume event to prevent PDFView from hijacking selection
+                return
+            } else {
+                onAnnotationDeselect?()
+                super.mouseDown(with: event)
+            }
+        case 2:
+            // Double click: select word
+            if let selection = page.selectionForWord(at: pagePoint) {
+                setCurrentSelection(selection, animate: true)
+                onAnnotationDeselect?()
+            } else {
+                super.mouseDown(with: event)
+            }
+        case 3:
+            // Triple click: select line
+            if let selection = page.selectionForLine(at: pagePoint) {
+                setCurrentSelection(selection, animate: true)
+                onAnnotationDeselect?()
+            } else {
+                super.mouseDown(with: event)
+            }
+        default:
+            super.mouseDown(with: event)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {

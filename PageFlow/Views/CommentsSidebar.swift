@@ -342,6 +342,7 @@ struct CustomTextEditor: NSViewRepresentable {
             let usedHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
             parent.calculatedHeight = max(usedHeight + 4, 20)
         }
+
     }
 }
 
