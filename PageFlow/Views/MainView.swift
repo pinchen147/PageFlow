@@ -157,6 +157,17 @@ struct MainView: View {
             if !hasDoc {
                 showingOutline = false
                 showingComments = false
+            } else {
+                showingFileImporter = false
+            }
+        }
+        .onAppear {
+            if !pdfManager.hasDocument {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    if !pdfManager.hasDocument {
+                        showingFileImporter = true
+                    }
+                }
             }
         }
         .onChange(of: commentManager.selectedCommentID) { _, newValue in
