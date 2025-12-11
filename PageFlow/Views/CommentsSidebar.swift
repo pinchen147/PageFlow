@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 struct CommentsSidebar: View {
     @Bindable var commentManager: CommentManager
@@ -17,10 +18,19 @@ struct CommentsSidebar: View {
             commentsList
         }
         .frame(width: DesignTokens.commentSidebarWidth)
-        .background(sidebarBackground)
+        .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius))
-        .overlay(sidebarBorder)
-        .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
+                .allowsHitTesting(false)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                .strokeBorder(.white.opacity(0.22))
+                .allowsHitTesting(false)
+        )
+        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
     }
 
     // MARK: - Header
@@ -93,20 +103,6 @@ struct CommentsSidebar: View {
         .padding(.vertical, DesignTokens.spacingXL)
     }
 
-    // MARK: - Background
-
-    private var sidebarBackground: some View {
-        ZStack {
-            VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
-            Color.black.opacity(0.15)
-        }
-    }
-
-    private var sidebarBorder: some View {
-        RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-            .strokeBorder(.white.opacity(0.15))
-            .allowsHitTesting(false)
-    }
 }
 
 // MARK: - Comment Bubble
@@ -160,39 +156,58 @@ struct CommentBubbleView: View {
     }
 
     private var bubbleBody: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
-            if isEditing {
-                editableText
-            } else {
-                displayText
+        ZStack(alignment: .trailing) {
+            VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
+                if isEditing {
+                    editableText
+                } else {
+                    displayText
+                }
             }
+            .padding(DesignTokens.spacingSM)
+            .padding(.trailing, DesignTokens.spacingMD)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            closeButton
+                .padding(.trailing, DesignTokens.spacingXS)
         }
-        .padding(DesignTokens.spacingSM)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .background(bubbleBackground)
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.commentBubbleCornerRadius))
         .overlay(bubbleBorder)
         .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
+        .onTapGesture { onStartEditing() }
+        .onHover { hovering in
+            if !isEditing {
+                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+            }
+        }
+        .contextMenu { contextMenuItems }
+    }
+
+    private var closeButton: some View {
+        Button(action: onDelete) {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.white.opacity(0.6))
+        }
+        .buttonStyle(.plain)
+        .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
         .onHover { hovering in
             (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
         }
-        .contextMenu { contextMenuItems }
     }
 
     private var editableText: some View {
         TextEditor(text: $editText)
             .font(.caption)
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
             .foregroundStyle(.white.opacity(0.9))
-            .frame(minHeight: 40, maxHeight: 100)
+            .scrollContentBackground(.hidden)
+            .scrollDisabled(true)
             .focused($isFocused)
+            .frame(minHeight: 20)
+            .fixedSize(horizontal: false, vertical: true)
             .onChange(of: editText) { _, newValue in
                 onTextChange(newValue)
-            }
-            .onSubmit {
-                onStopEditing()
             }
     }
 
@@ -211,7 +226,6 @@ struct CommentBubbleView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onTapGesture(count: 2) { onStartEditing() }
     }
 
     private var bubbleBackground: some View {
@@ -247,22 +261,3 @@ struct BubbleTail: Shape {
     }
 }
 
-// MARK: - Visual Effect
-
-struct VisualEffectBlur: NSViewRepresentable {
-    let material: NSVisualEffectView.Material
-    let blendingMode: NSVisualEffectView.BlendingMode
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blendingMode
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.material = material
-        nsView.blendingMode = blendingMode
-    }
-}

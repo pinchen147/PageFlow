@@ -2,13 +2,13 @@
 //  CommentManager.swift
 //  PageFlow
 //
-//  Manages creation, editing, and deletion of PDF comments with grey highlights
+//  Manages creation, editing, deletion, and loading of PDF comments.
 //
 
-import Foundation
-import PDFKit
 import AppKit
+import Foundation
 import Observation
+import PDFKit
 
 @Observable
 @MainActor
@@ -21,7 +21,7 @@ final class CommentManager {
 
     private weak var pdfManager: PDFManager?
     private var selectionProvider: (() -> (PDFSelection?, PDFPage?))?
-    private var annotationMap: [UUID: PDFAnnotation] = [:]
+    private var highlights: [UUID: PDFAnnotation] = [:]
 
     // MARK: - Configuration
 
@@ -35,97 +35,100 @@ final class CommentManager {
 
     // MARK: - Actions
 
-    func addComment() -> UUID? {
+    @discardableResult
+    func addComment(text: String = "") -> UUID? {
         guard let (selectionOptional, pageOptional) = selectionProvider?(),
               let page = pageOptional,
               let document = pdfManager?.document else {
             return nil
         }
 
-        let pageIndex = document.index(for: page)
         let selection = selectionOptional?.copy() as? PDFSelection
-        let selectionBounds = selection?.bounds(for: page) ?? .null
-        let bounds: CGRect
-        if !selectionBounds.isNull, !selectionBounds.isEmpty {
-            bounds = selectionBounds
-        } else {
-            let pageRect = page.bounds(for: .mediaBox)
-            let size = CGSize(width: 140, height: 32)
-            bounds = CGRect(
-                x: pageRect.midX - size.width / 2,
-                y: pageRect.midY - size.height / 2,
-                width: size.width,
-                height: size.height
-            )
+        let (lineRects, union) = selectionLineRects(selection, on: page)
+
+        let unionRect = union ?? defaultCommentRect(on: page)
+        guard let highlight = createHighlight(for: lineRects.rectsOrFallback(unionRect), union: unionRect) else {
+            return nil
         }
 
-        let highlight = createHighlightAnnotation(selection: selection, page: page, bounds: bounds)
         let commentID = UUID()
         highlight.userName = commentID.uuidString
 
         page.addAnnotation(highlight)
-        annotationMap[commentID] = highlight
 
-        let comment = CommentModel(
+        let model = CommentModel(
             id: commentID,
-            text: "",
-            pageIndex: pageIndex,
-            bounds: bounds
+            text: text,
+            pageIndex: document.index(for: page),
+            bounds: highlight.bounds
         )
 
-        comments.append(comment)
+        comments.append(model)
+        highlights[commentID] = highlight
         selectedCommentID = commentID
         editingCommentID = commentID
         pdfManager?.isDirty = true
 
-        registerUndoAdd(comment, highlight: highlight, page: page)
+        registerUndoAdd(model, highlight: highlight, page: page)
         return commentID
     }
 
     func updateComment(_ id: UUID, text: String) {
-        guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = comments.firstIndex(where: { $0.id == id }) else {
+            return
+        }
 
         let oldText = comments[index].text
         comments[index].text = text
-
-        // Store text in annotation for persistence
-        if let annotation = annotationMap[id] {
-            annotation.contents = text
-        }
-
         pdfManager?.isDirty = true
+
         registerUndoUpdate(id, oldText: oldText, newText: text)
     }
 
     func deleteComment(_ id: UUID) {
         guard let index = comments.firstIndex(where: { $0.id == id }),
-              let annotation = annotationMap[id],
-              let page = annotation.page else {
+              let highlight = highlights[id] else {
             return
         }
 
         let comment = comments[index]
-        page.removeAnnotation(annotation)
+        let page = highlight.page
+
+        if let page = highlight.page {
+            page.removeAnnotation(highlight)
+        }
+
         comments.remove(at: index)
-        annotationMap.removeValue(forKey: id)
+        highlights.removeValue(forKey: id)
 
         if selectedCommentID == id { selectedCommentID = nil }
         if editingCommentID == id { editingCommentID = nil }
-
         pdfManager?.isDirty = true
-        registerUndoDelete(comment, highlight: annotation, page: page)
+
+        if let page {
+            registerUndoDelete(comment, highlight: highlight, page: page)
+        }
     }
 
     func selectComment(_ id: UUID?) {
         selectedCommentID = id
         editingCommentID = nil
 
-        guard let id = id,
+        guard let id,
               let comment = comments.first(where: { $0.id == id }) else {
             return
         }
 
         pdfManager?.goToPage(comment.pageIndex)
+    }
+
+    func selectAnnotation(_ annotation: PDFAnnotation) -> Bool {
+        guard let match = highlights.first(where: { $0.value === annotation }) else {
+            return false
+        }
+
+        selectComment(match.key)
+        return true
     }
 
     func startEditing(_ id: UUID) {
@@ -140,85 +143,101 @@ final class CommentManager {
 
     func loadComments(from document: PDFDocument) {
         comments.removeAll()
-        annotationMap.removeAll()
+        highlights.removeAll()
         selectedCommentID = nil
         editingCommentID = nil
 
         for pageIndex in 0..<document.pageCount {
             guard let page = document.page(at: pageIndex) else { continue }
 
-            for annotation in page.annotations where isCommentHighlight(annotation) {
-                guard let userName = annotation.userName,
-                      let commentID = UUID(uuidString: userName) else {
-                    continue
-                }
+            let commentHighlights = page.annotations.filter(isCommentHighlight)
 
-                let comment = CommentModel(
+            for highlight in commentHighlights {
+                let commentID = UUID(uuidString: highlight.userName ?? "") ?? UUID()
+                highlight.userName = commentID.uuidString
+
+                let model = CommentModel(
                     id: commentID,
-                    text: annotation.contents ?? "",
+                    text: highlight.contents ?? "",
                     pageIndex: pageIndex,
-                    bounds: annotation.bounds
+                    bounds: highlight.bounds
                 )
 
-                comments.append(comment)
-                annotationMap[commentID] = annotation
+                comments.append(model)
+                highlights[commentID] = highlight
             }
         }
     }
 
     func clearComments() {
         comments.removeAll()
-        annotationMap.removeAll()
+        highlights.removeAll()
         selectedCommentID = nil
         editingCommentID = nil
     }
 
     // MARK: - Private Helpers
 
-    private func createHighlightAnnotation(selection: PDFSelection?, page: PDFPage, bounds: CGRect) -> PDFAnnotation {
-        let highlight = PDFAnnotation(bounds: bounds, forType: .highlight, withProperties: nil)
+    private func selectionLineRects(_ selection: PDFSelection?, on page: PDFPage) -> ([CGRect], CGRect?) {
+        guard let selection else { return ([], nil) }
+
+        let rects = selection.selectionsByLine()
+            .map { $0.bounds(for: page) }
+            .filter { !$0.isNull && !$0.isEmpty }
+
+        let union = rects.unionRect
+        return (rects, union)
+    }
+
+    private func defaultCommentRect(on page: PDFPage) -> CGRect {
+        let pageRect = page.bounds(for: .mediaBox)
+        let size = CGSize(width: DesignTokens.commentDefaultRectWidth, height: DesignTokens.commentDefaultRectHeight)
+        return CGRect(
+            x: pageRect.midX - size.width / 2,
+            y: pageRect.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    private func createHighlight(for rects: [CGRect], union: CGRect) -> PDFAnnotation? {
+        guard !rects.isEmpty else { return nil }
+
+        let highlight = PDFAnnotation(bounds: union, forType: .highlight, withProperties: nil)
+        highlight.markupType = .highlight
         highlight.color = DesignTokens.commentHighlightColor
-
-        let lineRects: [CGRect]
-        if let selection {
-            lineRects = selection.selectionsByLine()
-                .map { $0.bounds(for: page) }
-                .filter { !$0.isNull && !$0.isEmpty }
-        } else {
-            lineRects = []
-        }
-
-        if let firstRect = lineRects.first {
-            let union = lineRects.dropFirst().reduce(firstRect) { $0.union($1) }
-            highlight.quadrilateralPoints = buildQuadPoints(from: lineRects, relativeTo: union)
-        } else {
-            highlight.quadrilateralPoints = buildQuadPoints(from: [bounds], relativeTo: bounds)
-        }
-
+        highlight.quadrilateralPoints = buildQuadPoints(from: rects, relativeTo: union)
         return highlight
     }
 
     private func buildQuadPoints(from rects: [CGRect], relativeTo union: CGRect) -> [NSValue] {
-        var points: [NSValue] = []
-        for rect in rects {
+        rects.flatMap { rect -> [NSValue] in
             let tl = CGPoint(x: rect.minX - union.minX, y: rect.maxY - union.minY)
             let tr = CGPoint(x: rect.maxX - union.minX, y: rect.maxY - union.minY)
             let bl = CGPoint(x: rect.minX - union.minX, y: rect.minY - union.minY)
             let br = CGPoint(x: rect.maxX - union.minX, y: rect.minY - union.minY)
-            points.append(contentsOf: [NSValue(point: tl), NSValue(point: tr), NSValue(point: bl), NSValue(point: br)])
+            return [tl, tr, bl, br].map(NSValue.init(point:))
         }
-        return points
     }
 
     private func isCommentHighlight(_ annotation: PDFAnnotation) -> Bool {
-        guard annotation.type == "Highlight" else {
-            return false
-        }
+        guard annotation.type == PDFAnnotationSubtype.highlight.rawValue else { return false }
+        guard let color = annotation.color.usingColorSpace(.deviceRGB) else { return false }
 
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        annotation.color.usingColorSpace(.deviceRGB)?.getRed(&r, green: &g, blue: &b, alpha: &a)
-        let isGrey = abs(r - g) < 0.1 && abs(g - b) < 0.1 && abs(r - b) < 0.1
-        return isGrey && a > 0.5 && a < 0.7
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+
+        let target = DesignTokens.commentHighlightColor.usingColorSpace(.deviceRGB)
+        var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
+        target?.getRed(&tr, green: &tg, blue: &tb, alpha: &ta)
+
+        let tolerance: CGFloat = 0.1
+        let matches =
+            abs(r - tr) < tolerance &&
+            abs(g - tg) < tolerance &&
+            abs(b - tb) < tolerance &&
+            abs(a - ta) < 0.15
+        return matches
     }
 
     // MARK: - Undo/Redo
@@ -235,7 +254,7 @@ final class CommentManager {
     private func undoAdd(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
         page.removeAnnotation(highlight)
         comments.removeAll { $0.id == comment.id }
-        annotationMap.removeValue(forKey: comment.id)
+        highlights.removeValue(forKey: comment.id)
         if selectedCommentID == comment.id { selectedCommentID = nil }
         if editingCommentID == comment.id { editingCommentID = nil }
         pdfManager?.isDirty = true
@@ -250,7 +269,7 @@ final class CommentManager {
     private func redoAdd(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
         page.addAnnotation(highlight)
         comments.append(comment)
-        annotationMap[comment.id] = highlight
+        highlights[comment.id] = highlight
         pdfManager?.isDirty = true
 
         registerUndoAdd(comment, highlight: highlight, page: page)
@@ -277,7 +296,7 @@ final class CommentManager {
     private func undoDelete(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
         page.addAnnotation(highlight)
         comments.append(comment)
-        annotationMap[comment.id] = highlight
+        highlights[comment.id] = highlight
         pdfManager?.isDirty = true
 
         guard let undoManager = NSApp.keyWindow?.undoManager else { return }
@@ -285,5 +304,16 @@ final class CommentManager {
             target.deleteComment(comment.id)
         }
         undoManager.setActionName("Delete Comment")
+    }
+}
+
+private extension Array where Element == CGRect {
+    var unionRect: CGRect? {
+        guard let first = first else { return nil }
+        return dropFirst().reduce(first) { $0.union($1) }
+    }
+
+    func rectsOrFallback(_ fallback: CGRect) -> [CGRect] {
+        isEmpty ? [fallback] : self
     }
 }

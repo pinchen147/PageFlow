@@ -97,6 +97,10 @@ struct DesignTokens {
     static let commentSidebarWidth: CGFloat = 260
     static let commentBubbleCornerRadius: CGFloat = 12
     static let commentTailSize: CGFloat = 8
+    static let commentDefaultRectWidth: CGFloat = 140
+    static let commentDefaultRectHeight: CGFloat = 32
+    static let commentNoteIconSize: CGFloat = 24
+    static let commentNoteOffset: CGFloat = 12
 
     // MARK: - Tabs
 

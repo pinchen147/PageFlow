@@ -159,6 +159,13 @@ struct MainView: View {
                 showingComments = false
             }
         }
+        .onChange(of: commentManager.selectedCommentID) { _, newValue in
+            if newValue != nil {
+                withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
+                    showingComments = true
+                }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .saveResult)) { notification in
             guard let info = notification.userInfo as? [String: String],
                   let message = info["message"] else { return }

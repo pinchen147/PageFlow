@@ -141,7 +141,11 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(pdfManager: pdfManager, annotationManager: annotationManager)
+        Coordinator(
+            pdfManager: pdfManager,
+            annotationManager: annotationManager,
+            commentManager: commentManager
+        )
     }
 
     static func dismantleNSView(_ pdfView: StablePDFView, coordinator: Coordinator) {
@@ -221,13 +225,15 @@ struct PDFViewWrapper: NSViewRepresentable {
     class Coordinator: NSObject, PDFViewDelegate {
         let pdfManager: PDFManager
         let annotationManager: AnnotationManager
+        let commentManager: CommentManager
         private var scrollMonitor: Any?
         private weak var pdfView: StablePDFView?
         private var lastKnownScale: CGFloat?
 
-        init(pdfManager: PDFManager, annotationManager: AnnotationManager) {
+        init(pdfManager: PDFManager, annotationManager: AnnotationManager, commentManager: CommentManager) {
             self.pdfManager = pdfManager
             self.annotationManager = annotationManager
+            self.commentManager = commentManager
         }
 
         func setupScrollMonitor(for pdfView: StablePDFView) {
@@ -339,7 +345,9 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             let pointOnPage = pdfView.convert(pointInView, to: page)
             if let annotation = page.annotation(at: pointOnPage) {
-                annotationManager.selectedAnnotation = annotation
+                if !commentManager.selectAnnotation(annotation) {
+                    annotationManager.selectedAnnotation = annotation
+                }
             } else {
                 annotationManager.selectedAnnotation = nil
                 pdfView.clearSelection()

@@ -93,7 +93,7 @@ struct PageFlowApp: App {
                 .disabled(tabManager.activePDFManager?.hasDocument != true)
 
                 Button("Add Comment") {
-                    tabManager.activeCommentManager?.addComment()
+                    _ = tabManager.activeCommentManager?.addComment()
                 }
                 .keyboardShortcut("e", modifiers: .command)
                 .disabled(tabManager.activePDFManager?.hasDocument != true)

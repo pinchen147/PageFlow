@@ -168,36 +168,36 @@
       "id": "F024",
       "category": "comments",
       "description": "Add comment to text selection",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 7"
+      "passes": true,
+      "implementation": "CommentManager.addComment(); FloatingToolbar text.bubble button; Cmd+E shortcut; creates PDFAnnotation .text + .highlight pair"
     },
     {
       "id": "F025",
       "category": "comments",
       "description": "View existing comment",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 7"
+      "passes": true,
+      "implementation": "CommentsSidebar.swift - speech bubble UI; click annotation to open sidebar; auto-navigate to page"
     },
     {
       "id": "F026",
       "category": "comments",
       "description": "Edit existing comment",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 7"
+      "passes": true,
+      "implementation": "CommentBubbleView with TextEditor; double-click to edit; CommentManager.updateComment syncs to PDFAnnotation.contents"
     },
     {
       "id": "F027",
       "category": "comments",
       "description": "Delete comment",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 7"
+      "passes": true,
+      "implementation": "CommentManager.deleteComment(); context menu Delete; removes both note and highlight annotations"
     },
     {
       "id": "F028",
       "category": "comments",
       "description": "View all comments in sidebar",
-      "passes": false,
-      "implementation": "Not yet implemented - Phase 7"
+      "passes": true,
+      "implementation": "CommentsSidebar.swift - glassmorphic right panel; bubble.right toggle button; sorted by createdAt"
     },
     {
       "id": "F029",
