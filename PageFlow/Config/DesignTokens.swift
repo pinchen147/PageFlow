@@ -94,7 +94,7 @@ struct DesignTokens {
     // MARK: - Comments
 
     static let commentHighlightColor = NSColor.gray.withAlphaComponent(0.6)
-    static let commentSidebarWidth: CGFloat = 260
+    static let commentSidebarWidth: CGFloat = sidebarWidth
     static let commentBubbleCornerRadius: CGFloat = 12
     static let commentTailSize: CGFloat = 8
     static let commentDefaultRectWidth: CGFloat = 140

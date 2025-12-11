@@ -30,8 +30,8 @@ struct TabContainerView: View {
                         showingSearch: $showingSearch,
                         isTopBarHovered: $isTopBarHovered,
                         tabManager: tabManager,
-                        onOpenFile: { url, isSecurityScoped in
-                            tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped)
+                        onOpenFile: { url, isSecurityScoped, replaceCurrent in
+                            tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
                             recentFilesManager.addRecentFile(url)
                         }
                     )

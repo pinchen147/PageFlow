@@ -17,7 +17,7 @@ struct MainView: View {
     @Binding var showingSearch: Bool
     @Binding var isTopBarHovered: Bool
     @Bindable var tabManager: TabManager
-    var onOpenFile: (URL, Bool) -> Void
+    var onOpenFile: (URL, Bool, Bool) -> Void
 
     @State private var showingFileImporter = false
     @State private var showingGoToPage = false
@@ -302,7 +302,7 @@ struct MainView: View {
 
         // File importer returns security-scoped URLs - use callback to open in new tab
         DispatchQueue.main.async {
-            onOpenFile(url, true)
+            onOpenFile(url, true, false)
         }
     }
 
@@ -312,14 +312,22 @@ struct MainView: View {
         }
 
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            guard let data = item as? Data,
-                  let url = URL(dataRepresentation: data, relativeTo: nil),
-                  url.pathExtension.lowercased() == "pdf" else {
-                return
+            let url: URL?
+
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let urlItem = item as? URL {
+                url = urlItem
+            } else if let nsURL = item as? NSURL {
+                url = nsURL as URL
+            } else {
+                url = nil
             }
 
+            guard let url = url, url.pathExtension.lowercased() == "pdf" else { return }
+
             DispatchQueue.main.async {
-                onOpenFile(url, false)
+                onOpenFile(url, false, false)
             }
         }
 
@@ -328,7 +336,7 @@ struct MainView: View {
 
     private func handleOpenURL(_ url: URL) {
         DispatchQueue.main.async {
-            onOpenFile(url, true)
+            onOpenFile(url, true, false)
         }
     }
 
@@ -409,6 +417,6 @@ struct MainView: View {
         showingSearch: .constant(false),
         isTopBarHovered: .constant(false),
         tabManager: TabManager(),
-        onOpenFile: { _, _ in }
+        onOpenFile: { _, _, _ in }
     )
 }

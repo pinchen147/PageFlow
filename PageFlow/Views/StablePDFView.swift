@@ -22,6 +22,29 @@ final class StablePDFView: PDFView {
     private var lastPanLocation: NSPoint?
     private var isPanning = false
 
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        unregisterDraggedTypes()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        unregisterDraggedTypes()
+    }
+
+    // Reject all drag operations to allow parent SwiftUI view to handle them
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        return false
+    }
+
     override func layout() {
         super.layout()
 

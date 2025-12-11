@@ -183,18 +183,16 @@ class TabManager {
 
     // MARK: - Document Operations
 
-    func openDocument(url: URL, isSecurityScoped: Bool) {
-        // If current tab is empty, use it; otherwise create new tab
-        if let activeTab = activeTab, !activeTab.hasDocument {
-            // Load document in current empty tab
-            if let activeID = activeTabID,
-               let pdfManager = pdfManagers[activeID] {
-                if pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped) {
-                    // Update tab with document info
-                    if let index = tabs.firstIndex(where: { $0.id == activeID }) {
-                        tabs[index].documentURL = url
-                        tabs[index].isSecurityScoped = isSecurityScoped
-                    }
+    func openDocument(url: URL, isSecurityScoped: Bool, replaceCurrent: Bool = false) {
+        // If current tab is empty or replace is requested, load into current tab; otherwise create new tab
+        if let activeTab = activeTab,
+           let activeID = activeTabID,
+           (replaceCurrent || !activeTab.hasDocument),
+           let pdfManager = pdfManagers[activeID] {
+            if pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped) {
+                if let index = tabs.firstIndex(where: { $0.id == activeID }) {
+                    tabs[index].documentURL = url
+                    tabs[index].isSecurityScoped = isSecurityScoped
                 }
             }
         } else {
