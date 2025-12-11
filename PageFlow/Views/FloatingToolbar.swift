@@ -80,12 +80,12 @@ struct FloatingToolbar: View {
                 action: { annotationManager.highlightSelection(color: annotationManager.highlightColor) },
                 disabled: !pdfManager.hasDocument
             )
+            colorMenu
             toolbarButton(
                 icon: "text.bubble",
                 action: { _ = commentManager.addComment() },
                 disabled: !pdfManager.hasDocument
             )
-            colorMenu
             toolbarButton(
                 icon: showingComments ? "bubble.right.fill" : "bubble.right",
                 action: { withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { showingComments.toggle() } },
@@ -101,7 +101,7 @@ struct FloatingToolbar: View {
 
     private var underlinePalette: [(String, NSColor)] {
         [
-            ("Default", DesignTokens.underlineColor),
+            ("Black", DesignTokens.underlineColor),
             ("Yellow", DesignTokens.underlineYellow),
             ("Green", DesignTokens.underlineGreen),
             ("Red", DesignTokens.underlineRed),
