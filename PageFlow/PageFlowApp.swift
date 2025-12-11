@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct PageFlowApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var tabManager = TabManager()
     @State private var recentFilesManager = RecentFilesManager()
     @State private var showingSearch = false
@@ -20,6 +21,9 @@ struct PageFlowApp: App {
                 recentFilesManager: recentFilesManager,
                 showingSearch: $showingSearch
             )
+            .onAppear {
+                appDelegate.tabManager = tabManager
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {

@@ -502,3 +502,4 @@ When writing tests:
 - Use dependency injection for testability
 - Mock PDFDocument for fast tests
 - UI tests for critical flows only (file open, annotation create)
+```

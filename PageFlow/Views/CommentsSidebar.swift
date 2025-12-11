@@ -138,10 +138,18 @@ struct CommentBubbleView: View {
     }
 
     private var pageLabel: some View {
-        Text("Page \(comment.pageIndex + 1)")
-            .font(.caption2)
-            .foregroundStyle(.white.opacity(0.5))
-            .padding(.leading, DesignTokens.commentTailSize + DesignTokens.spacingXS)
+        Button(action: onSelect) {
+            Text("Page \(comment.pageIndex + 1)")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.5))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, DesignTokens.commentTailSize + DesignTokens.spacingXS)
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+        }
     }
 
     private var bubbleContent: some View {

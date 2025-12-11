@@ -190,9 +190,12 @@ struct FloatingToolbar: View {
         if let lastTap = lastFitTapTime,
            now.timeIntervalSince(lastTap) < doubleTapWindow {
             pdfManager.toggleAutoScale()
+            pdfManager.scaleNeedsUpdate = true
             lastFitTapTime = nil
         } else {
+            pdfManager.isAutoScaling = false
             pdfManager.requestFitOnce()
+            pdfManager.scaleNeedsUpdate = true
             lastFitTapTime = now
         }
     }

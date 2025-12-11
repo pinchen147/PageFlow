@@ -365,35 +365,28 @@
       "category": "navigation",
       "description": "PDF outline/table of contents sidebar",
       "passes": true,
-      "implementation": "OutlineSidebar overlay toggle; OutlineItem model; PDFManager.outlineItems() builds tree from outlineRoot"
+      "implementation": "OutlineSidebar overlay toggle; OutlineItem model; PDFManager.outlineItems(); full-row tap navigation"
     },
     {
       "id": "F053",
       "category": "display",
       "description": "Display mode: Single page",
-      "passes": false,
-      "implementation": "Not yet implemented - PDFDisplayMode toggle"
-    },
-    {
-      "id": "F063",
-      "category": "navigation",
-      "description": "Pan/grab cursor mode for dragging PDF",
       "passes": true,
-      "implementation": "PDFManager.interactionMode; StablePDFView pan handling with open/closed hand cursors; FloatingToolbar toggle button"
-    },
-    {
-      "id": "F064",
-      "category": "ui",
-      "description": "Pointer cursor on clickable elements",
-      "passes": true,
-      "implementation": "onHover with NSCursor.pointingHand on toolbar buttons, tabs, close buttons, outline items"
+      "implementation": "Single page continuous display mode via PDFView.displayMode singlePageContinuous"
     },
     {
       "id": "F055",
       "category": "display",
       "description": "Rotate page 90\u00b0 clockwise",
       "passes": true,
-      "implementation": "PDFManager.rotateClockwise with toolbar rotate button"
+      "implementation": "PDFManager.rotateClockwise with toolbar rotate button; undo/redo via applyRotation"
+    },
+    {
+      "id": "F056",
+      "category": "display",
+      "description": "Rotate page 90\u00b0 counter-clockwise",
+      "passes": true,
+      "implementation": "PDFManager.rotateCounterClockwise with toolbar rotate button; undo/redo via applyRotation"
     },
     {
       "id": "F057",
@@ -406,8 +399,8 @@
       "id": "F058",
       "category": "notes",
       "description": "Per-page text notes (separate from PDF comments)",
-      "passes": false,
-      "implementation": "Not yet implemented - requires local storage manager"
+      "passes": true,
+      "implementation": "CommentManager + CommentsSidebar: sticky notes (.text) with speech-bubble sidebar, Cmd+E, toggle, focus-on-create"
     },
     {
       "id": "F059",
@@ -436,6 +429,20 @@
       "description": "Fit to Window maintains current page context",
       "passes": true,
       "implementation": "PDFViewWrapper.swift - performOneTimeFit uses pdfView.currentPage"
+    },
+    {
+      "id": "F063",
+      "category": "navigation",
+      "description": "Pan/grab cursor mode for dragging PDF",
+      "passes": true,
+      "implementation": "PDFManager.interactionMode; StablePDFView pan handling with open/closed hand cursors; FloatingToolbar toggle button"
+    },
+    {
+      "id": "F064",
+      "category": "ui",
+      "description": "Pointer cursor on clickable elements",
+      "passes": true,
+      "implementation": "onHover with NSCursor.pointingHand on toolbar buttons, tabs, close buttons, outline items"
     }
   ],
   "summary": {

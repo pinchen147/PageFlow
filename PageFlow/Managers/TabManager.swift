@@ -60,6 +60,12 @@ class TabManager {
         return commentManagers[id]
     }
 
+    func dirtyPDFManagers() -> [(UUID, PDFManager)] {
+        pdfManagers.compactMap { key, manager in
+            manager.isDirty ? (key, manager) : nil
+        }
+    }
+
     var hasMultipleTabs: Bool {
         tabs.count > 1
     }
@@ -100,6 +106,12 @@ class TabManager {
 
     func closeTab(_ tabID: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+
+        if let pdfManager = pdfManagers[tabID],
+           pdfManager.isDirty,
+           !confirmClose(tabID: tabID, pdfManager: pdfManager) {
+            return
+        }
 
         // Clean up managers
         pdfManagers[tabID]?.closeDocument()
@@ -226,6 +238,28 @@ class TabManager {
         tabs[index].savedScaleFactor = pdfManager.scaleFactor
         tabs[index].savedSearchQuery = searchManager.searchQuery
         tabs[index].savedSearchResultIndex = searchManager.currentResultIndex
+    }
+
+    private func confirmClose(tabID: UUID, pdfManager: PDFManager) -> Bool {
+        guard pdfManager.isDirty else { return true }
+
+        let alert = NSAlert()
+        alert.icon = NSApp.applicationIconImage
+        alert.messageText = "Do you want to save changes to \"\(pdfManager.documentTitle)\"?"
+        alert.informativeText = "Your changes will be lost if you don’t save."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Don’t Save")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return pdfManager.save()
+        case .alertSecondButtonReturn:
+            return false
+        default:
+            return true
+        }
     }
 
     private func restoreTabState(_ tabID: UUID) {

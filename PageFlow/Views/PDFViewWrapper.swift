@@ -196,21 +196,25 @@ struct PDFViewWrapper: NSViewRepresentable {
                 return
             }
 
-            // Apply valid scale with one zoom step increase
+            // Apply valid scale with a fit-to-window scale
             if fitScale > 0 {
-                let adjustedScale = min(fitScale + DesignTokens.pdfZoomStep, DesignTokens.pdfMaxScale)
+                let adjustedScale = min(fitScale, DesignTokens.pdfMaxScale)
                 if adjustedScale != pdfView.scaleFactor {
                     pdfView.scaleFactor = adjustedScale
                     self.pdfManager.scaleFactor = adjustedScale
                 }
-            }
 
-            // Ensure we stay on the current page
-            if let currentPage = pdfView.currentPage {
-                let pageBounds = currentPage.bounds(for: pdfView.displayBox)
-                // Maintain current scroll position relative to page if possible, or go to top
-                let destination = PDFDestination(page: currentPage, at: CGPoint(x: pageBounds.minX, y: pageBounds.maxY))
-                pdfView.go(to: destination)
+                if let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage {
+                    let pageBounds = currentPage.bounds(for: .mediaBox)
+                    let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
+                    let destination = PDFDestination(page: currentPage, at: topLeft)
+                    pdfView.go(to: destination)
+                    if let scrollView = pdfView.documentScrollView {
+                        let origin = NSPoint(x: pageBounds.minX, y: scrollView.documentVisibleRect.origin.y)
+                        scrollView.contentView.scroll(to: origin)
+                        scrollView.reflectScrolledClipView(scrollView.contentView)
+                    }
+                }
             }
 
             self.pdfManager.fitOnceRequested = false
@@ -383,5 +387,11 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             pdfManager.scaleFactor = newScale
         }
+    }
+}
+
+private extension CGRect {
+    var center: CGPoint {
+        CGPoint(x: midX, y: midY)
     }
 }
