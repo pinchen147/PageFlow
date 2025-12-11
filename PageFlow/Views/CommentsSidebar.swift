@@ -41,13 +41,14 @@ struct CommentsSidebar: View {
                 .font(.headline)
                 .foregroundStyle(.white.opacity(0.9))
             Spacer()
-            closeButton
+            sidebarCloseButton
         }
-        .padding(.horizontal, DesignTokens.spacingMD)
-        .padding(.vertical, DesignTokens.spacingSM)
+        .padding(.leading, DesignTokens.spacingMD)
+        .padding(.trailing, DesignTokens.spacingSM)
+        .padding(.top, DesignTokens.spacingSM)
     }
 
-    private var closeButton: some View {
+    private var sidebarCloseButton: some View {
         Button(action: onClose) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
@@ -55,6 +56,7 @@ struct CommentsSidebar: View {
         }
         .buttonStyle(.plain)
         .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+        .contentShape(Rectangle())
         .onHover { hovering in
             (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
         }
@@ -119,6 +121,7 @@ struct CommentBubbleView: View {
 
     @State private var editText: String = ""
     @FocusState private var isFocused: Bool
+    @State private var editorHeight: CGFloat = 20
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
@@ -138,7 +141,7 @@ struct CommentBubbleView: View {
         Text("Page \(comment.pageIndex + 1)")
             .font(.caption2)
             .foregroundStyle(.white.opacity(0.5))
-            .padding(.leading, DesignTokens.spacingXS)
+            .padding(.leading, DesignTokens.commentTailSize + DesignTokens.spacingXS)
     }
 
     private var bubbleContent: some View {
@@ -152,39 +155,47 @@ struct CommentBubbleView: View {
         BubbleTail()
             .fill(.white.opacity(0.08))
             .frame(width: DesignTokens.commentTailSize, height: DesignTokens.commentTailSize * 2)
-            .offset(y: 10)
+            .padding(.top, DesignTokens.spacingSM)
     }
 
     private var bubbleBody: some View {
-        ZStack(alignment: .trailing) {
-            VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
-                if isEditing {
-                    editableText
-                } else {
-                    displayText
+        ZStack(alignment: .topTrailing) {
+            HStack(alignment: .center, spacing: DesignTokens.spacingSM) {
+                contentArea
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer(minLength: DesignTokens.spacingXS)
+            }
+            .padding(.horizontal, DesignTokens.spacingSM)
+            .padding(.vertical, DesignTokens.spacingXS)
+            .frame(minHeight: DesignTokens.tabHeight)
+            .background(bubbleBackground)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
+            .overlay(bubbleBorder)
+            .contentShape(Rectangle())
+            .onTapGesture { onStartEditing() }
+            .onHover { hovering in
+                if !isEditing {
+                    (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
                 }
             }
-            .padding(DesignTokens.spacingSM)
-            .padding(.trailing, DesignTokens.spacingMD)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .contextMenu { contextMenuItems }
 
-            closeButton
+            bubbleCloseButton
+                .padding(.top, DesignTokens.spacingXS)
                 .padding(.trailing, DesignTokens.spacingXS)
         }
-        .background(bubbleBackground)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.commentBubbleCornerRadius))
-        .overlay(bubbleBorder)
-        .contentShape(Rectangle())
-        .onTapGesture { onStartEditing() }
-        .onHover { hovering in
-            if !isEditing {
-                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-            }
-        }
-        .contextMenu { contextMenuItems }
     }
 
-    private var closeButton: some View {
+    @ViewBuilder
+    private var contentArea: some View {
+        if isEditing {
+            editableText
+        } else {
+            displayText
+        }
+    }
+
+    private var bubbleCloseButton: some View {
         Button(action: onDelete) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
@@ -197,44 +208,49 @@ struct CommentBubbleView: View {
         }
     }
 
-    private var editableText: some View {
-        TextEditor(text: $editText)
-            .font(.caption)
-            .foregroundStyle(.white.opacity(0.9))
-            .scrollContentBackground(.hidden)
-            .scrollDisabled(true)
-            .focused($isFocused)
-            .frame(minHeight: 20)
-            .fixedSize(horizontal: false, vertical: true)
+        private var editableText: some View {
+            ZStack(alignment: .leading) {
+                if editText.isEmpty {
+                    Text("Add a comment...")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .italic()
+                        .allowsHitTesting(false)
+                }
+
+                CustomTextEditor(
+                    text: $editText,
+                    isFocused: _isFocused,
+                    calculatedHeight: $editorHeight,
+                    onCommit: { onStopEditing() }
+                )
+                .frame(minHeight: editorHeight, alignment: .topLeading)
+            }
+            .padding(.vertical, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .onChange(of: editText) { _, newValue in
                 onTextChange(newValue)
             }
-    }
-
-    private var displayText: some View {
-        Group {
-            if comment.text.isEmpty {
-                Text("Add a comment...")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.4))
-                    .italic()
-            } else {
-                Text(comment.text)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
-    }
+
+        private var displayText: some View {
+            Text(comment.text.isEmpty ? "Add a comment..." : comment.text)
+                .font(.system(size: 11))
+                .foregroundStyle(.white.opacity(comment.text.isEmpty ? 0.4 : 0.85))
+                .italic(comment.text.isEmpty)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 2)
+        }
 
     private var bubbleBackground: some View {
-        RoundedRectangle(cornerRadius: DesignTokens.commentBubbleCornerRadius)
+        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
             .fill(.white.opacity(isSelected ? 0.12 : 0.08))
     }
 
     private var bubbleBorder: some View {
-        RoundedRectangle(cornerRadius: DesignTokens.commentBubbleCornerRadius)
+        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
             .strokeBorder(.white.opacity(isSelected ? 0.25 : 0.12))
             .allowsHitTesting(false)
     }
@@ -245,6 +261,100 @@ struct CommentBubbleView: View {
         Button("Go to Page") { onSelect() }
         Divider()
         Button("Delete", role: .destructive) { onDelete() }
+    }
+}
+
+// MARK: - Custom Text Editor
+
+struct CustomTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    @FocusState var isFocused: Bool
+    @Binding var calculatedHeight: CGFloat
+    var onCommit: () -> Void = {}
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        let textView = CommentTextView()
+
+        textView.delegate = context.coordinator
+        textView.onCommit = onCommit
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.font = NSFont.systemFont(ofSize: 11)
+        textView.textColor = NSColor.white.withAlphaComponent(0.9)
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainerInset = NSSize(width: 0, height: 2)
+
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.autohidesScrollers = true
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? CommentTextView else { return }
+
+        if textView.string != text {
+            textView.string = text
+        }
+
+        textView.onCommit = onCommit
+
+        if isFocused && scrollView.window?.firstResponder != textView {
+            scrollView.window?.makeFirstResponder(textView)
+        }
+
+        let usedHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
+        calculatedHeight = max(usedHeight + 4, 20)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: CustomTextEditor
+
+        init(_ parent: CustomTextEditor) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+            let usedHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
+            parent.calculatedHeight = max(usedHeight + 4, 20)
+        }
+    }
+}
+
+// MARK: - Comment Text View
+
+class CommentTextView: NSTextView {
+    var onCommit: () -> Void = {}
+
+    override func keyDown(with event: NSEvent) {
+        let isReturn = event.keyCode == 36
+        let isShiftPressed = event.modifierFlags.contains(.shift)
+
+        if isReturn && !isShiftPressed {
+            // Enter without Shift: commit and exit editing
+            onCommit()
+        } else if isReturn && isShiftPressed {
+            // Shift+Enter: insert newline
+            insertNewline(nil)
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }
 
@@ -260,4 +370,3 @@ struct BubbleTail: Shape {
         return path
     }
 }
-

@@ -52,6 +52,8 @@ struct OutlineSidebar: View {
                                 }
                             }
                             .padding(.vertical, DesignTokens.spacingXS)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .disabled(item.pageIndex == nil)
