@@ -2,16 +2,16 @@
 //  TabContainerView.swift
 //  PageFlow
 //
-//  Root container view for tab management
+//  Root container view for tab management. Each window owns its own TabManager.
 //
 
 import SwiftUI
 
 struct TabContainerView: View {
-    @Bindable var tabManager: TabManager
     var recentFilesManager: RecentFilesManager
-    @Binding var showingSearch: Bool
 
+    @State private var tabManager = TabManager()
+    @State private var showingSearch = false
     @State private var isTopBarHovered = false
 
     var body: some View {
@@ -42,11 +42,13 @@ struct TabContainerView: View {
                 }
             }
         }
+        .focusedSceneValue(\.tabManager, tabManager)
+        .focusedSceneValue(\.showingSearch, $showingSearch)
         .onAppear {
-            tabManager.restoreSession()
+            WindowRegistry.shared.register(tabManager)
         }
         .onDisappear {
-            tabManager.saveSession()
+            WindowRegistry.shared.unregister(tabManager)
         }
     }
 }

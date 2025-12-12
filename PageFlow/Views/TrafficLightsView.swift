@@ -14,7 +14,7 @@ struct TrafficLightsView: View {
         HStack(spacing: DesignTokens.trafficLightSpacing) {
             trafficLight(color: .red, action: closeWindow)
             trafficLight(color: .yellow, action: minimizeWindow)
-            trafficLight(color: .green, action: maximizeWindow)
+            trafficLight(color: .green, action: toggleFullScreen)
         }
         .padding(DesignTokens.trafficLightContainerPadding)
         .background(.ultraThinMaterial)
@@ -51,7 +51,7 @@ struct TrafficLightsView: View {
         NSApplication.shared.keyWindow?.miniaturize(nil)
     }
 
-    private func maximizeWindow() {
-        NSApplication.shared.keyWindow?.zoom(nil)
+    private func toggleFullScreen() {
+        NSApplication.shared.keyWindow?.toggleFullScreen(nil)
     }
 }

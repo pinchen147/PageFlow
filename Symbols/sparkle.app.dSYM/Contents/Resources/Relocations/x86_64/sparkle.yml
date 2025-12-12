@@ -1,0 +1,57 @@
+---
+triple:          'x86_64-apple-darwin'
+binary-path:     '/Users/runner/work/Sparkle/Sparkle/build/Build/Products/Release/sparkle.app/Contents/MacOS/sparkle'
+relocations:
+  - { offset: 0xCEF0D, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100000BE0, symSize: 0x826 }
+  - { offset: 0xCEF2E, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100000BE0, symSize: 0x826 }
+  - { offset: 0xCF4C8, size: 0x8, addend: 0x0, symName: _printUsage, symObjAddr: 0x826, symBinAddr: 0x100001406, symSize: 0x2C9 }
+  - { offset: 0xCF67A, size: 0x8, addend: 0x0, symName: _main.cold.4, symObjAddr: 0xB52, symBinAddr: 0x100002B29, symSize: 0x21 }
+  - { offset: 0xCF692, size: 0x8, addend: 0x0, symName: _main.cold.3, symObjAddr: 0xB31, symBinAddr: 0x100002B08, symSize: 0x21 }
+  - { offset: 0xCF6AA, size: 0x8, addend: 0x0, symName: _main.cold.2, symObjAddr: 0xB10, symBinAddr: 0x100002AE7, symSize: 0x21 }
+  - { offset: 0xCF6C2, size: 0x8, addend: 0x0, symName: _main.cold.1, symObjAddr: 0xAEF, symBinAddr: 0x100002AC6, symSize: 0x21 }
+  - { offset: 0xCF75A, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver initWithUpdateBundlePath:applicationBundlePath:allowedChannels:customFeedURL:userAgentName:updatePermissionResponse:deferInstallation:interactiveInstallation:allowMajorUpgrades:verbose:]', symObjAddr: 0x0, symBinAddr: 0x100002B4A, symSize: 0x52E }
+  - { offset: 0xCF90C, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver initWithUpdateBundlePath:applicationBundlePath:allowedChannels:customFeedURL:userAgentName:updatePermissionResponse:deferInstallation:interactiveInstallation:allowMajorUpgrades:verbose:]', symObjAddr: 0x0, symBinAddr: 0x100002B4A, symSize: 0x52E }
+  - { offset: 0xCFE62, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:willScheduleUpdateCheckAfterDelay:]', symObjAddr: 0x52E, symBinAddr: 0x1000016CF, symSize: 0x41 }
+  - { offset: 0xCFEE5, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updaterWillNotScheduleUpdateCheck:]', symObjAddr: 0x56F, symBinAddr: 0x100001710, symSize: 0x3F }
+  - { offset: 0xCFF33, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updaterWillNotScheduleUpdateCheck:]', symObjAddr: 0x56F, symBinAddr: 0x100001710, symSize: 0x3F }
+  - { offset: 0xCFF8E, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updaterShouldPromptForPermissionToCheckForUpdates:]', symObjAddr: 0x5AE, symBinAddr: 0x10000174F, symSize: 0x58 }
+  - { offset: 0xCFFA0, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updaterShouldPromptForPermissionToCheckForUpdates:]', symObjAddr: 0x5AE, symBinAddr: 0x10000174F, symSize: 0x58 }
+  - { offset: 0xD000B, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:mayPerformUpdateCheck:error:]', symObjAddr: 0x606, symBinAddr: 0x1000017A7, symSize: 0x179 }
+  - { offset: 0xD001D, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:mayPerformUpdateCheck:error:]', symObjAddr: 0x606, symBinAddr: 0x1000017A7, symSize: 0x179 }
+  - { offset: 0xD016E, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:shouldProceedWithUpdate:updateCheck:error:]', symObjAddr: 0x77F, symBinAddr: 0x100001920, symSize: 0x288 }
+  - { offset: 0xD030E, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver allowedChannelsForUpdater:]', symObjAddr: 0xA07, symBinAddr: 0x100001BA8, symSize: 0xE }
+  - { offset: 0xD0351, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver feedURLStringForUpdater:]', symObjAddr: 0xA15, symBinAddr: 0x100001BB6, symSize: 0xE }
+  - { offset: 0xD0394, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:didFindValidUpdate:]', symObjAddr: 0xA23, symBinAddr: 0x100001BC4, symSize: 0x97 }
+  - { offset: 0xD0444, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:didFinishUpdateCycleForUpdateCheck:error:]', symObjAddr: 0xABA, symBinAddr: 0x100001C5B, symSize: 0x38D }
+  - { offset: 0xD076A, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:shouldDownloadReleaseNotesForUpdate:]', symObjAddr: 0xE47, symBinAddr: 0x100001FE8, symSize: 0xA }
+  - { offset: 0xD079B, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver updater:shouldDownloadReleaseNotesForUpdate:]', symObjAddr: 0xE47, symBinAddr: 0x100001FE8, symSize: 0xA }
+  - { offset: 0xD07EB, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver startUpdater]', symObjAddr: 0xE51, symBinAddr: 0x100001FF2, symSize: 0xD5 }
+  - { offset: 0xD08B8, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver runAndCheckForUpdatesNow:]', symObjAddr: 0xF26, symBinAddr: 0x100003078, symSize: 0x36 }
+  - { offset: 0xD08CA, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver runAndCheckForUpdatesNow:]', symObjAddr: 0xF26, symBinAddr: 0x100003078, symSize: 0x36 }
+  - { offset: 0xD091D, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver probeForUpdates]', symObjAddr: 0xF5C, symBinAddr: 0x1000030AE, symSize: 0x35 }
+  - { offset: 0xD095F, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineDriver .cxx_destruct]', symObjAddr: 0xF91, symBinAddr: 0x1000020C7, symSize: 0x3E }
+  - { offset: 0xD0A05, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver initWithUpdatePermissionResponse:deferInstallation:verbose:]', symObjAddr: 0x0, symBinAddr: 0x1000030E3, symSize: 0x8B }
+  - { offset: 0xD0B85, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver initWithUpdatePermissionResponse:deferInstallation:verbose:]', symObjAddr: 0x0, symBinAddr: 0x1000030E3, symSize: 0x8B }
+  - { offset: 0xD0C06, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdatePermissionRequest:reply:]', symObjAddr: 0x8B, symBinAddr: 0x100002105, symSize: 0x7D }
+  - { offset: 0xD0CDC, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUserInitiatedUpdateCheckWithCancellation:]', symObjAddr: 0x108, symBinAddr: 0x100002182, symSize: 0x2D }
+  - { offset: 0xD0D1B, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver displayReleaseNotes:]', symObjAddr: 0x135, symBinAddr: 0x1000021AF, symSize: 0x53 }
+  - { offset: 0xD0D61, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver displayHTMLReleaseNotes:]', symObjAddr: 0x188, symBinAddr: 0x10000316E, symSize: 0xB5 }
+  - { offset: 0xD0E6B, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver displayPlainTextReleaseNotes:encoding:]', symObjAddr: 0x23D, symBinAddr: 0x100003223, symSize: 0x9C }
+  - { offset: 0xD0F2C, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdateWithAppcastItem:updateAdjective:]', symObjAddr: 0x2D9, symBinAddr: 0x100002202, symSize: 0x1BB }
+  - { offset: 0xD1123, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdateFoundWithAppcastItem:state:reply:]', symObjAddr: 0x494, symBinAddr: 0x1000023BD, symSize: 0x1A3 }
+  - { offset: 0xD12A9, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdateReleaseNotesWithDownloadData:]', symObjAddr: 0x637, symBinAddr: 0x100002560, symSize: 0xF2 }
+  - { offset: 0xD13CE, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdateReleaseNotesWithDownloadData:].cold.1', symObjAddr: 0xB9D, symBinAddr: 0x1000032BF, symSize: 0xB9 }
+  - { offset: 0xD1425, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdateReleaseNotesFailedToDownloadWithError:]', symObjAddr: 0x729, symBinAddr: 0x100002652, symSize: 0x80 }
+  - { offset: 0xD14A2, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdateNotFoundWithError:acknowledgement:]', symObjAddr: 0x7A9, symBinAddr: 0x1000026D2, symSize: 0xB }
+  - { offset: 0xD1500, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdaterError:acknowledgement:]', symObjAddr: 0x7B4, symBinAddr: 0x1000026DD, symSize: 0xB }
+  - { offset: 0xD155E, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showDownloadInitiatedWithCancellation:]', symObjAddr: 0x7BF, symBinAddr: 0x1000026E8, symSize: 0x41 }
+  - { offset: 0xD15A9, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showDownloadDidReceiveExpectedContentLength:]', symObjAddr: 0x800, symBinAddr: 0x100002729, symSize: 0x3F }
+  - { offset: 0xD1602, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showDownloadDidReceiveDataOfLength:]', symObjAddr: 0x83F, symBinAddr: 0x100002768, symSize: 0x13A }
+  - { offset: 0xD16C0, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showDownloadDidStartExtractingUpdate]', symObjAddr: 0x979, symBinAddr: 0x1000028A2, symSize: 0x41 }
+  - { offset: 0xD16FF, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showExtractionReceivedProgress:]', symObjAddr: 0x9BA, symBinAddr: 0x1000028E3, symSize: 0xC7 }
+  - { offset: 0xD17AF, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showReadyToInstallAndRelaunch:]', symObjAddr: 0xA81, symBinAddr: 0x1000029AA, symSize: 0x71 }
+  - { offset: 0xD182E, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showInstallingUpdateWithApplicationTerminated:retryTerminatingApplication:]', symObjAddr: 0xAF2, symBinAddr: 0x100002A1B, symSize: 0x2D }
+  - { offset: 0xD1879, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver showUpdateInstalledAndRelaunched:acknowledgement:]', symObjAddr: 0xB1F, symBinAddr: 0x100002A48, symSize: 0x50 }
+  - { offset: 0xD18FD, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver dismissUpdateInstallation]', symObjAddr: 0xB6F, symBinAddr: 0x100002A98, symSize: 0x6 }
+  - { offset: 0xD192C, size: 0x8, addend: 0x0, symName: '-[SPUCommandLineUserDriver .cxx_destruct]', symObjAddr: 0xB75, symBinAddr: 0x100002A9E, symSize: 0x28 }
+...

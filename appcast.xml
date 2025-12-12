@@ -1,0 +1,18 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>PageFlow</title>
+        <item>
+            <title>1.0.0</title>
+            <pubDate>Thu, 11 Dec 2025 15:00:00 +0000</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.0</sparkle:shortVersionString>
+            <enclosure
+                url="https://pageflow.pinchen.me/PageFlow_1.0.0.dmg"
+                sparkle:edSignature="nzA59WzeFn4QQGvTyhl31fEviwNpSRLJe+Le04ftG0WJm/9oD4xdG45ZMzqo6J/VMOBG3RwCxrXnIuqt3rxbBg=="
+                length="13149571"
+                type="application/x-apple-diskimage"
+            />
+        </item>
+    </channel>
+</rss>

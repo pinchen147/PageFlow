@@ -10,23 +10,18 @@ import SwiftUI
 @main
 struct PageFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var tabManager = TabManager()
     @State private var recentFilesManager = RecentFilesManager()
-    @State private var showingSearch = false
+
+    @FocusedValue(\.tabManager) private var focusedTabManager
+    @FocusedValue(\.showingSearch) private var focusedShowingSearch
+
     #if ENABLE_SPARKLE
     @State private var updateManager = UpdateManager()
     #endif
 
     var body: some Scene {
         WindowGroup {
-            TabContainerView(
-                tabManager: tabManager,
-                recentFilesManager: recentFilesManager,
-                showingSearch: $showingSearch
-            )
-            .onAppear {
-                appDelegate.tabManager = tabManager
-            }
+            TabContainerView(recentFilesManager: recentFilesManager)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -38,11 +33,13 @@ struct PageFlowApp: App {
                 .disabled(!updateManager.canCheckForUpdates)
             }
             #endif
+
             CommandGroup(replacing: .newItem) {
                 Button("New Tab") {
-                    tabManager.createNewTab()
+                    focusedTabManager?.createNewTab()
                 }
                 .keyboardShortcut("t", modifiers: .command)
+                .disabled(focusedTabManager == nil)
 
                 Button("New Window") {
                     openNewWindow()
@@ -52,18 +49,18 @@ struct PageFlowApp: App {
 
             CommandGroup(after: .newItem) {
                 Button("Close Tab") {
-                    tabManager.closeActiveTab()
+                    focusedTabManager?.closeActiveTab()
                 }
                 .keyboardShortcut("w", modifiers: .command)
-                .disabled(tabManager.tabs.isEmpty)
+                .disabled(focusedTabManager?.tabs.isEmpty != false)
             }
 
             CommandGroup(after: .importExport) {
                 Button("Print...") {
-                    tabManager.activePDFManager?.print()
+                    focusedTabManager?.activePDFManager?.print()
                 }
                 .keyboardShortcut("p", modifiers: .command)
-                .disabled(tabManager.activePDFManager?.hasDocument != true)
+                .disabled(focusedTabManager?.activePDFManager?.hasDocument != true)
 
                 Divider()
 
@@ -71,13 +68,13 @@ struct PageFlowApp: App {
                     handleSave()
                 }
                 .keyboardShortcut("s", modifiers: .command)
-                .disabled(tabManager.activePDFManager?.hasDocument != true)
+                .disabled(focusedTabManager?.activePDFManager?.hasDocument != true)
 
                 Button("Save As…") {
                     handleSaveAs()
                 }
                 .keyboardShortcut("S", modifiers: [.command, .shift])
-                .disabled(tabManager.activePDFManager?.hasDocument != true)
+                .disabled(focusedTabManager?.activePDFManager?.hasDocument != true)
 
                 Divider()
 
@@ -100,57 +97,56 @@ struct PageFlowApp: App {
 
             CommandGroup(after: .textEditing) {
                 Button("Find...") {
-                    if tabManager.activePDFManager?.hasDocument == true {
-                        showingSearch.toggle()
+                    if focusedTabManager?.activePDFManager?.hasDocument == true {
+                        focusedShowingSearch?.wrappedValue.toggle()
                     }
                 }
                 .keyboardShortcut("f", modifiers: .command)
-                .disabled(tabManager.activePDFManager?.hasDocument != true)
+                .disabled(focusedTabManager?.activePDFManager?.hasDocument != true)
 
                 Button("Add Comment") {
-                    _ = tabManager.activeCommentManager?.addComment()
+                    _ = focusedTabManager?.activeCommentManager?.addComment()
                 }
                 .keyboardShortcut("e", modifiers: .command)
-                .disabled(tabManager.activePDFManager?.hasDocument != true)
+                .disabled(focusedTabManager?.activePDFManager?.hasDocument != true)
 
                 Button("Underline Selection") {
-                    tabManager.activeAnnotationManager?.underlineSelection()
+                    focusedTabManager?.activeAnnotationManager?.underlineSelection()
                 }
                 .keyboardShortcut("u", modifiers: [.command])
-                .disabled(tabManager.activePDFManager?.hasDocument != true)
+                .disabled(focusedTabManager?.activePDFManager?.hasDocument != true)
 
                 Button("Highlight Selection") {
-                    tabManager.activeAnnotationManager?.highlightSelection()
+                    focusedTabManager?.activeAnnotationManager?.highlightSelection()
                 }
                 .keyboardShortcut("y", modifiers: [.command])
-                .disabled(tabManager.activePDFManager?.hasDocument != true)
+                .disabled(focusedTabManager?.activePDFManager?.hasDocument != true)
             }
 
-            // Tab navigation commands
             CommandMenu("Tab") {
                 Button("Select Next Tab") {
-                    tabManager.selectNextTab()
+                    focusedTabManager?.selectNextTab()
                 }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-                .disabled(tabManager.tabCount <= 1)
+                .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
 
                 Button("Select Previous Tab") {
-                    tabManager.selectPreviousTab()
+                    focusedTabManager?.selectPreviousTab()
                 }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
-                .disabled(tabManager.tabCount <= 1)
+                .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
 
                 Divider()
 
-                // Cmd+1 through Cmd+9 for direct tab selection
                 ForEach(1...9, id: \.self) { index in
                     Button("Select Tab \(index)") {
-                        tabManager.selectTabByIndex(index - 1)
+                        focusedTabManager?.selectTabByIndex(index - 1)
                     }
                     .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
-                    .disabled(index > tabManager.tabCount)
+                    .disabled(index > (focusedTabManager?.tabCount ?? 0))
                 }
             }
+
             CommandGroup(before: .pasteboard) {
                 Button("Undo") {
                     NSApp.sendAction(#selector(UndoManager.undo), to: nil, from: nil)
@@ -166,19 +162,19 @@ struct PageFlowApp: App {
     }
 
     private func openRecentFile(_ url: URL) {
-        tabManager.openDocument(url: url, isSecurityScoped: false)
+        focusedTabManager?.openDocument(url: url, isSecurityScoped: false)
         recentFilesManager.addRecentFile(url)
     }
 
     private func handleSave() {
-        let result = tabManager.saveActiveDocument()
+        guard let result = focusedTabManager?.saveActiveDocument() else { return }
         if case .failure(let message) = result {
             showAlert(message: message)
         }
     }
 
     private func handleSaveAs() {
-        let result = tabManager.saveActiveDocumentAs()
+        guard let result = focusedTabManager?.saveActiveDocumentAs() else { return }
         if case .failure(let message) = result {
             showAlert(message: message)
         }
@@ -192,11 +188,6 @@ struct PageFlowApp: App {
     }
 
     private func openNewWindow() {
-        // Open a new window using NSWorkspace
-        if let appURL = Bundle.main.bundleURL as URL? {
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.createsNewApplicationInstance = false
-            NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
-        }
+        NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
     }
 }
