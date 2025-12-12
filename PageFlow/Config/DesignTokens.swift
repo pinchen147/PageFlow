@@ -86,7 +86,7 @@ struct DesignTokens {
 
     // MARK: - PDF Viewer
 
-    static let pdfMinScale: CGFloat = 0.25
+    static let pdfMinScale: CGFloat = 0.1
     static let pdfMaxScale: CGFloat = 4.0
     static let pdfDefaultScale: CGFloat = 1.0
     static let pdfZoomStep: CGFloat = 0.25

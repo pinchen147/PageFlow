@@ -22,7 +22,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.layer?.isOpaque = true
         pdfView.layer?.backgroundColor = DesignTokens.viewerBackground.cgColor
         pdfView.backgroundColor = DesignTokens.viewerBackground
-        pdfView.displayMode = .singlePageContinuous
+        pdfView.displaysPageBreaks = true
+        pdfView.displayMode = pdfManager.displayMode
         pdfView.displayDirection = .vertical
         pdfView.autoScales = false
         pdfView.minScaleFactor = DesignTokens.pdfMinScale
@@ -53,8 +54,11 @@ struct PDFViewWrapper: NSViewRepresentable {
         annotationManager.configure(
             pdfManager: pdfManager,
             selectionProvider: { [weak pdfView] in
-                guard let pdfView = pdfView else { return (nil, nil) }
-                return (pdfView.currentSelection, pdfView.currentPage)
+                guard let pdfView = pdfView,
+                      let selection = pdfView.currentSelection else { return (nil, nil) }
+                // Get page from selection itself, not currentPage (fixes two-page continuous mode)
+                let page = selection.pages.first ?? pdfView.currentPage
+                return (selection, page)
             }
         )
 
@@ -62,7 +66,12 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfManager: pdfManager,
             selectionProvider: { [weak pdfView] in
                 guard let pdfView = pdfView else { return (nil, nil) }
-                return (pdfView.currentSelection, pdfView.currentPage)
+                // If there's a selection, get page from it; otherwise use currentPage for default comment
+                if let selection = pdfView.currentSelection {
+                    let page = selection.pages.first ?? pdfView.currentPage
+                    return (selection, page)
+                }
+                return (nil, pdfView.currentPage)
             }
         )
 
@@ -79,6 +88,12 @@ struct PDFViewWrapper: NSViewRepresentable {
             context.coordinator,
             selector: #selector(Coordinator.scaleChanged(_:)),
             name: .PDFViewScaleChanged,
+            object: pdfView
+        )
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.displayModeChanged(_:)),
+            name: .PDFViewDisplayModeChanged,
             object: pdfView
         )
 
@@ -103,7 +118,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 commentManager.clearComments()
             }
 
-            pdfView.autoScales = pdfManager.isAutoScaling
+            pdfView.autoScales = false
             if pdfManager.fitOnceRequested {
                 performOneTimeFit(on: pdfView)
             } else {
@@ -123,11 +138,17 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.interactionMode = pdfManager.interactionMode
         }
 
+        if pdfView.displayMode != pdfManager.displayMode {
+            pdfView.displayMode = pdfManager.displayMode
+        }
+
         if pdfManager.fitOnceRequested {
             performOneTimeFit(on: pdfView)
         } else if pdfManager.scaleNeedsUpdate {
-            // Only update scale if explicitly requested
-            pdfView.scaleFactor = pdfManager.scaleFactor
+            // Only update scale if explicitly requested AND not auto-scaling
+            if !pdfView.autoScales {
+                pdfView.scaleFactor = pdfManager.scaleFactor
+            }
             pdfManager.scaleNeedsUpdate = false
         }
 
@@ -168,6 +189,11 @@ struct PDFViewWrapper: NSViewRepresentable {
         NotificationCenter.default.removeObserver(
             coordinator,
             name: .PDFViewScaleChanged,
+            object: pdfView
+        )
+        NotificationCenter.default.removeObserver(
+            coordinator,
+            name: .PDFViewDisplayModeChanged,
             object: pdfView
         )
         coordinator.removeScrollMonitor()
@@ -222,9 +248,9 @@ struct PDFViewWrapper: NSViewRepresentable {
                     self.pdfManager.scaleFactor = adjustedScale
                 }
 
+                // Set destination to top-left initially to set vertical position
                 if let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage {
                     let pageBounds = currentPage.bounds(for: .mediaBox)
-                    // Set destination to top-left initially to set vertical position
                     let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
                     let destination = PDFDestination(page: currentPage, at: topLeft)
                     pdfView.go(to: destination)
@@ -392,6 +418,14 @@ struct PDFViewWrapper: NSViewRepresentable {
             lastKnownScale = newScale
 
             pdfManager.scaleFactor = newScale
+        }
+
+        @objc func displayModeChanged(_ notification: Notification) {
+            guard let pdfView = notification.object as? PDFView else { return }
+            let target = pdfManager.displayMode
+            if pdfView.displayMode != target {
+                pdfView.displayMode = target
+            }
         }
     }
 }

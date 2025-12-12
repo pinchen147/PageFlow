@@ -321,8 +321,10 @@ struct CustomTextEditor: NSViewRepresentable {
             scrollView.window?.makeFirstResponder(textView)
         }
 
-        let usedHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
-        calculatedHeight = max(usedHeight + 4, 20)
+        if let textContainer = textView.textContainer {
+            let usedHeight = textView.layoutManager?.usedRect(for: textContainer).height ?? 0
+            calculatedHeight = max(usedHeight + 4, 20)
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -339,8 +341,10 @@ struct CustomTextEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             parent.text = textView.string
-            let usedHeight = textView.layoutManager?.usedRect(for: textView.textContainer!).height ?? 0
-            parent.calculatedHeight = max(usedHeight + 4, 20)
+            if let textContainer = textView.textContainer {
+                let usedHeight = textView.layoutManager?.usedRect(for: textContainer).height ?? 0
+                parent.calculatedHeight = max(usedHeight + 4, 20)
+            }
         }
 
     }

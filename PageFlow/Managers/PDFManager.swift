@@ -29,6 +29,7 @@ class PDFManager {
     var documentURL: URL?
     var isDirty: Bool = false
     var interactionMode: InteractionMode = .select
+    var displayMode: PDFDisplayMode = .singlePageContinuous
     
     // Weak reference to the active PDFView to support PDFThumbnailView linking
     weak var activePDFView: PDFView?
@@ -188,6 +189,7 @@ class PDFManager {
 
     func toggleAutoScale() {
         isAutoScaling.toggle()
+        scaleNeedsUpdate = true
     }
 
     func requestFitOnce() {

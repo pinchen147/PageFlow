@@ -15,8 +15,8 @@ struct OutlineItem: Identifiable {
     let children: [OutlineItem]?
 
     init?(outline: PDFOutline, path: String = "root") {
-        let label = outline.label?.trimmingCharacters(in: .whitespacesAndNewlines)
-        title = label?.isEmpty == false ? label! : "Untitled"
+        let trimmedLabel = outline.label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        title = trimmedLabel.isEmpty ? "Untitled" : trimmedLabel
         if let page = outline.destination?.page, let document = page.document {
             pageIndex = document.index(for: page)
         } else {

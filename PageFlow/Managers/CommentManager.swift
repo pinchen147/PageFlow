@@ -94,9 +94,7 @@ final class CommentManager {
         let comment = comments[index]
         let page = highlight.page
 
-        if let page = highlight.page {
-            page.removeAnnotation(highlight)
-        }
+        page?.removeAnnotation(highlight)
 
         comments.remove(at: index)
         highlights.removeValue(forKey: id)

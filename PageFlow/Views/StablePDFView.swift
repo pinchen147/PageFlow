@@ -247,11 +247,15 @@ final class StablePDFView: PDFView {
     // MARK: - Mouse Handling
 
     override func mouseDown(with event: NSEvent) {
-        guard interactionMode == .select else {
-            super.mouseDown(with: event)
+        // Pan mode: initiate panning
+        if interactionMode == .pan {
+            lastPanLocation = convert(event.locationInWindow, from: nil)
+            isPanning = true
+            NSCursor.closedHand.push()
             return
         }
 
+        // Select mode handling
         let viewPoint = convert(event.locationInWindow, from: nil)
         guard let page = page(for: viewPoint, nearest: true) else {
             super.mouseDown(with: event)
@@ -264,13 +268,19 @@ final class StablePDFView: PDFView {
         case 1:
             // Single click: check for annotation
             if let annotation = page.annotation(at: pagePoint) {
+                // Only consume click for comment annotations (have userName with UUID)
+                // Regular highlights/underlines should allow text selection through them
+                let isCommentAnnotation = annotation.userName.flatMap { UUID(uuidString: $0) } != nil
+                if isCommentAnnotation {
+                    onAnnotationClick?(annotation)
+                    return
+                }
+                // For regular markup annotations, notify but allow text selection
                 onAnnotationClick?(annotation)
-                // Consume event to prevent PDFView from hijacking selection
-                return
             } else {
                 onAnnotationDeselect?()
-                super.mouseDown(with: event)
             }
+            super.mouseDown(with: event)
         case 2:
             // Double click: select word
             if let selection = page.selectionForWord(at: pagePoint) {

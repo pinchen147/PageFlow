@@ -23,7 +23,7 @@ final class WindowRegistry {
 
     func unregister(_ tabManager: TabManager) {
         lock.withLock {
-            tabManagers.removeValue(forKey: ObjectIdentifier(tabManager))
+            _ = tabManagers.removeValue(forKey: ObjectIdentifier(tabManager))
         }
     }
 

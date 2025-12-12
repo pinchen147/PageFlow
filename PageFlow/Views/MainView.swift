@@ -189,6 +189,10 @@ struct MainView: View {
                     .padding(.bottom, DesignTokens.spacingMD)
             }
         }
+        .focusedSceneValue(\.showingOutline, $showingOutline)
+        .focusedSceneValue(\.showingComments, $showingComments)
+        .focusedSceneValue(\.showingGoToPage, $showingGoToPage)
+        .focusedSceneValue(\.showingFileImporter, $showingFileImporter)
     }
 
     // MARK: - Empty State

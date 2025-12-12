@@ -43,7 +43,7 @@ class SearchManager {
             withOptions: .caseInsensitive
         )
 
-        currentResultIndex = searchResults.isEmpty ? 0 : 0
+        currentResultIndex = 0
     }
 
     func nextResult() {
