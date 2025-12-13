@@ -11,7 +11,8 @@ import Observation
 import AppKit
 
 @Observable
-class SearchManager {
+@MainActor
+final class SearchManager {
     var searchQuery: String = ""
     var searchResults: [PDFSelection] = []
     var currentResultIndex: Int = 0

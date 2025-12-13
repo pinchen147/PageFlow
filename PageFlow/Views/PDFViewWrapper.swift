@@ -176,16 +176,17 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.go(to: currentPage)
         }
 
+        // Sync displayMode BEFORE autoScales to prevent PDFKit side effects
+        if pdfView.displayMode != pdfManager.displayMode {
+            pdfView.displayMode = pdfManager.displayMode
+        }
+
         if pdfView.autoScales != pdfManager.isAutoScaling {
             pdfView.autoScales = pdfManager.isAutoScaling
         }
 
         if pdfView.interactionMode != pdfManager.interactionMode {
             pdfView.interactionMode = pdfManager.interactionMode
-        }
-
-        if pdfView.displayMode != pdfManager.displayMode {
-            pdfView.displayMode = pdfManager.displayMode
         }
 
         if pdfManager.fitOnceRequested {
@@ -244,6 +245,11 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
         coordinator.removeScrollMonitor()
+
+        // Clear all callbacks to prevent any lingering references
+        pdfView.onAnnotationClick = nil
+        pdfView.onAnnotationDeselect = nil
+        pdfView.onAnnotationRemove = nil
         pdfView.onControlScroll = nil
 
         // Clear the activePDFView reference if it points to this view
@@ -368,7 +374,12 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             guard isActive else { return }
 
-            // When becoming active, force the view to reflect manager scale
+            // When becoming active, sync displayMode FIRST to prevent PDFKit side effects
+            if pdfView.displayMode != pdfManager.displayMode {
+                pdfView.displayMode = pdfManager.displayMode
+            }
+
+            // Then sync scale settings
             pdfView.autoScales = pdfManager.isAutoScaling
             if !pdfView.autoScales {
                 let targetScale = pdfManager.scaleFactor
@@ -444,7 +455,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         private func convertEventPoint(_ event: NSEvent, in pdfView: StablePDFView) -> NSPoint? {
-            if let window = event.window {
+            if event.window != nil {
                 return pdfView.convert(event.locationInWindow, from: nil)
             }
 
