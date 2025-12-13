@@ -283,7 +283,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             // Calculate fit scale + zoom bump for comfortable reading
             let baseScale = self.calculateFitScale(for: pdfView, page: currentPage)
-            let zoomBump: CGFloat = 0.1
+            let zoomBump: CGFloat = 0.05
             let fitScale = baseScale + zoomBump
 
             if fitScale > 0 {
