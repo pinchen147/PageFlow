@@ -78,9 +78,60 @@ final class StablePDFView: PDFView {
     // MARK: - Callbacks for Click Handling
     var onAnnotationClick: ((PDFAnnotation) -> Void)?
     var onAnnotationDeselect: (() -> Void)?
+    var onAnnotationRemove: ((PDFAnnotation) -> Void)?
+
+    private var rightClickMonitor: Any?
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+    }
+
+    func setupRightClickMonitor() {
+        rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
+            guard let self = self else { return event }
+            return self.handleRightClickEvent(event)
+        }
+    }
+
+    private func handleRightClickEvent(_ event: NSEvent) -> NSEvent? {
+        // Check if click is within our view
+        guard let window = self.window,
+              event.window === window else {
+            return event
+        }
+
+        let windowPoint = event.locationInWindow
+        let viewPoint = self.convert(windowPoint, from: nil)
+
+        guard self.bounds.contains(viewPoint) else {
+            return event
+        }
+
+        guard let page = self.page(for: viewPoint, nearest: true) else {
+            return event
+        }
+
+        let pagePoint = self.convert(viewPoint, to: page)
+
+        if let annotation = self.findMarkupAnnotation(at: pagePoint, on: page) {
+            self.pendingRemovalAnnotation = annotation
+
+            let isHighlight = self.isHighlightAnnotation(annotation)
+            let menu = NSMenu()
+            let title = isHighlight ? "Remove Highlight" : "Remove Underline"
+            let item = NSMenuItem(title: title, action: #selector(self.removeAnnotationAction(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+
+            // Show menu and consume the event
+            menu.popUp(positioning: nil, at: viewPoint, in: self)
+            return nil  // Consume the event
+        }
+
+        return event  // Let PDFView handle it
     }
 
     private func configureScrollers(_ scrollView: NSScrollView) {
@@ -333,5 +384,91 @@ final class StablePDFView: PDFView {
         lastPanLocation = nil
         isPanning = false
         NSCursor.pop()
+    }
+
+    // MARK: - Right-Click Context Menu for Annotations
+
+    private var pendingRemovalAnnotation: PDFAnnotation?
+
+    override func rightMouseDown(with event: NSEvent) {
+        let viewPoint = convert(event.locationInWindow, from: nil)
+
+        guard let page = page(for: viewPoint, nearest: true) else {
+            super.rightMouseDown(with: event)
+            return
+        }
+
+        let pagePoint = convert(viewPoint, to: page)
+
+        // Try to find a markup annotation at this point
+        if let annotation = findMarkupAnnotation(at: pagePoint, on: page) {
+            pendingRemovalAnnotation = annotation
+
+            let isHighlight = isHighlightAnnotation(annotation)
+            let menu = NSMenu()
+            let title = isHighlight ? "Remove Highlight" : "Remove Underline"
+            let item = NSMenuItem(title: title, action: #selector(removeAnnotationAction(_:)), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+
+            menu.popUp(positioning: nil, at: viewPoint, in: self)
+        } else {
+            // No annotation found - pass to super for default behavior
+            super.rightMouseDown(with: event)
+        }
+    }
+
+    private func findMarkupAnnotation(at point: CGPoint, on page: PDFPage) -> PDFAnnotation? {
+        // Method 1: Use PDFKit's built-in hit testing
+        if let annotation = page.annotation(at: point),
+           isRemovableMarkup(annotation) {
+            return annotation
+        }
+
+        // Method 2: Manual search with tolerance for edge cases
+        let tolerance: CGFloat = 10.0
+        let searchRect = CGRect(
+            x: point.x - tolerance,
+            y: point.y - tolerance,
+            width: tolerance * 2,
+            height: tolerance * 2
+        )
+
+        for annotation in page.annotations {
+            guard isRemovableMarkup(annotation) else { continue }
+            if annotation.bounds.intersects(searchRect) {
+                return annotation
+            }
+        }
+
+        return nil
+    }
+
+    private func isRemovableMarkup(_ annotation: PDFAnnotation) -> Bool {
+        guard let type = annotation.type else { return false }
+
+        // Check for highlight or underline type (case-insensitive, partial match)
+        let typeLower = type.lowercased()
+        let isMarkup = typeLower.contains("highlight") || typeLower.contains("underline")
+
+        guard isMarkup else { return false }
+
+        // Exclude comment annotations (have UUID in userName)
+        if let userName = annotation.userName,
+           UUID(uuidString: userName) != nil {
+            return false
+        }
+
+        return true
+    }
+
+    private func isHighlightAnnotation(_ annotation: PDFAnnotation) -> Bool {
+        annotation.type?.lowercased().contains("highlight") ?? false
+    }
+
+    @objc private func removeAnnotationAction(_ sender: NSMenuItem) {
+        guard let annotation = pendingRemovalAnnotation else { return }
+        pendingRemovalAnnotation = nil
+        onAnnotationRemove?(annotation)
     }
 }

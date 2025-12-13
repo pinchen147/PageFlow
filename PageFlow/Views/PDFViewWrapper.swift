@@ -51,6 +51,41 @@ struct PDFViewWrapper: NSViewRepresentable {
             annotationManager?.selectedAnnotation = nil
         }
 
+        // Setup right-click event monitor for annotation removal
+        pdfView.setupRightClickMonitor()
+
+        pdfView.onAnnotationRemove = { [weak pdfView, weak annotationManager, weak pdfManager] annotation in
+            guard let page = annotation.page else { return }
+
+            // Remove annotation from page - this is the core operation
+            page.removeAnnotation(annotation)
+
+            // Mark document as dirty
+            pdfManager?.isDirty = true
+
+            // Clear selection if this annotation was selected
+            if annotationManager?.selectedAnnotation === annotation {
+                annotationManager?.selectedAnnotation = nil
+            }
+
+            // Force PDFView to redraw (if still available)
+            if let pdfView = pdfView {
+                pdfView.needsDisplay = true
+                pdfView.layoutDocumentView()
+            }
+
+            // Register undo
+            if let undoManager = NSApp.keyWindow?.undoManager {
+                undoManager.registerUndo(withTarget: page) { [weak pdfView, weak pdfManager] targetPage in
+                    targetPage.addAnnotation(annotation)
+                    pdfManager?.isDirty = true
+                    pdfView?.needsDisplay = true
+                    pdfView?.layoutDocumentView()
+                }
+                undoManager.setActionName("Remove Annotation")
+            }
+        }
+
         annotationManager.configure(
             pdfManager: pdfManager,
             selectionProvider: { [weak pdfView] in

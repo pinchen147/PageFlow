@@ -98,6 +98,16 @@ final class AnnotationManager {
         pdfManager?.isDirty = true
     }
 
+    func removeAnnotation(_ annotation: PDFAnnotation) {
+        guard let page = annotation.page else { return }
+
+        remove(annotation, from: page, registerRedo: true)
+        if selectedAnnotation === annotation {
+            selectedAnnotation = nil
+        }
+        pdfManager?.isDirty = true
+    }
+
     func updateSelectedAnnotationColor(_ color: NSColor) {
         guard let annotation = selectedAnnotation else { return }
         let previousColor = annotation.color
