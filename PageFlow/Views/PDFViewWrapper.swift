@@ -14,6 +14,7 @@ struct PDFViewWrapper: NSViewRepresentable {
     var searchManager: SearchManager
     @Bindable var annotationManager: AnnotationManager
     @Bindable var commentManager: CommentManager
+    var isActive: Bool
 
     func makeNSView(context: Context) -> StablePDFView {
         let pdfView = StablePDFView()
@@ -53,6 +54,13 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         // Setup right-click event monitor for annotation removal
         pdfView.setupRightClickMonitor()
+
+        // Setup control + scroll zoom handling
+        pdfView.onControlScroll = { [weak pdfView, weak coordinator = context.coordinator] event in
+            guard let pdfView = pdfView,
+                  let coordinator = coordinator else { return false }
+            return coordinator.processControlScroll(event: event, pdfView: pdfView)
+        }
 
         pdfView.onAnnotationRemove = { [weak pdfView, weak annotationManager, weak pdfManager] annotation in
             guard let page = annotation.page else { return }
@@ -139,6 +147,9 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     func updateNSView(_ pdfView: StablePDFView, context: Context) {
+        context.coordinator.isActive = isActive
+        context.coordinator.handleActivationChange(isActive: isActive, pdfView: pdfView)
+
         if pdfView.document !== pdfManager.document {
             annotationManager.selectedAnnotation = nil
             pdfView.document = pdfManager.document
@@ -211,7 +222,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         Coordinator(
             pdfManager: pdfManager,
             annotationManager: annotationManager,
-            commentManager: commentManager
+            commentManager: commentManager,
+            isActive: isActive
         )
     }
 
@@ -232,6 +244,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
         coordinator.removeScrollMonitor()
+        pdfView.onControlScroll = nil
 
         // Clear the activePDFView reference if it points to this view
         if coordinator.pdfManager.activePDFView === pdfView {
@@ -317,14 +330,17 @@ struct PDFViewWrapper: NSViewRepresentable {
         let pdfManager: PDFManager
         let annotationManager: AnnotationManager
         let commentManager: CommentManager
+        var isActive: Bool = true
         private var scrollMonitor: Any?
         private weak var pdfView: StablePDFView?
         private var lastKnownScale: CGFloat?
+        private var wasActive: Bool = true
 
-        init(pdfManager: PDFManager, annotationManager: AnnotationManager, commentManager: CommentManager) {
+        init(pdfManager: PDFManager, annotationManager: AnnotationManager, commentManager: CommentManager, isActive: Bool) {
             self.pdfManager = pdfManager
             self.annotationManager = annotationManager
             self.commentManager = commentManager
+            self.isActive = isActive
             super.init()
         }
 
@@ -333,8 +349,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self, weak pdfView] event in
                 guard let self = self,
-                      let pdfView = pdfView,
-                      event.modifierFlags.contains(.control) else {
+                      let pdfView = pdfView else {
                     return event
                 }
 
@@ -343,82 +358,101 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         private func handleZoomScroll(event: NSEvent, pdfView: StablePDFView) -> NSEvent? {
-            // Check if mouse is over the PDF view
-            let mouseLocation = NSEvent.mouseLocation
-            guard let window = pdfView.window else { return event }
+            let handled = processControlScroll(event: event, pdfView: pdfView)
+            return handled ? nil : event
+        }
 
-            let windowPoint = window.convertPoint(fromScreen: mouseLocation)
-            let pointInView = pdfView.convert(windowPoint, from: nil)
+        func handleActivationChange(isActive: Bool, pdfView: StablePDFView) {
+            guard wasActive != isActive else { return }
+            wasActive = isActive
 
-            guard pdfView.bounds.contains(pointInView) else {
-                return event
+            guard isActive else { return }
+
+            // When becoming active, force the view to reflect manager scale
+            pdfView.autoScales = pdfManager.isAutoScaling
+            if !pdfView.autoScales {
+                let targetScale = pdfManager.scaleFactor
+                if pdfView.scaleFactor != targetScale {
+                    pdfView.scaleFactor = targetScale
+                }
+            }
+            lastKnownScale = pdfView.scaleFactor
+        }
+
+        func processControlScroll(event: NSEvent, pdfView: StablePDFView) -> Bool {
+            guard isActive,
+                  event.modifierFlags.contains(.control),
+                  let pointInView = convertEventPoint(event, in: pdfView),
+                  pdfView.bounds.contains(pointInView) else {
+                return false
             }
 
-            // Disable auto-scaling when manually zooming
             pdfView.autoScales = false
-            self.pdfManager.isAutoScaling = false
+            pdfManager.isAutoScaling = false
 
-            // Calculate new scale
             let delta = event.scrollingDeltaY
-            guard delta != 0 else { return nil }
+            guard delta != 0 else { return true }
 
             let oldScale = pdfView.scaleFactor
             let zoomFactor: CGFloat = 1.1  // 10% per scroll
-            var newScale: CGFloat
+            var newScale: CGFloat = delta > 0 ? oldScale * zoomFactor : oldScale / zoomFactor
 
-            if delta > 0 {
-                // Zoom in
-                newScale = oldScale * zoomFactor
-            } else {
-                // Zoom out
-                newScale = oldScale / zoomFactor
-            }
-
-            // Clamp to min/max
             newScale = max(DesignTokens.pdfMinScale, min(newScale, DesignTokens.pdfMaxScale))
 
-            guard newScale != oldScale else { return nil }
-
-            // Find the page at cursor location
-            guard let page = pdfView.page(for: pointInView, nearest: true) else {
-                pdfView.scaleFactor = newScale
-                self.pdfManager.scaleFactor = newScale
-                return nil
+            guard newScale != oldScale else {
+                pdfManager.scaleFactor = newScale
+                return true
             }
 
-            // Convert view point to page coordinates
+            guard let page = pdfView.page(for: pointInView, nearest: true) else {
+                pdfView.scaleFactor = newScale
+                pdfManager.scaleFactor = newScale
+                return true
+            }
+
             let pointInPage = pdfView.convert(pointInView, to: page)
 
-            // Apply the new scale
             pdfView.scaleFactor = newScale
 
-            // Convert the page point back to view coordinates (now scaled)
             let pointInViewAfterZoom = pdfView.convert(pointInPage, from: page)
 
-            // Calculate the offset
             let offsetX = pointInViewAfterZoom.x - pointInView.x
             let offsetY = pointInViewAfterZoom.y - pointInView.y
 
-            // Get current scroll position
-            guard let scrollView = pdfView.documentScrollView else {
-                self.pdfManager.scaleFactor = newScale
-                return nil
+            if let scrollView = pdfView.documentScrollView {
+                let visibleRect = scrollView.documentVisibleRect
+
+                var newOrigin = NSPoint(
+                    x: visibleRect.origin.x + offsetX,
+                    y: visibleRect.origin.y + offsetY
+                )
+
+                if let documentView = scrollView.documentView {
+                    let maxX = max(0, documentView.bounds.width - visibleRect.width)
+                    let maxY = max(0, documentView.bounds.height - visibleRect.height)
+                    newOrigin.x = max(0, min(newOrigin.x, maxX))
+                    newOrigin.y = max(0, min(newOrigin.y, maxY))
+                }
+
+                scrollView.contentView.scroll(to: newOrigin)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
             }
 
-            let visibleRect = scrollView.documentVisibleRect
+            pdfManager.scaleFactor = newScale
 
-            // Adjust scroll to keep point under cursor
-            let newOrigin = NSPoint(
-                x: visibleRect.origin.x + offsetX,
-                y: visibleRect.origin.y + offsetY
-            )
+            return true
+        }
 
-            scrollView.contentView.setBoundsOrigin(newOrigin)
-            scrollView.reflectScrolledClipView(scrollView.contentView)
+        private func convertEventPoint(_ event: NSEvent, in pdfView: StablePDFView) -> NSPoint? {
+            if let window = event.window {
+                return pdfView.convert(event.locationInWindow, from: nil)
+            }
 
-            self.pdfManager.scaleFactor = newScale
-
-            return nil
+            // Fallback to screen location if window is unavailable (rare during monitoring)
+            let screenPoint = NSEvent.mouseLocation
+            guard let window = pdfView.window else { return nil }
+            let windowPoint = window.convertPoint(fromScreen: screenPoint)
+            return pdfView.convert(windowPoint, from: nil)
         }
 
         func setPDFView(_ pdfView: StablePDFView) {

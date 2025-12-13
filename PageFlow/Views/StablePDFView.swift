@@ -79,6 +79,7 @@ final class StablePDFView: PDFView {
     var onAnnotationClick: ((PDFAnnotation) -> Void)?
     var onAnnotationDeselect: (() -> Void)?
     var onAnnotationRemove: ((PDFAnnotation) -> Void)?
+    var onControlScroll: ((NSEvent) -> Bool)?
 
     private var rightClickMonitor: Any?
 
@@ -351,6 +352,16 @@ final class StablePDFView: PDFView {
         default:
             super.mouseDown(with: event)
         }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        // Give control-scroll zoom handler a chance to consume the event
+        if event.modifierFlags.contains(.control),
+           onControlScroll?(event) == true {
+            return
+        }
+
+        super.scrollWheel(with: event)
     }
 
     override func mouseDragged(with event: NSEvent) {

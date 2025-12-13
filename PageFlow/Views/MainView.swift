@@ -15,6 +15,7 @@ struct MainView: View {
     @Bindable var annotationManager: AnnotationManager
     @Bindable var commentManager: CommentManager
     @Bindable var bookmarkManager: BookmarkManager
+    var isActive: Bool
     @Binding var showingSearch: Bool
     @Binding var isTopBarHovered: Bool
     @Bindable var tabManager: TabManager
@@ -37,7 +38,8 @@ struct MainView: View {
                     pdfManager: pdfManager,
                     searchManager: searchManager,
                     annotationManager: annotationManager,
-                    commentManager: commentManager
+                    commentManager: commentManager,
+                    isActive: isActive
                 )
             } else {
                 emptyState
@@ -82,11 +84,11 @@ struct MainView: View {
         .overlay(alignment: .top) {
             HStack(spacing: 0) {
                 // Traffic lights
-                TrafficLightsView(isHovering: $isTopBarHovered)
-                    .padding(DesignTokens.spacingXS)
+            TrafficLightsView(isHovering: $isTopBarHovered)
+                .padding(DesignTokens.spacingXS)
 
-                // Tab bar - fills remaining space between traffic lights and toolbar
-                TabBarView(tabManager: tabManager, isHovering: $isTopBarHovered)
+            // Tab bar - fills remaining space between traffic lights and toolbar
+            TabBarView(tabManager: tabManager, isHovering: $isTopBarHovered)
                     .frame(maxWidth: .infinity)
 
                 // Floating toolbar
@@ -437,6 +439,7 @@ struct MainView: View {
         annotationManager: AnnotationManager(),
         commentManager: CommentManager(),
         bookmarkManager: BookmarkManager(),
+        isActive: true,
         showingSearch: .constant(false),
         isTopBarHovered: .constant(false),
         tabManager: TabManager(),

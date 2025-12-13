@@ -28,6 +28,7 @@ struct TabContainerView: View {
                         annotationManager: annotationManager,
                         commentManager: commentManager,
                         bookmarkManager: bookmarkManager,
+                        isActive: isActive,
                         showingSearch: $showingSearch,
                         isTopBarHovered: $isTopBarHovered,
                         tabManager: tabManager,
