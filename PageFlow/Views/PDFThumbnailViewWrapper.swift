@@ -13,7 +13,7 @@ struct PDFThumbnailViewWrapper: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PDFThumbnailView {
         let thumbnailView = PDFThumbnailView()
-        thumbnailView.backgroundColor = DesignTokens.viewerBackground
+        thumbnailView.backgroundColor = .clear
 
         let width = DesignTokens.sidebarWidth - (DesignTokens.spacingMD * 2)
         // Approx A4 ratio (1:1.414)
@@ -30,15 +30,16 @@ struct PDFThumbnailViewWrapper: NSViewRepresentable {
             thumbnailView.pdfView = mainPDFView
         }
 
-        if thumbnailView.backgroundColor != DesignTokens.viewerBackground {
-            thumbnailView.backgroundColor = DesignTokens.viewerBackground
-        }
-
         configureScrollView(in: thumbnailView)
     }
 
     private func configureScrollView(in thumbnailView: PDFThumbnailView) {
         guard let scrollView = findScrollView(in: thumbnailView) else { return }
+
+        // Transparent background for glassmorphism effect
+        scrollView.drawsBackground = false
+        scrollView.backgroundColor = .clear
+        scrollView.contentView.drawsBackground = false
 
         // Auto-hide scrollers when content fits
         scrollView.autohidesScrollers = true
@@ -46,7 +47,6 @@ struct PDFThumbnailViewWrapper: NSViewRepresentable {
         scrollView.hasHorizontalScroller = false
 
         // Center content horizontally
-        scrollView.contentView.postsBoundsChangedNotifications = true
         if let documentView = scrollView.documentView {
             documentView.frame.origin.x = max(0, (scrollView.bounds.width - documentView.bounds.width) / 2)
         }
