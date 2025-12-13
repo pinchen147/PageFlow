@@ -268,8 +268,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         DispatchQueue.main.async {
             guard self.pdfManager.fitOnceRequested else { return }
 
-            // Check if view is ready (has bounds and document)
-            // If not, retry up to 10 times (1 second total)
+            // Check if view is ready
             if (pdfView.bounds.isEmpty || pdfView.document == nil) && retryCount < 10 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.performFit(on: pdfView, retryCount: retryCount + 1)
@@ -277,62 +276,95 @@ struct PDFViewWrapper: NSViewRepresentable {
                 return
             }
 
-            // Preserve current state before modifying
-            let originalAutoScale = pdfView.autoScales
-            let originalDisplayMode = pdfView.displayMode
-
-            // Temporarily enable autoScales to get the correct fit scale
-            pdfView.autoScales = true
-
-            let fitScale = pdfView.scaleFactorForSizeToFit
-
-            // If scale is invalid (0) and we haven't timed out, retry
-            if fitScale <= 0 && retryCount < 10 {
-                pdfView.autoScales = originalAutoScale
-                pdfView.displayMode = originalDisplayMode
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self.performFit(on: pdfView, retryCount: retryCount + 1)
-                }
+            guard let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage else {
+                self.pdfManager.fitOnceRequested = false
                 return
             }
 
-            // Apply valid scale with a fit-to-window scale + slight zoom bump
-            if fitScale > 0 {
-                let zoomBump: CGFloat = 0.1
-                let adjustedScale = min(fitScale + zoomBump, DesignTokens.pdfMaxScale)
-                
-                if adjustedScale != pdfView.scaleFactor {
-                    pdfView.scaleFactor = adjustedScale
-                    self.pdfManager.scaleFactor = adjustedScale
-                }
+            // Calculate fit scale + zoom bump for comfortable reading
+            let baseScale = self.calculateFitScale(for: pdfView, page: currentPage)
+            let zoomBump: CGFloat = 0.1
+            let fitScale = baseScale + zoomBump
 
-                // Set destination to top-left initially to set vertical position
-                if let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage {
-                    let pageBounds = currentPage.bounds(for: .mediaBox)
-                    let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
-                    let destination = PDFDestination(page: currentPage, at: topLeft)
-                    pdfView.go(to: destination)
-                    
-                    if let scrollView = pdfView.documentScrollView {
-                        // Center horizontally
-                        let docViewWidth = scrollView.documentView?.bounds.width ?? 0
-                        let clipViewWidth = scrollView.contentView.bounds.width
-                        let centeredX = max(0, (docViewWidth - clipViewWidth) / 2.0)
-                        
-                        // Keep current Y (set by go(to:))
-                        let origin = NSPoint(x: centeredX, y: scrollView.documentVisibleRect.origin.y)
-                        scrollView.contentView.scroll(to: origin)
-                        scrollView.reflectScrolledClipView(scrollView.contentView)
-                    }
-                }
+            if fitScale > 0 {
+                let clampedScale = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
+                pdfView.scaleFactor = clampedScale
+                self.pdfManager.scaleFactor = clampedScale
+
+                // Navigate to top of current page
+                let pageBounds = currentPage.bounds(for: .mediaBox)
+                let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
+                pdfView.go(to: PDFDestination(page: currentPage, at: topLeft))
             }
 
             self.pdfManager.fitOnceRequested = false
             self.pdfManager.scaleNeedsUpdate = false
 
-            // Restore original state
-            pdfView.autoScales = originalAutoScale
-            pdfView.displayMode = originalDisplayMode
+            // Center content after layout updates
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.centerContent(in: pdfView)
+            }
+        }
+    }
+
+    private func centerContent(in pdfView: StablePDFView) {
+        guard let scrollView = pdfView.documentScrollView,
+              let documentView = scrollView.documentView else { return }
+
+        let docWidth = documentView.bounds.width
+        let clipWidth = scrollView.contentView.bounds.width
+
+        // Only center if content is wider than view (otherwise PDFView handles it)
+        guard docWidth > clipWidth else { return }
+
+        let centeredX = (docWidth - clipWidth) / 2.0
+        let currentY = scrollView.contentView.bounds.origin.y
+        let origin = NSPoint(x: centeredX, y: currentY)
+
+        scrollView.contentView.scroll(to: origin)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func calculateFitScale(for pdfView: StablePDFView, page: PDFPage) -> CGFloat {
+        let viewBounds = pdfView.bounds
+        guard viewBounds.width > 0, viewBounds.height > 0 else { return 1.0 }
+
+        let pageBounds = page.bounds(for: .mediaBox)
+        let pageWidth = pageBounds.width
+        let pageHeight = pageBounds.height
+        guard pageWidth > 0, pageHeight > 0 else { return 1.0 }
+
+        // Account for page margins/padding in PDFView
+        let horizontalPadding: CGFloat = 20
+        let verticalPadding: CGFloat = 20
+        let availableWidth = viewBounds.width - horizontalPadding
+        let availableHeight = viewBounds.height - verticalPadding
+
+        switch pdfView.displayMode {
+        case .singlePage:
+            // Fit entire page in view
+            let widthScale = availableWidth / pageWidth
+            let heightScale = availableHeight / pageHeight
+            return min(widthScale, heightScale)
+
+        case .singlePageContinuous:
+            // Fit page width, allow vertical scroll
+            return availableWidth / pageWidth
+
+        case .twoUp:
+            // Fit two pages side by side
+            let twoPageWidth = pageWidth * 2 + 10 // 10pt gap between pages
+            let widthScale = availableWidth / twoPageWidth
+            let heightScale = availableHeight / pageHeight
+            return min(widthScale, heightScale)
+
+        case .twoUpContinuous:
+            // Fit two pages width, allow vertical scroll
+            let twoPageWidth = pageWidth * 2 + 10
+            return availableWidth / twoPageWidth
+
+        @unknown default:
+            return availableWidth / pageWidth
         }
     }
 
