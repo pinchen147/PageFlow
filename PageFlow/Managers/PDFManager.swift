@@ -15,6 +15,12 @@ enum InteractionMode {
     case pan
 }
 
+enum DocumentLoadResult {
+    case success
+    case failed
+    case needsPassword
+}
+
 @Observable
 class PDFManager {
     // MARK: - Properties
@@ -33,7 +39,12 @@ class PDFManager {
     
     // Weak reference to the active PDFView to support PDFThumbnailView linking
     weak var activePDFView: PDFView?
-    
+
+    // Password-protected PDF state
+    var pendingLockedDocument: PDFDocument?
+    var pendingLockedURL: URL?
+    var pendingIsSecurityScoped: Bool = false
+
     private var isAccessingSecurityScopedResource = false
 
     var pageCount: Int {
@@ -59,22 +70,64 @@ class PDFManager {
 
     // MARK: - Document Loading
 
-    func loadDocument(from url: URL, isSecurityScoped: Bool = false) -> Bool {
+    func loadDocument(from url: URL, isSecurityScoped: Bool = false) -> DocumentLoadResult {
         guard url.pathExtension.lowercased() == "pdf" else {
-            return false
+            return .failed
         }
 
         stopAccessingCurrentResource()
+        clearPendingLockedDocument()
 
         guard startAccessingResourceIfNeeded(url, isSecurityScoped: isSecurityScoped) else {
-            return false
+            return .failed
         }
 
         guard let pdfDocument = PDFDocument(url: url) else {
             stopAccessingResourceOnFailure(url, wasSecurityScoped: isSecurityScoped)
+            return .failed
+        }
+
+        // Check if document is locked (password-protected)
+        if pdfDocument.isLocked {
+            pendingLockedDocument = pdfDocument
+            pendingLockedURL = url
+            pendingIsSecurityScoped = isSecurityScoped
+            return .needsPassword
+        }
+
+        finalizeDocumentLoad(pdfDocument, url: url)
+        return .success
+    }
+
+    func unlockDocument(password: String) -> Bool {
+        guard let pdfDocument = pendingLockedDocument,
+              let url = pendingLockedURL else {
             return false
         }
 
+        guard pdfDocument.unlock(withPassword: password) else {
+            return false
+        }
+
+        finalizeDocumentLoad(pdfDocument, url: url)
+        clearPendingLockedDocument()
+        return true
+    }
+
+    func cancelPendingUnlock() {
+        if pendingIsSecurityScoped, let url = pendingLockedURL {
+            url.stopAccessingSecurityScopedResource()
+        }
+        clearPendingLockedDocument()
+    }
+
+    private func clearPendingLockedDocument() {
+        pendingLockedDocument = nil
+        pendingLockedURL = nil
+        pendingIsSecurityScoped = false
+    }
+
+    private func finalizeDocumentLoad(_ pdfDocument: PDFDocument, url: URL) {
         document = pdfDocument
         documentURL = url
         currentPageIndex = 0
@@ -84,8 +137,6 @@ class PDFManager {
         scaleNeedsUpdate = false
         scaleFactor = DesignTokens.pdfDefaultScale
         isDirty = false
-
-        return true
     }
 
     private func stopAccessingCurrentResource() {

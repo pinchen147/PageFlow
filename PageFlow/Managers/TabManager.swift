@@ -102,11 +102,8 @@ class TabManager {
         activeTabID = newTab.id
 
         if let url = url {
-            _ = pdfManagers[newTab.id]?.loadDocument(from: url, isSecurityScoped: isSecurityScoped)
-            // Update tab with actual title after loading
-            if let index = tabs.firstIndex(where: { $0.id == newTab.id }) {
-                tabs[index].documentURL = url
-            }
+            let result = pdfManagers[newTab.id]?.loadDocument(from: url, isSecurityScoped: isSecurityScoped) ?? .failed
+            handleLoadResult(result, for: newTab.id, url: url, isSecurityScoped: isSecurityScoped)
         }
     }
 
@@ -197,16 +194,74 @@ class TabManager {
            let activeID = activeTabID,
            (replaceCurrent || !activeTab.hasDocument),
            let pdfManager = pdfManagers[activeID] {
-            if pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped) {
-                if let index = tabs.firstIndex(where: { $0.id == activeID }) {
-                    tabs[index].documentURL = url
-                    tabs[index].isSecurityScoped = isSecurityScoped
-                }
-            }
+            let result = pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped)
+            handleLoadResult(result, for: activeID, url: url, isSecurityScoped: isSecurityScoped)
         } else {
             // Current tab has a document, create new tab
             saveCurrentTabState()
             createNewTab(with: url, isSecurityScoped: isSecurityScoped)
+        }
+    }
+
+    private func handleLoadResult(_ result: DocumentLoadResult, for tabID: UUID, url: URL, isSecurityScoped: Bool) {
+        switch result {
+        case .success:
+            if let index = tabs.firstIndex(where: { $0.id == tabID }) {
+                tabs[index].documentURL = url
+                tabs[index].isSecurityScoped = isSecurityScoped
+            }
+        case .needsPassword:
+            promptForPassword(tabID: tabID, url: url, isSecurityScoped: isSecurityScoped)
+        case .failed:
+            break
+        }
+    }
+
+    private func promptForPassword(tabID: UUID, url: URL, isSecurityScoped: Bool) {
+        guard let pdfManager = pdfManagers[tabID] else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Password Required"
+        alert.informativeText = "Enter password for \"\(url.lastPathComponent)\""
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        let passwordField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        passwordField.placeholderString = "Password"
+        alert.accessoryView = passwordField
+        alert.window.initialFirstResponder = passwordField
+
+        let response = alert.runModal()
+
+        if response == .alertFirstButtonReturn {
+            let password = passwordField.stringValue
+            if pdfManager.unlockDocument(password: password) {
+                if let index = tabs.firstIndex(where: { $0.id == tabID }) {
+                    tabs[index].documentURL = url
+                    tabs[index].isSecurityScoped = isSecurityScoped
+                }
+            } else {
+                // Wrong password - show error and retry
+                showWrongPasswordAlert(tabID: tabID, url: url, isSecurityScoped: isSecurityScoped)
+            }
+        } else {
+            pdfManager.cancelPendingUnlock()
+        }
+    }
+
+    private func showWrongPasswordAlert(tabID: UUID, url: URL, isSecurityScoped: Bool) {
+        let alert = NSAlert()
+        alert.messageText = "Incorrect Password"
+        alert.informativeText = "The password you entered is incorrect. Try again?"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Try Again")
+        alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            promptForPassword(tabID: tabID, url: url, isSecurityScoped: isSecurityScoped)
+        } else {
+            pdfManagers[tabID]?.cancelPendingUnlock()
         }
     }
 
@@ -413,10 +468,17 @@ class TabManager {
             let restoredTab = tab
             createManagersForTab(restoredTab)
 
-            // Only add tab if document loads successfully
-            if pdfManagers[tab.id]?.loadDocument(from: url, isSecurityScoped: false) == true {
+            // Load document and handle result
+            let result = pdfManagers[tab.id]?.loadDocument(from: url, isSecurityScoped: false) ?? .failed
+
+            switch result {
+            case .success:
                 tabs.append(restoredTab)
-            } else {
+            case .needsPassword:
+                // For session restore, prompt for password
+                tabs.append(restoredTab)
+                promptForPassword(tabID: tab.id, url: url, isSecurityScoped: false)
+            case .failed:
                 // Clean up managers if load failed
                 pdfManagers.removeValue(forKey: tab.id)
                 searchManagers.removeValue(forKey: tab.id)
