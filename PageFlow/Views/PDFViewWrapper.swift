@@ -539,11 +539,102 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         @objc func displayModeChanged(_ notification: Notification) {
-            guard let pdfView = notification.object as? PDFView else { return }
+            guard let pdfView = notification.object as? StablePDFView else { return }
             // Sync manager to match PDFView (user may have changed via context menu)
             if pdfManager.displayMode != pdfView.displayMode {
                 pdfManager.displayMode = pdfView.displayMode
+
+                // Auto zoom-fit when display mode changes
+                performFitForDisplayModeChange(on: pdfView)
             }
+        }
+
+        private func performFitForDisplayModeChange(on pdfView: StablePDFView) {
+            // Delay to allow PDFKit to update its layout for the new display mode
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak pdfView] in
+                guard let self = self,
+                      let pdfView = pdfView,
+                      let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage else {
+                    return
+                }
+
+                // Calculate fit scale for the new display mode
+                let baseScale = self.calculateFitScaleForMode(pdfView: pdfView, page: currentPage)
+                let zoomBump: CGFloat = 0.05
+                let fitScale = baseScale + zoomBump
+
+                guard fitScale > 0 else { return }
+
+                let clampedScale = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
+                pdfView.scaleFactor = clampedScale
+                self.pdfManager.scaleFactor = clampedScale
+
+                // Navigate to top of current page
+                let pageBounds = currentPage.bounds(for: .mediaBox)
+                let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
+                pdfView.go(to: PDFDestination(page: currentPage, at: topLeft))
+
+                // Center content after layout updates
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak pdfView] in
+                    guard let self = self, let pdfView = pdfView else { return }
+                    self.centerContentAfterFit(in: pdfView)
+                }
+            }
+        }
+
+        private func calculateFitScaleForMode(pdfView: StablePDFView, page: PDFPage) -> CGFloat {
+            let viewBounds = pdfView.bounds
+            guard viewBounds.width > 0, viewBounds.height > 0 else { return 1.0 }
+
+            let pageBounds = page.bounds(for: .mediaBox)
+            let pageWidth = pageBounds.width
+            let pageHeight = pageBounds.height
+            guard pageWidth > 0, pageHeight > 0 else { return 1.0 }
+
+            let horizontalPadding: CGFloat = 20
+            let verticalPadding: CGFloat = 20
+            let availableWidth = viewBounds.width - horizontalPadding
+            let availableHeight = viewBounds.height - verticalPadding
+
+            switch pdfView.displayMode {
+            case .singlePage:
+                let widthScale = availableWidth / pageWidth
+                let heightScale = availableHeight / pageHeight
+                return min(widthScale, heightScale)
+
+            case .singlePageContinuous:
+                return availableWidth / pageWidth
+
+            case .twoUp:
+                let twoPageWidth = pageWidth * 2 + 10
+                let widthScale = availableWidth / twoPageWidth
+                let heightScale = availableHeight / pageHeight
+                return min(widthScale, heightScale)
+
+            case .twoUpContinuous:
+                let twoPageWidth = pageWidth * 2 + 10
+                return availableWidth / twoPageWidth
+
+            @unknown default:
+                return availableWidth / pageWidth
+            }
+        }
+
+        private func centerContentAfterFit(in pdfView: StablePDFView) {
+            guard let scrollView = pdfView.documentScrollView,
+                  let documentView = scrollView.documentView else { return }
+
+            let docWidth = documentView.bounds.width
+            let clipWidth = scrollView.contentView.bounds.width
+
+            guard docWidth > clipWidth else { return }
+
+            let centeredX = (docWidth - clipWidth) / 2.0
+            let currentY = scrollView.contentView.bounds.origin.y
+            let origin = NSPoint(x: centeredX, y: currentY)
+
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
         }
     }
 }
