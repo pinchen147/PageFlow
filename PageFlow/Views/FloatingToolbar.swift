@@ -70,11 +70,6 @@ struct FloatingToolbar: View {
                 disabled: !pdfManager.hasDocument
             )
             toolbarButton(icon: "rotate.right", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.hasDocument)
-            toolbarButton(
-                icon: bookmarkManager.isBookmarked(pdfManager.currentPageIndex) ? "bookmark.fill" : "bookmark",
-                action: { bookmarkManager.toggleBookmark(at: pdfManager.currentPageIndex) },
-                disabled: !pdfManager.hasDocument
-            )
             Divider().frame(height: 16)
             toolbarButton(
                 icon: "underline",
@@ -95,6 +90,11 @@ struct FloatingToolbar: View {
             toolbarButton(
                 icon: showingComments ? "bubble.right.fill" : "bubble.right",
                 action: { withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { showingComments.toggle() } },
+                disabled: !pdfManager.hasDocument
+            )
+            toolbarButton(
+                icon: bookmarkManager.isBookmarked(pdfManager.currentPageIndex) ? "bookmark.fill" : "bookmark",
+                action: { bookmarkManager.toggleBookmark(at: pdfManager.currentPageIndex) },
                 disabled: !pdfManager.hasDocument
             )
             Divider().frame(height: 16)
