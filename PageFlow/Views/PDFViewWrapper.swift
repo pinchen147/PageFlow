@@ -277,8 +277,11 @@ struct PDFViewWrapper: NSViewRepresentable {
                 return
             }
 
-            // Temporarily enable autoScales to get the correct fit scale
+            // Preserve current state before modifying
             let originalAutoScale = pdfView.autoScales
+            let originalDisplayMode = pdfView.displayMode
+
+            // Temporarily enable autoScales to get the correct fit scale
             pdfView.autoScales = true
 
             let fitScale = pdfView.scaleFactorForSizeToFit
@@ -286,6 +289,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             // If scale is invalid (0) and we haven't timed out, retry
             if fitScale <= 0 && retryCount < 10 {
                 pdfView.autoScales = originalAutoScale
+                pdfView.displayMode = originalDisplayMode
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     self.performFit(on: pdfView, retryCount: retryCount + 1)
                 }
@@ -326,7 +330,9 @@ struct PDFViewWrapper: NSViewRepresentable {
             self.pdfManager.fitOnceRequested = false
             self.pdfManager.scaleNeedsUpdate = false
 
+            // Restore original state
             pdfView.autoScales = originalAutoScale
+            pdfView.displayMode = originalDisplayMode
         }
     }
 
@@ -502,9 +508,9 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         @objc func displayModeChanged(_ notification: Notification) {
             guard let pdfView = notification.object as? PDFView else { return }
-            let target = pdfManager.displayMode
-            if pdfView.displayMode != target {
-                pdfView.displayMode = target
+            // Sync manager to match PDFView (user may have changed via context menu)
+            if pdfManager.displayMode != pdfView.displayMode {
+                pdfManager.displayMode = pdfView.displayMode
             }
         }
     }
