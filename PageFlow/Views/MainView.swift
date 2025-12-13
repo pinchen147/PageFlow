@@ -14,6 +14,7 @@ struct MainView: View {
     var searchManager: SearchManager
     @Bindable var annotationManager: AnnotationManager
     @Bindable var commentManager: CommentManager
+    @Bindable var bookmarkManager: BookmarkManager
     @Binding var showingSearch: Bool
     @Binding var isTopBarHovered: Bool
     @Bindable var tabManager: TabManager
@@ -47,6 +48,7 @@ struct MainView: View {
             if showingOutline, pdfManager.hasDocument {
                 SidebarView(
                     pdfManager: pdfManager,
+                    bookmarkManager: bookmarkManager,
                     items: pdfManager.outlineItems(),
                     onClose: {
                         withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
@@ -92,6 +94,7 @@ struct MainView: View {
                     pdfManager: pdfManager,
                     annotationManager: annotationManager,
                     commentManager: commentManager,
+                    bookmarkManager: bookmarkManager,
                     showingFileImporter: $showingFileImporter,
                     isTopBarHovered: $isTopBarHovered,
                     showingOutline: $showingOutline,
@@ -157,9 +160,13 @@ struct MainView: View {
             if !hasDoc {
                 showingOutline = false
                 showingComments = false
+                bookmarkManager.clearBookmarks()
             } else {
                 showingFileImporter = false
             }
+        }
+        .onChange(of: pdfManager.documentURL) { _, newURL in
+            bookmarkManager.loadBookmarks(for: newURL)
         }
         .onAppear {
             if !pdfManager.hasDocument {
@@ -429,6 +436,7 @@ struct MainView: View {
         searchManager: SearchManager(),
         annotationManager: AnnotationManager(),
         commentManager: CommentManager(),
+        bookmarkManager: BookmarkManager(),
         showingSearch: .constant(false),
         isTopBarHovered: .constant(false),
         tabManager: TabManager(),

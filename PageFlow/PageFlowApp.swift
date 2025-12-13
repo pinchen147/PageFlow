@@ -313,6 +313,17 @@ struct PageFlowApp: App {
 
                 Divider()
 
+                Button("Toggle Bookmark") {
+                    if let manager = focusedTabManager?.activeBookmarkManager,
+                       let pageIndex = pdfManager?.currentPageIndex {
+                        manager.toggleBookmark(at: pageIndex)
+                    }
+                }
+                .keyboardShortcut("d", modifiers: .command)
+                .disabled(!hasDocument)
+
+                Divider()
+
                 Button("Rotate Clockwise") {
                     pdfManager?.rotateClockwise()
                 }

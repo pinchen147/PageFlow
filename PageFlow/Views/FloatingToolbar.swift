@@ -11,6 +11,7 @@ struct FloatingToolbar: View {
     @Bindable var pdfManager: PDFManager
     @Bindable var annotationManager: AnnotationManager
     @Bindable var commentManager: CommentManager
+    @Bindable var bookmarkManager: BookmarkManager
     @Binding var showingFileImporter: Bool
     @Binding var isTopBarHovered: Bool
     @Binding var showingOutline: Bool
@@ -69,6 +70,11 @@ struct FloatingToolbar: View {
                 disabled: !pdfManager.hasDocument
             )
             toolbarButton(icon: "rotate.right", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.hasDocument)
+            toolbarButton(
+                icon: bookmarkManager.isBookmarked(pdfManager.currentPageIndex) ? "bookmark.fill" : "bookmark",
+                action: { bookmarkManager.toggleBookmark(at: pdfManager.currentPageIndex) },
+                disabled: !pdfManager.hasDocument
+            )
             Divider().frame(height: 16)
             toolbarButton(
                 icon: "underline",

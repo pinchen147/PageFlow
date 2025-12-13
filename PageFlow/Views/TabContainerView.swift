@@ -19,7 +19,7 @@ struct TabContainerView: View {
             // Render all tabs in a stack to preserve state
             // Use zIndex to ensure active tab is on top for interactions
             ForEach(tabManager.tabs) { tab in
-                if let (pdfManager, searchManager, annotationManager, commentManager) = tabManager.managers(for: tab.id) {
+                if let (pdfManager, searchManager, annotationManager, commentManager, bookmarkManager) = tabManager.managers(for: tab.id) {
                     let isActive = tab.id == tabManager.activeTabID
 
                     MainView(
@@ -27,6 +27,7 @@ struct TabContainerView: View {
                         searchManager: searchManager,
                         annotationManager: annotationManager,
                         commentManager: commentManager,
+                        bookmarkManager: bookmarkManager,
                         showingSearch: $showingSearch,
                         isTopBarHovered: $isTopBarHovered,
                         tabManager: tabManager,

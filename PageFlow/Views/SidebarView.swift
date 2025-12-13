@@ -9,14 +9,16 @@ import SwiftUI
 
 struct SidebarView: View {
     @Bindable var pdfManager: PDFManager
+    @Bindable var bookmarkManager: BookmarkManager
     let items: [OutlineItem]
     let onClose: () -> Void
-    
+
     enum SidebarMode {
         case outline
         case thumbnails
+        case bookmarks
     }
-    
+
     @State private var mode: SidebarMode = .outline
 
     var body: some View {
@@ -27,13 +29,16 @@ struct SidebarView: View {
                 .padding(.top, DesignTokens.spacingSM)
 
             Group {
-                if mode == .outline {
+                switch mode {
+                case .outline:
                     outlineView
-                } else {
+                case .thumbnails:
                     PDFThumbnailViewWrapper(pdfManager: pdfManager)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding(.horizontal, DesignTokens.spacingXS)
                         .padding(.bottom, DesignTokens.spacingMD)
+                case .bookmarks:
+                    bookmarksView
                 }
             }
             .animation(.easeInOut(duration: DesignTokens.animationFast), value: mode)
@@ -59,7 +64,7 @@ struct SidebarView: View {
     
     private var header: some View {
         HStack {
-            Text(mode == .outline ? "Contents" : "Thumbnails")
+            Text(headerTitle)
                 .font(.headline)
 
             Spacer()
@@ -78,14 +83,26 @@ struct SidebarView: View {
             }
         }
     }
+
+    private var headerTitle: String {
+        switch mode {
+        case .outline: return "Contents"
+        case .thumbnails: return "Thumbnails"
+        case .bookmarks: return "Bookmarks"
+        }
+    }
     
     private var modeToggle: some View {
         Button {
             withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                mode = mode == .outline ? .thumbnails : .outline
+                switch mode {
+                case .outline: mode = .thumbnails
+                case .thumbnails: mode = .bookmarks
+                case .bookmarks: mode = .outline
+                }
             }
         } label: {
-            Image(systemName: mode == .outline ? "square.grid.2x2" : "list.bullet")
+            Image(systemName: modeIcon)
                 .font(.system(size: DesignTokens.sidebarToggleIconSize))
                 .foregroundStyle(.secondary)
                 .frame(
@@ -95,7 +112,23 @@ struct SidebarView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(mode == .outline ? "Show Thumbnails" : "Show Contents")
+        .help(modeHelpText)
+    }
+
+    private var modeIcon: String {
+        switch mode {
+        case .outline: return "square.grid.2x2"
+        case .thumbnails: return "bookmark"
+        case .bookmarks: return "list.bullet"
+        }
+    }
+
+    private var modeHelpText: String {
+        switch mode {
+        case .outline: return "Show Thumbnails"
+        case .thumbnails: return "Show Bookmarks"
+        case .bookmarks: return "Show Contents"
+        }
     }
     
     private var outlineView: some View {
@@ -144,6 +177,69 @@ struct SidebarView: View {
         .disabled(item.pageIndex == nil)
         .onHover { hovering in
             if item.pageIndex != nil {
+                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+            }
+        }
+    }
+
+    // MARK: - Bookmarks View
+
+    private var bookmarksView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if bookmarkManager.bookmarks.isEmpty {
+                    Text("No Bookmarks")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(DesignTokens.spacingMD)
+                } else {
+                    ForEach(bookmarkManager.sortedBookmarks) { bookmark in
+                        bookmarkRow(bookmark)
+                    }
+                }
+            }
+            .padding(.horizontal, DesignTokens.spacingMD + DesignTokens.spacingSM)
+            .padding(.bottom, DesignTokens.spacingMD)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Color.clear)
+        .hideScrollBackgroundIfAvailable()
+    }
+
+    private func bookmarkRow(_ bookmark: BookmarkModel) -> some View {
+        HStack {
+            Button {
+                bookmarkManager.selectBookmark(bookmark.id)
+            } label: {
+                HStack {
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text(bookmark.title)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(bookmark.pageIndex + 1)")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, DesignTokens.spacingXS)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
+            }
+
+            Button {
+                bookmarkManager.removeBookmark(bookmark.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .opacity(0.6)
+            .onHover { hovering in
                 (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
             }
         }
