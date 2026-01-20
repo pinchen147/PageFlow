@@ -73,13 +73,19 @@ final class StablePDFView: PDFView {
     // State tracking to ensure robustness during layout updates
     private var isHoveringVertical = false
     private var isHoveringHorizontal = false
-    private var isObservingScroll = false
+    private weak var observedContentView: NSClipView?
 
     // MARK: - Callbacks for Click Handling
     var onAnnotationClick: ((PDFAnnotation) -> Void)?
     var onAnnotationDeselect: (() -> Void)?
     var onAnnotationRemove: ((PDFAnnotation) -> Void)?
+    var onAnnotationColorChange: ((PDFAnnotation, NSColor) -> Void)?
+    var onCommentColorChange: ((PDFAnnotation, NSColor) -> Void)?
     var onControlScroll: ((NSEvent) -> Bool)?
+    var onLinkNavigation: (() -> Void)?
+    var onCopyPageAsMarkdown: (() -> Void)?
+    var onCopyDocumentAsMarkdown: (() -> Void)?
+    var onToggleBookmark: (() -> Void)?
 
     private var rightClickMonitor: Any?
 
@@ -91,6 +97,9 @@ final class StablePDFView: PDFView {
     }
 
     func setupRightClickMonitor() {
+        // Guard against double-registration
+        guard rightClickMonitor == nil else { return }
+
         rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
             guard let self = self else { return event }
             return self.handleRightClickEvent(event)
@@ -98,7 +107,7 @@ final class StablePDFView: PDFView {
     }
 
     private func handleRightClickEvent(_ event: NSEvent) -> NSEvent? {
-        // Check if click is within our view
+        // Only handle events for our window
         guard let window = self.window,
               event.window === window else {
             return event
@@ -107,32 +116,43 @@ final class StablePDFView: PDFView {
         let windowPoint = event.locationInWindow
         let viewPoint = self.convert(windowPoint, from: nil)
 
+        // Only handle clicks within our bounds
         guard self.bounds.contains(viewPoint) else {
             return event
         }
 
-        guard let page = self.page(for: viewPoint, nearest: true) else {
+        // Critical: Verify this view is the frontmost at click point (fixes multi-tab bug)
+        // Without this, hidden tabs' monitors would also match the bounds check
+        guard let hitView = window.contentView?.hitTest(windowPoint),
+              hitView === self || hitView.isDescendant(of: self) else {
             return event
         }
 
-        let pagePoint = self.convert(viewPoint, to: page)
+        // Check if clicking on a comment or markup annotation - show custom menu
+        if let page = self.page(for: viewPoint, nearest: true) {
+            let pagePoint = self.convert(viewPoint, to: page)
 
-        if let annotation = self.findMarkupAnnotation(at: pagePoint, on: page) {
-            self.pendingRemovalAnnotation = annotation
+            // Check comments first (they're also highlights but with UUID userName)
+            if let annotation = self.findCommentAnnotation(at: pagePoint, on: page) {
+                self.pendingCommentAnnotation = annotation
+                let menu = buildCommentContextMenu(for: annotation)
+                menu.popUp(positioning: nil, at: viewPoint, in: self)
+                return nil
+            }
 
-            let isHighlight = self.isHighlightAnnotation(annotation)
-            let menu = NSMenu()
-            let title = isHighlight ? "Remove Highlight" : "Remove Underline"
-            let item = NSMenuItem(title: title, action: #selector(self.removeAnnotationAction(_:)), keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-
-            // Show menu and consume the event
-            menu.popUp(positioning: nil, at: viewPoint, in: self)
-            return nil  // Consume the event
+            // Then check regular markup annotations
+            if let annotation = self.findMarkupAnnotation(at: pagePoint, on: page) {
+                self.pendingRemovalAnnotation = annotation
+                let menu = buildAnnotationContextMenu(for: annotation)
+                menu.popUp(positioning: nil, at: viewPoint, in: self)
+                return nil
+            }
         }
 
-        return event  // Let PDFView handle it
+        // Build modified default menu (removes Services, adds Copy as Markdown)
+        let menu = buildFilteredDefaultMenu(for: event)
+        menu.popUp(positioning: nil, at: viewPoint, in: self)
+        return nil
     }
 
     private func configureScrollers(_ scrollView: NSScrollView) {
@@ -157,16 +177,26 @@ final class StablePDFView: PDFView {
         scrollView.verticalScroller?.alphaValue = isHoveringVertical ? 1.0 : 0.0
         scrollView.horizontalScroller?.alphaValue = isHoveringHorizontal ? 1.0 : 0.0
         
-        // Observe scrolling to enforce visibility
-        if !isObservingScroll {
-            scrollView.contentView.postsBoundsChangedNotifications = true
+        // Observe scrolling to enforce visibility - track contentView to handle document changes
+        let contentView = scrollView.contentView
+        if observedContentView !== contentView {
+            // Remove old observer if contentView changed (e.g., when document changes)
+            if let oldView = observedContentView {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: NSView.boundsDidChangeNotification,
+                    object: oldView
+                )
+            }
+
+            contentView.postsBoundsChangedNotifications = true
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(handleScrollChanged(_:)),
                 name: NSView.boundsDidChangeNotification,
-                object: scrollView.contentView
+                object: contentView
             )
-            isObservingScroll = true
+            observedContentView = contentView
         }
     }
 
@@ -316,6 +346,19 @@ final class StablePDFView: PDFView {
 
         let pagePoint = convert(viewPoint, to: page)
 
+        // Check for internal link clicks - push navigation state before PDFKit handles the link
+        if let annotation = page.annotation(at: pagePoint),
+           annotation.type == "Link",
+           let action = annotation.action {
+            // Check if this is a GoTo action (internal navigation)
+            if action is PDFActionGoTo {
+                onLinkNavigation?()
+            }
+            // Let PDFView handle the actual navigation
+            super.mouseDown(with: event)
+            return
+        }
+
         switch event.clickCount {
         case 1:
             // Single click: check for annotation
@@ -400,33 +443,163 @@ final class StablePDFView: PDFView {
     // MARK: - Right-Click Context Menu for Annotations
 
     private var pendingRemovalAnnotation: PDFAnnotation?
+    private var pendingCommentAnnotation: PDFAnnotation?
 
     override func rightMouseDown(with event: NSEvent) {
         let viewPoint = convert(event.locationInWindow, from: nil)
 
-        guard let page = page(for: viewPoint, nearest: true) else {
-            super.rightMouseDown(with: event)
-            return
+        // Check if clicking on a comment or markup annotation - show custom menu
+        if let page = page(for: viewPoint, nearest: true) {
+            let pagePoint = convert(viewPoint, to: page)
+
+            // Check comments first (they're also highlights but with UUID userName)
+            if let annotation = findCommentAnnotation(at: pagePoint, on: page) {
+                pendingCommentAnnotation = annotation
+                let menu = buildCommentContextMenu(for: annotation)
+                menu.popUp(positioning: nil, at: viewPoint, in: self)
+                return
+            }
+
+            // Then check regular markup annotations
+            if let annotation = findMarkupAnnotation(at: pagePoint, on: page) {
+                pendingRemovalAnnotation = annotation
+                let menu = buildAnnotationContextMenu(for: annotation)
+                menu.popUp(positioning: nil, at: viewPoint, in: self)
+                return
+            }
         }
 
-        let pagePoint = convert(viewPoint, to: page)
+        // Build modified default menu (removes Services, adds Copy as Markdown)
+        let menu = buildFilteredDefaultMenu(for: event)
+        menu.popUp(positioning: nil, at: viewPoint, in: self)
+    }
 
-        // Try to find a markup annotation at this point
-        if let annotation = findMarkupAnnotation(at: pagePoint, on: page) {
-            pendingRemovalAnnotation = annotation
-
-            let isHighlight = isHighlightAnnotation(annotation)
-            let menu = NSMenu()
-            let title = isHighlight ? "Remove Highlight" : "Remove Underline"
-            let item = NSMenuItem(title: title, action: #selector(removeAnnotationAction(_:)), keyEquivalent: "")
-            item.target = self
-            menu.addItem(item)
-
-            menu.popUp(positioning: nil, at: viewPoint, in: self)
-        } else {
-            // No annotation found - pass to super for default behavior
-            super.rightMouseDown(with: event)
+    private func buildFilteredDefaultMenu(for event: NSEvent) -> NSMenu {
+        // Get PDFView's default menu
+        guard let defaultMenu = super.menu(for: event) else {
+            return buildFallbackPageMenu()
         }
+
+        // Filter out Services submenu
+        let filteredItems = defaultMenu.items.filter { item in
+            // Check by identifier
+            if item.submenu?.identifier?.rawValue == "NSServicesSubmenu" {
+                return false
+            }
+            // Check by title as fallback
+            if item.title == "Services" {
+                return false
+            }
+            return true
+        }
+
+        // Build new menu with filtered items
+        let menu = NSMenu()
+        for item in filteredItems {
+            if let copy = item.copy() as? NSMenuItem {
+                menu.addItem(copy)
+            }
+        }
+
+        // Add keyboard shortcuts to menu items
+        applyKeyboardShortcuts(to: menu)
+
+        // Add our custom items
+        if !menu.items.isEmpty {
+            menu.addItem(.separator())
+        }
+
+        // Bookmark current page
+        let bookmarkShortcut = ShortcutModel.current(for: "toggleBookmark")
+        let bookmarkItem = NSMenuItem(
+            title: "Bookmark Page",
+            action: #selector(toggleBookmarkAction),
+            keyEquivalent: bookmarkShortcut.nsKeyEquivalent
+        )
+        bookmarkItem.keyEquivalentModifierMask = bookmarkShortcut.nsModifierFlags
+        bookmarkItem.target = self
+        menu.addItem(bookmarkItem)
+
+        menu.addItem(.separator())
+
+        let copyPageShortcut = ShortcutModel.current(for: "copyPageAsMarkdown")
+        let copyPageItem = NSMenuItem(
+            title: "Copy Page as Markdown",
+            action: #selector(copyPageAsMarkdownAction),
+            keyEquivalent: copyPageShortcut.nsKeyEquivalent
+        )
+        copyPageItem.keyEquivalentModifierMask = copyPageShortcut.nsModifierFlags
+        copyPageItem.target = self
+        menu.addItem(copyPageItem)
+
+        let copyDocShortcut = ShortcutModel.current(for: "copyDocumentAsMarkdown")
+        let copyDocItem = NSMenuItem(
+            title: "Copy Document as Markdown",
+            action: #selector(copyDocumentAsMarkdownAction),
+            keyEquivalent: copyDocShortcut.nsKeyEquivalent
+        )
+        copyDocItem.keyEquivalentModifierMask = copyDocShortcut.nsModifierFlags
+        copyDocItem.target = self
+        menu.addItem(copyDocItem)
+
+        return menu
+    }
+
+    private func applyKeyboardShortcuts(to menu: NSMenu) {
+        let shortcutMap: [String: String] = [
+            "Zoom In": "zoomIn",
+            "Zoom Out": "zoomOut",
+            "Actual Size": "actualSize",
+            "Next Page": "nextPage",
+            "Previous Page": "previousPage"
+        ]
+
+        for item in menu.items {
+            if let actionID = shortcutMap[item.title] {
+                let shortcut = ShortcutModel.current(for: actionID)
+                item.keyEquivalent = shortcut.nsKeyEquivalent
+                item.keyEquivalentModifierMask = shortcut.nsModifierFlags
+            }
+        }
+    }
+
+    private func buildFallbackPageMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        // Bookmark current page
+        let bookmarkShortcut = ShortcutModel.current(for: "toggleBookmark")
+        let bookmarkItem = NSMenuItem(
+            title: "Bookmark Page",
+            action: #selector(toggleBookmarkAction),
+            keyEquivalent: bookmarkShortcut.nsKeyEquivalent
+        )
+        bookmarkItem.keyEquivalentModifierMask = bookmarkShortcut.nsModifierFlags
+        bookmarkItem.target = self
+        menu.addItem(bookmarkItem)
+
+        menu.addItem(.separator())
+
+        let copyPageShortcut = ShortcutModel.current(for: "copyPageAsMarkdown")
+        let copyPageItem = NSMenuItem(
+            title: "Copy Page as Markdown",
+            action: #selector(copyPageAsMarkdownAction),
+            keyEquivalent: copyPageShortcut.nsKeyEquivalent
+        )
+        copyPageItem.keyEquivalentModifierMask = copyPageShortcut.nsModifierFlags
+        copyPageItem.target = self
+        menu.addItem(copyPageItem)
+
+        let copyDocShortcut = ShortcutModel.current(for: "copyDocumentAsMarkdown")
+        let copyDocItem = NSMenuItem(
+            title: "Copy Document as Markdown",
+            action: #selector(copyDocumentAsMarkdownAction),
+            keyEquivalent: copyDocShortcut.nsKeyEquivalent
+        )
+        copyDocItem.keyEquivalentModifierMask = copyDocShortcut.nsModifierFlags
+        copyDocItem.target = self
+        menu.addItem(copyDocItem)
+
+        return menu
     }
 
     private func findMarkupAnnotation(at point: CGPoint, on page: PDFPage) -> PDFAnnotation? {
@@ -477,9 +650,133 @@ final class StablePDFView: PDFView {
         annotation.type?.lowercased().contains("highlight") ?? false
     }
 
+    private func isCommentAnnotation(_ annotation: PDFAnnotation) -> Bool {
+        annotation.userName.flatMap { UUID(uuidString: $0) } != nil
+    }
+
+    private func findCommentAnnotation(at point: CGPoint, on page: PDFPage) -> PDFAnnotation? {
+        // Method 1: Use PDFKit's built-in hit testing
+        if let annotation = page.annotation(at: point),
+           isCommentAnnotation(annotation) {
+            return annotation
+        }
+
+        // Method 2: Manual search with tolerance for edge cases
+        let tolerance: CGFloat = 10.0
+        let searchRect = CGRect(
+            x: point.x - tolerance,
+            y: point.y - tolerance,
+            width: tolerance * 2,
+            height: tolerance * 2
+        )
+
+        for annotation in page.annotations {
+            guard isCommentAnnotation(annotation) else { continue }
+            if annotation.bounds.intersects(searchRect) {
+                return annotation
+            }
+        }
+
+        return nil
+    }
+
+    private func buildAnnotationContextMenu(for annotation: PDFAnnotation) -> NSMenu {
+        let isHighlight = isHighlightAnnotation(annotation)
+        let menu = NSMenu()
+
+        // Remove item
+        let removeTitle = isHighlight ? "Remove Highlight" : "Remove Underline"
+        let removeItem = NSMenuItem(title: removeTitle, action: #selector(removeAnnotationAction(_:)), keyEquivalent: "")
+        removeItem.target = self
+        removeItem.representedObject = annotation
+        menu.addItem(removeItem)
+
+        // Change Color submenu
+        let colorSubmenu = NSMenu()
+        let colors: [(String, NSColor)] = isHighlight
+            ? SettingsManager.shared.highlightPresets.map { ($0.name, $0.color) }
+            : SettingsManager.shared.underlinePresets.map { ($0.name, $0.color) }
+
+        for (name, color) in colors {
+            let colorItem = NSMenuItem(title: name, action: #selector(changeColorAction(_:)), keyEquivalent: "")
+            colorItem.target = self
+            colorItem.representedObject = (annotation, color)
+            if annotation.color.isEqual(to: color) {
+                colorItem.state = .on
+            }
+            colorSubmenu.addItem(colorItem)
+        }
+
+        let colorMenuItem = NSMenuItem(title: "Change Color", action: nil, keyEquivalent: "")
+        colorMenuItem.submenu = colorSubmenu
+        menu.addItem(colorMenuItem)
+
+        return menu
+    }
+
     @objc private func removeAnnotationAction(_ sender: NSMenuItem) {
-        guard let annotation = pendingRemovalAnnotation else { return }
-        pendingRemovalAnnotation = nil
+        guard let annotation = sender.representedObject as? PDFAnnotation else { return }
         onAnnotationRemove?(annotation)
+    }
+
+    @objc private func changeColorAction(_ sender: NSMenuItem) {
+        guard let tuple = sender.representedObject as? (PDFAnnotation, NSColor) else { return }
+        onAnnotationColorChange?(tuple.0, tuple.1)
+    }
+
+    // MARK: - Comment Context Menu
+
+    private func buildCommentContextMenu(for annotation: PDFAnnotation) -> NSMenu {
+        let menu = NSMenu()
+
+        // Remove item
+        let removeItem = NSMenuItem(title: "Remove Comment", action: #selector(removeCommentAction(_:)), keyEquivalent: "")
+        removeItem.target = self
+        removeItem.representedObject = annotation
+        menu.addItem(removeItem)
+
+        // Change Color submenu
+        let colorSubmenu = NSMenu()
+        let colors = SettingsManager.shared.commentPresets.map { ($0.name, $0.color) }
+
+        for (name, color) in colors {
+            let colorItem = NSMenuItem(title: name, action: #selector(changeCommentColorAction(_:)), keyEquivalent: "")
+            colorItem.target = self
+            colorItem.representedObject = (annotation, color)
+            if annotation.color.isEqual(to: color) {
+                colorItem.state = .on
+            }
+            colorSubmenu.addItem(colorItem)
+        }
+
+        let colorMenuItem = NSMenuItem(title: "Change Color", action: nil, keyEquivalent: "")
+        colorMenuItem.submenu = colorSubmenu
+        menu.addItem(colorMenuItem)
+
+        return menu
+    }
+
+    @objc private func removeCommentAction(_ sender: NSMenuItem) {
+        guard let annotation = sender.representedObject as? PDFAnnotation else { return }
+        onAnnotationRemove?(annotation)
+    }
+
+    @objc private func changeCommentColorAction(_ sender: NSMenuItem) {
+        guard let tuple = sender.representedObject as? (PDFAnnotation, NSColor) else { return }
+        onCommentColorChange?(tuple.0, tuple.1)
+    }
+
+    // MARK: - Page Context Menu Actions
+
+    @objc private func toggleBookmarkAction() {
+        onToggleBookmark?()
+    }
+
+    @objc private func copyPageAsMarkdownAction() {
+        onCopyPageAsMarkdown?()
+    }
+
+    @objc private func copyDocumentAsMarkdownAction() {
+        onCopyDocumentAsMarkdown?()
     }
 }

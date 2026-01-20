@@ -20,8 +20,20 @@ final class UpdateManager {
     var canCheckForUpdates: Bool {
         updaterController.updater.canCheckForUpdates
     }
+
+    var automaticallyChecksForUpdates: Bool {
+        get { updaterController.updater.automaticallyChecksForUpdates }
+        set { updaterController.updater.automaticallyChecksForUpdates = newValue }
+    }
+
+    var isSparkleEnabled: Bool { true }
     #else
     var canCheckForUpdates: Bool { false }
+    var automaticallyChecksForUpdates: Bool {
+        get { false }
+        set { }
+    }
+    var isSparkleEnabled: Bool { false }
     #endif
 
     init() {

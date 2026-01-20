@@ -17,19 +17,11 @@ private struct FocusedShowingSearchKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
+private struct FocusedShowingToolbarKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
 private struct FocusedShowingOutlineKey: FocusedValueKey {
-    typealias Value = Binding<Bool>
-}
-
-private struct FocusedShowingCommentsKey: FocusedValueKey {
-    typealias Value = Binding<Bool>
-}
-
-private struct FocusedShowingGoToPageKey: FocusedValueKey {
-    typealias Value = Binding<Bool>
-}
-
-private struct FocusedShowingFileImporterKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
@@ -46,23 +38,13 @@ extension FocusedValues {
         set { self[FocusedShowingSearchKey.self] = newValue }
     }
 
+    var showingToolbar: Binding<Bool>? {
+        get { self[FocusedShowingToolbarKey.self] }
+        set { self[FocusedShowingToolbarKey.self] = newValue }
+    }
+
     var showingOutline: Binding<Bool>? {
         get { self[FocusedShowingOutlineKey.self] }
         set { self[FocusedShowingOutlineKey.self] = newValue }
-    }
-
-    var showingComments: Binding<Bool>? {
-        get { self[FocusedShowingCommentsKey.self] }
-        set { self[FocusedShowingCommentsKey.self] = newValue }
-    }
-
-    var showingGoToPage: Binding<Bool>? {
-        get { self[FocusedShowingGoToPageKey.self] }
-        set { self[FocusedShowingGoToPageKey.self] = newValue }
-    }
-
-    var showingFileImporter: Binding<Bool>? {
-        get { self[FocusedShowingFileImporterKey.self] }
-        set { self[FocusedShowingFileImporterKey.self] = newValue }
     }
 }

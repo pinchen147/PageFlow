@@ -22,14 +22,21 @@ final class WindowRegistry {
     }
 
     func unregister(_ tabManager: TabManager) {
-        lock.withLock {
-            _ = tabManagers.removeValue(forKey: ObjectIdentifier(tabManager))
+        _ = lock.withLock {
+            tabManagers.removeValue(forKey: ObjectIdentifier(tabManager))
         }
     }
 
     func allDirtyPDFManagers() -> [(UUID, PDFManager)] {
         lock.withLock {
             tabManagers.values.flatMap { $0.dirtyPDFManagers() }
+        }
+    }
+
+    /// Returns the first available TabManager (for opening files from Finder)
+    func anyTabManager() -> TabManager? {
+        lock.withLock {
+            tabManagers.values.first
         }
     }
 }

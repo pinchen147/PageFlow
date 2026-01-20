@@ -1,12 +1,13 @@
 //
-//  SaveNotifications.swift
+//  Notifications.swift
 //  PageFlow
 //
-//  Notification definitions for save operations.
+//  App notification definitions.
 //
 
 import Foundation
 
 extension Notification.Name {
     static let saveResult = Notification.Name("SaveResultNotification")
+    static let toggleSidebar = Notification.Name("ToggleSidebarNotification")
 }

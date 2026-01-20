@@ -13,6 +13,12 @@ import AppKit
 @Observable
 @MainActor
 final class SearchManager {
+    deinit {
+        #if DEBUG
+        Swift.print("[deinit] SearchManager")
+        #endif
+    }
+
     var searchQuery: String = ""
     var searchResults: [PDFSelection] = []
     var currentResultIndex: Int = 0
@@ -48,13 +54,15 @@ final class SearchManager {
     }
 
     func nextResult() {
-        guard hasResults else { return }
-        currentResultIndex = (currentResultIndex + 1) % searchResults.count
+        let count = searchResults.count
+        guard count > 0 else { return }
+        currentResultIndex = (currentResultIndex + 1) % count
     }
 
     func previousResult() {
-        guard hasResults else { return }
-        currentResultIndex = (currentResultIndex - 1 + searchResults.count) % searchResults.count
+        let count = searchResults.count
+        guard count > 0 else { return }
+        currentResultIndex = (currentResultIndex - 1 + count) % count
     }
 
     func clearSearch() {
@@ -65,8 +73,10 @@ final class SearchManager {
     }
 
     func currentSelection() -> PDFSelection? {
-        guard hasResults else { return nil }
-        return searchResults[currentResultIndex]
+        let results = searchResults
+        let index = currentResultIndex
+        guard index < results.count else { return nil }
+        return results[index]
     }
 
     func highlightedSelections(currentColor: NSColor, othersColor: NSColor) -> [PDFSelection] {

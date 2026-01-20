@@ -122,14 +122,22 @@ struct CommentBubbleView: View {
     @State private var editText: String = ""
     @FocusState private var isFocused: Bool
     @State private var editorHeight: CGFloat = 20
+    @State private var isViewActive: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
             pageLabel
             bubbleContent
         }
-        .onAppear { editText = comment.text }
+        .onAppear {
+            isViewActive = true
+            editText = comment.text
+        }
+        .onDisappear {
+            isViewActive = false
+        }
         .onChange(of: isEditing) { _, editing in
+            guard isViewActive else { return }
             if editing {
                 editText = comment.text
                 isFocused = true
@@ -178,7 +186,7 @@ struct CommentBubbleView: View {
             .frame(minHeight: DesignTokens.tabHeight)
             .background(bubbleBackground)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
-            .overlay(bubbleBorder)
+            .shadow(color: .black.opacity(DesignTokens.commentBubbleShadowOpacity), radius: DesignTokens.commentBubbleShadowRadius, y: 2)
             .contentShape(Rectangle())
             .onTapGesture { onStartEditing() }
             .onHover { hovering in
@@ -220,7 +228,7 @@ struct CommentBubbleView: View {
             ZStack(alignment: .leading) {
                 if editText.isEmpty {
                     Text("Add a comment...")
-                        .font(.system(size: 11))
+                        .font(.system(size: DesignTokens.commentFontSize))
                         .foregroundStyle(.white.opacity(0.4))
                         .italic()
                         .allowsHitTesting(false)
@@ -230,37 +238,46 @@ struct CommentBubbleView: View {
                     text: $editText,
                     isFocused: _isFocused,
                     calculatedHeight: $editorHeight,
-                    onCommit: { onStopEditing() }
+                    onCommit: { [onStopEditing] in
+                        onStopEditing()
+                    }
                 )
                 .frame(minHeight: editorHeight, alignment: .topLeading)
             }
             .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
             .onChange(of: editText) { _, newValue in
+                guard isViewActive else { return }
                 onTextChange(newValue)
             }
         }
 
         private var displayText: some View {
-            Text(comment.text.isEmpty ? "Add a comment..." : comment.text)
-                .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(comment.text.isEmpty ? 0.4 : 0.85))
-                .italic(comment.text.isEmpty)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 2)
+            Group {
+                if comment.text.isEmpty {
+                    Text("Add a comment...")
+                        .font(.system(size: DesignTokens.commentFontSize))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .italic()
+                } else {
+                    MathTextView(text: comment.text)
+                }
+            }
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
         }
 
     private var bubbleBackground: some View {
-        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
-            .fill(.white.opacity(isSelected ? 0.12 : 0.08))
-    }
-
-    private var bubbleBorder: some View {
-        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
-            .strokeBorder(.white.opacity(isSelected ? 0.25 : 0.12))
-            .allowsHitTesting(false)
+        ZStack {
+            // Base blur material for glassmorphism
+            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
+                .fill(.ultraThinMaterial)
+            // White overlay for visibility
+            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
+                .fill(.white.opacity(isSelected ? DesignTokens.commentBubbleBackgroundSelected : DesignTokens.commentBubbleBackground))
+        }
     }
 
     @ViewBuilder
@@ -287,8 +304,8 @@ struct CustomTextEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.onCommit = onCommit
         textView.isRichText = false
-        textView.allowsUndo = true
-        textView.font = NSFont.systemFont(ofSize: 11)
+        textView.allowsUndo = false
+        textView.font = NSFont.systemFont(ofSize: DesignTokens.commentFontSize)
         textView.textColor = NSColor.white.withAlphaComponent(0.9)
         textView.backgroundColor = .clear
         textView.drawsBackground = false
@@ -311,6 +328,16 @@ struct CustomTextEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CommentTextView else { return }
 
+        // Update coordinator's callbacks safely
+        context.coordinator.onTextChange = { [weak scrollView] newText in
+            guard scrollView != nil else { return }
+            self.text = newText
+        }
+        context.coordinator.onHeightChange = { [weak scrollView] newHeight in
+            guard scrollView != nil else { return }
+            self.calculatedHeight = newHeight
+        }
+
         if textView.string != text {
             textView.string = text
         }
@@ -321,29 +348,35 @@ struct CustomTextEditor: NSViewRepresentable {
             scrollView.window?.makeFirstResponder(textView)
         }
 
-        if let textContainer = textView.textContainer {
-            let usedHeight = textView.layoutManager?.usedRect(for: textContainer).height ?? 0
-            calculatedHeight = max(usedHeight + 4, 20)
+        if let textContainer = textView.textContainer,
+           let layoutManager = textView.layoutManager {
+            let usedHeight = layoutManager.usedRect(for: textContainer).height
+            let newHeight = max(usedHeight + 4, 20)
+            if calculatedHeight != newHeight {
+                DispatchQueue.main.async {
+                    self.calculatedHeight = newHeight
+                }
+            }
         }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(self)
+        Coordinator()
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: CustomTextEditor
-
-        init(_ parent: CustomTextEditor) {
-            self.parent = parent
-        }
+        var onTextChange: ((String) -> Void)?
+        var onHeightChange: ((CGFloat) -> Void)?
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
-            if let textContainer = textView.textContainer {
-                let usedHeight = textView.layoutManager?.usedRect(for: textContainer).height ?? 0
-                parent.calculatedHeight = max(usedHeight + 4, 20)
+
+            onTextChange?(textView.string)
+
+            if let textContainer = textView.textContainer,
+               let layoutManager = textView.layoutManager {
+                let usedHeight = layoutManager.usedRect(for: textContainer).height
+                onHeightChange?(max(usedHeight + 4, 20))
             }
         }
 
@@ -360,10 +393,8 @@ class CommentTextView: NSTextView {
         let isShiftPressed = event.modifierFlags.contains(.shift)
 
         if isReturn && !isShiftPressed {
-            // Enter without Shift: commit and exit editing
             onCommit()
         } else if isReturn && isShiftPressed {
-            // Shift+Enter: insert newline
             insertNewline(nil)
         } else {
             super.keyDown(with: event)

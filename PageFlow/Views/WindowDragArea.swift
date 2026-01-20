@@ -2,7 +2,8 @@
 //  WindowDragArea.swift
 //  PageFlow
 //
-//  Transparent drag handle to move the window from a custom region.
+//  NSView that enables window dragging for a specific area.
+//  Simply returns mouseDownCanMoveWindow = true - macOS handles the rest.
 //
 
 import SwiftUI
@@ -10,14 +11,15 @@ import AppKit
 
 struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        WindowDragCaptureView()
+        WindowDragView()
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) { }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-private final class WindowDragCaptureView: NSView {
-    override func mouseDown(with event: NSEvent) {
-        window?.performDrag(with: event)
+private final class WindowDragView: NSView {
+    // This is the key - return true to enable window dragging from this area
+    override var mouseDownCanMoveWindow: Bool {
+        true
     }
 }

@@ -10,6 +10,7 @@ import PDFKit
 import UniformTypeIdentifiers
 
 struct MainView: View {
+    let tabID: UUID
     @Bindable var pdfManager: PDFManager
     var searchManager: SearchManager
     @Bindable var annotationManager: AnnotationManager
@@ -17,19 +18,65 @@ struct MainView: View {
     @Bindable var bookmarkManager: BookmarkManager
     var isActive: Bool
     @Binding var showingSearch: Bool
+    @Binding var showingToolbar: Bool
     @Binding var isTopBarHovered: Bool
     @Bindable var tabManager: TabManager
     var onOpenFile: (URL, Bool, Bool) -> Void
 
-    @State private var showingFileImporter = false
-    @State private var showingGoToPage = false
     @State private var goToPageInput = ""
+    @State private var goToPageError: String?
     @State private var isDragHovering = false
     @State private var isBottomBarHovered = false
-    @State private var showingOutline = false
-    @State private var showingComments = false
     @State private var toastMessage: String?
     @State private var toastWorkItem: DispatchWorkItem?
+
+    private var showingGoToPage: Bool {
+        get { tabManager.showingGoToPageState[tabID] ?? false }
+        nonmutating set { tabManager.setShowingGoToPage(newValue, for: tabID) }
+    }
+
+    private var showingFileImporter: Bool {
+        get { tabManager.showingFileImporterState[tabID] ?? false }
+        nonmutating set { tabManager.setShowingFileImporter(newValue, for: tabID) }
+    }
+
+    private var showingGoToPageBinding: Binding<Bool> {
+        Binding(
+            get: { tabManager.showingGoToPageState[tabID] ?? false },
+            set: { tabManager.setShowingGoToPage($0, for: tabID) }
+        )
+    }
+
+    private var showingFileImporterBinding: Binding<Bool> {
+        Binding(
+            get: { tabManager.showingFileImporterState[tabID] ?? false },
+            set: { tabManager.setShowingFileImporter($0, for: tabID) }
+        )
+    }
+
+    private var showingOutline: Bool {
+        get { tabManager.showingOutlineState[tabID] ?? false }
+        nonmutating set { tabManager.setShowingOutline(newValue, for: tabID) }
+    }
+
+    private var showingOutlineBinding: Binding<Bool> {
+        Binding(
+            get: { tabManager.showingOutlineState[tabID] ?? false },
+            set: { tabManager.setShowingOutline($0, for: tabID) }
+        )
+    }
+
+    private var showingComments: Bool {
+        get { tabManager.showingCommentsState[tabID] ?? false }
+        nonmutating set { tabManager.setShowingComments(newValue, for: tabID) }
+    }
+
+    private var showingCommentsBinding: Binding<Bool> {
+        Binding(
+            get: { tabManager.showingCommentsState[tabID] ?? false },
+            set: { tabManager.setShowingComments($0, for: tabID) }
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -39,6 +86,7 @@ struct MainView: View {
                     searchManager: searchManager,
                     annotationManager: annotationManager,
                     commentManager: commentManager,
+                    bookmarkManager: bookmarkManager,
                     isActive: isActive
                 )
             } else {
@@ -46,68 +94,78 @@ struct MainView: View {
             }
         }
         .ignoresSafeArea(.all, edges: .all)
+        .overlay(alignment: .topTrailing) {
+            if showingComments, pdfManager.hasDocument {
+                CommentsSidebar(
+                    commentManager: commentManager,
+                    onClose: { showingComments = false }
+                )
+                .onExitCommand { showingComments = false }
+                .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
+                .padding(.bottom, DesignTokens.spacingMD)
+                .padding(.trailing, DesignTokens.spacingXS)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingComments)
         .overlay(alignment: .topLeading) {
             if showingOutline, pdfManager.hasDocument {
                 SidebarView(
                     pdfManager: pdfManager,
                     bookmarkManager: bookmarkManager,
+                    tabManager: tabManager,
                     items: pdfManager.outlineItems(),
-                    onClose: {
-                        withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                            showingOutline = false
-                        }
-                    }
+                    onClose: { showingOutline = false }
                 )
-                    .frame(width: DesignTokens.sidebarWidth)
-                    .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
-                    .padding(.bottom, DesignTokens.spacingMD)
-                    .padding(.leading, DesignTokens.spacingXS)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
+                .onExitCommand {
+                    tabManager.isEditingPages = false
+                    showingOutline = false
+                }
+                .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
+                .padding(.bottom, DesignTokens.spacingMD)
+                .padding(.leading, DesignTokens.spacingXS)
+                .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
-        .overlay(alignment: .topTrailing) {
-            if showingComments, pdfManager.hasDocument {
-                CommentsSidebar(
-                    commentManager: commentManager,
-                    onClose: {
-                        withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                            showingComments = false
-                        }
-                    }
-                )
-                    .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
-                    .padding(.bottom, DesignTokens.spacingMD)
-                    .padding(.trailing, DesignTokens.spacingXS)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-        }
+        .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingOutline)
+        .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingComments)
         .overlay(alignment: .top) {
-            HStack(spacing: 0) {
-                // Traffic lights
-            TrafficLightsView(isHovering: $isTopBarHovered)
-                .padding(DesignTokens.spacingXS)
-
-            // Tab bar - fills remaining space between traffic lights and toolbar
-            TabBarView(tabManager: tabManager, isHovering: $isTopBarHovered)
+            VStack(spacing: 0) {
+                // Window drag region - thin strip at very top
+                WindowDragArea()
+                    .frame(height: DesignTokens.windowDragRegionHeight)
                     .frame(maxWidth: .infinity)
 
-                // Floating toolbar
-                FloatingToolbar(
-                    pdfManager: pdfManager,
-                    annotationManager: annotationManager,
-                    commentManager: commentManager,
-                    bookmarkManager: bookmarkManager,
-                    showingFileImporter: $showingFileImporter,
-                    isTopBarHovered: $isTopBarHovered,
-                    showingOutline: $showingOutline,
-                    showingComments: $showingComments
-                )
+                // Tab bar area
+                HStack(spacing: 0) {
+                    // Traffic lights
+                    TrafficLightsView(isHovering: $isTopBarHovered)
+                        .padding(DesignTokens.spacingXS)
+
+                    // Tab bar - fills remaining space between traffic lights and toolbar
+                    TabBarView(tabManager: tabManager, isHovering: $isTopBarHovered)
+                        .frame(maxWidth: .infinity)
+
+                    // Floating toolbar (pinned or auto-hide on hover)
+                    FloatingToolbar(
+                        pdfManager: pdfManager,
+                        annotationManager: annotationManager,
+                        commentManager: commentManager,
+                        bookmarkManager: bookmarkManager,
+                        onOpenFilePicker: { tabManager.openFilePicker() },
+                        isTopBarHovered: $isTopBarHovered,
+                        showingOutline: showingOutlineBinding,
+                        showingComments: showingCommentsBinding,
+                        toolbarPinned: showingToolbar
+                    )
                     .padding(.top, DesignTokens.spacingXS)
                     .padding(.trailing, DesignTokens.floatingToolbarPadding)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: DesignTokens.trafficLightHotspotHeight - DesignTokens.windowDragRegionHeight)
             }
             .frame(maxWidth: .infinity)
             .frame(height: DesignTokens.trafficLightHotspotHeight)
-            .contentShape(Rectangle())
             .onContinuousHover { phase in
                 switch phase {
                 case .active:
@@ -116,7 +174,6 @@ struct MainView: View {
                     isTopBarHovered = false
                 }
             }
-            .allowsHitTesting(true)
         }
         .overlay(alignment: .bottom) {
             if pdfManager.hasDocument {
@@ -137,14 +194,7 @@ struct MainView: View {
                     .transition(.opacity)
             }
         }
-        .fileImporter(
-            isPresented: $showingFileImporter,
-            allowedContentTypes: [.pdf],
-            allowsMultipleSelection: false
-        ) { result in
-            handleFileImport(result)
-        }
-        .sheet(isPresented: $showingGoToPage) {
+        .sheet(isPresented: showingGoToPageBinding) {
             goToPageDialog
         }
         .onDrop(of: [.fileURL], isTargeted: $isDragHovering) { providers in
@@ -155,8 +205,14 @@ struct MainView: View {
         }
         .animation(.easeInOut(duration: 0.15), value: isDragHovering)
         .animation(.easeInOut(duration: 0.2), value: showingSearch)
+        .onChange(of: showingSearch) { _, isShowing in
+            if !isShowing {
+                searchManager.clearSearch()
+            }
+        }
         .toolbar(.hidden)
         .background(WindowConfigurator())
+        .background(WindowTitleUpdater(title: pdfManager.documentTitle))
         .ignoresSafeArea(.all, edges: .all)
         .onChange(of: pdfManager.hasDocument) { _, hasDoc in
             if !hasDoc {
@@ -172,11 +228,7 @@ struct MainView: View {
         }
         .onAppear {
             if !pdfManager.hasDocument {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    if !pdfManager.hasDocument {
-                        showingFileImporter = true
-                    }
-                }
+                tabManager.openFilePicker()
             }
         }
         .onChange(of: commentManager.selectedCommentID) { _, newValue in
@@ -187,7 +239,9 @@ struct MainView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .saveResult)) { notification in
-            guard let info = notification.userInfo as? [String: String],
+            // Only show toast in the active tab to prevent all tabs showing "Saved"
+            guard isActive,
+                  let info = notification.userInfo as? [String: String],
                   let message = info["message"] else { return }
             showToast(message)
         }
@@ -198,10 +252,6 @@ struct MainView: View {
                     .padding(.bottom, DesignTokens.spacingMD)
             }
         }
-        .focusedSceneValue(\.showingOutline, $showingOutline)
-        .focusedSceneValue(\.showingComments, $showingComments)
-        .focusedSceneValue(\.showingGoToPage, $showingGoToPage)
-        .focusedSceneValue(\.showingFileImporter, $showingFileImporter)
     }
 
     // MARK: - Empty State
@@ -217,7 +267,7 @@ struct MainView: View {
                 .foregroundStyle(.secondary)
 
             Button("Open PDF") {
-                showingFileImporter = true
+                tabManager.openFilePicker()
             }
             .buttonStyle(.borderedProminent)
 
@@ -231,32 +281,28 @@ struct MainView: View {
     // MARK: - Page Indicator
 
     private var pageIndicator: some View {
-        HStack(spacing: DesignTokens.spacingSM) {
+        Button {
+            showingGoToPage = true
+        } label: {
             Text("Page \(pdfManager.currentPageIndex + 1) of \(pdfManager.pageCount)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            Button {
-                showingGoToPage = true
-            } label: {
-                Image(systemName: "arrow.up.arrow.down")
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
+                .padding(.horizontal, DesignTokens.spacingSM + 2)
+                .padding(.vertical, DesignTokens.spacingSM)
+                .background(.ultraThinMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                        .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
+                        .allowsHitTesting(false)
+                )
+                .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
+                        .strokeBorder(.white.opacity(0.22))
+                        .allowsHitTesting(false)
+                )
         }
-        .padding(DesignTokens.spacingSM)
-        .background(.ultraThinMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
-                .allowsHitTesting(false)
-        )
-        .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                .strokeBorder(.white.opacity(0.22))
-                .allowsHitTesting(false)
-        )
+        .buttonStyle(.plain)
         .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
         .padding(.bottom, DesignTokens.spacingXS)
         .padding(.trailing, DesignTokens.spacingMD)
@@ -299,10 +345,17 @@ struct MainView: View {
                     goToPage()
                 }
 
+            if let error = goToPageError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
             HStack {
                 Button("Cancel") {
                     showingGoToPage = false
                     goToPageInput = ""
+                    goToPageError = nil
                 }
                 .keyboardShortcut(.cancelAction)
 
@@ -350,7 +403,8 @@ struct MainView: View {
 
             guard let url = url, url.pathExtension.lowercased() == "pdf" else { return }
 
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [tabManager, onOpenFile] in
+                tabManager.closeFilePicker()
                 onOpenFile(url, false, false)
             }
         }
@@ -359,21 +413,27 @@ struct MainView: View {
     }
 
     private func handleOpenURL(_ url: URL) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [tabManager, onOpenFile] in
+            tabManager.closeFilePicker()
             onOpenFile(url, true, false)
         }
     }
 
     private func goToPage() {
-        guard let pageNumber = Int(goToPageInput),
-              pageNumber > 0,
-              pageNumber <= pdfManager.pageCount else {
+        guard let pageNumber = Int(goToPageInput) else {
+            goToPageError = "Please enter a valid number."
+            return
+        }
+
+        guard pageNumber > 0, pageNumber <= pdfManager.pageCount else {
+            goToPageError = "Page must be between 1 and \(pdfManager.pageCount)."
             return
         }
 
         pdfManager.goToPage(pageNumber - 1)
         showingGoToPage = false
         goToPageInput = ""
+        goToPageError = nil
     }
 
     private var dropTargetOverlay: some View {
@@ -432,8 +492,27 @@ struct MainView: View {
     }
 }
 
+// MARK: - Window Title Updater
+
+/// Sets NSWindow.title for Dock menu display (title bar remains hidden)
+struct WindowTitleUpdater: NSViewRepresentable {
+    let title: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            nsView.window?.title = title
+        }
+    }
+}
+
 #Preview {
     MainView(
+        tabID: UUID(),
         pdfManager: PDFManager(),
         searchManager: SearchManager(),
         annotationManager: AnnotationManager(),
@@ -441,6 +520,7 @@ struct MainView: View {
         bookmarkManager: BookmarkManager(),
         isActive: true,
         showingSearch: .constant(false),
+        showingToolbar: .constant(true),
         isTopBarHovered: .constant(false),
         tabManager: TabManager(),
         onOpenFile: { _, _, _ in }

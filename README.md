@@ -24,6 +24,7 @@
 - **Tabs** — Open multiple PDFs in one window
 - **Search** — Find text across your documents
 - **View Modes** — Single page, continuous, or two-up display
+- **Auto-Updates** — Built-in update checking via Sparkle
 - **Privacy First** — Fully offline, no telemetry
 
 ## Installation

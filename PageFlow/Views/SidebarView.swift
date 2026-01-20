@@ -6,10 +6,12 @@
 //
 
 import SwiftUI
+import PDFKit
 
 struct SidebarView: View {
     @Bindable var pdfManager: PDFManager
     @Bindable var bookmarkManager: BookmarkManager
+    @Bindable var tabManager: TabManager
     let items: [OutlineItem]
     let onClose: () -> Void
 
@@ -20,6 +22,9 @@ struct SidebarView: View {
     }
 
     @State private var mode: SidebarMode = .outline
+    @State private var editingBookmarkID: UUID?
+    @State private var editingTitle: String = ""
+    @FocusState private var isEditingBookmarkFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
@@ -33,10 +38,13 @@ struct SidebarView: View {
                 case .outline:
                     outlineView
                 case .thumbnails:
-                    PDFThumbnailViewWrapper(pdfManager: pdfManager)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, DesignTokens.spacingXS)
-                        .padding(.bottom, DesignTokens.spacingMD)
+                    ThumbnailGridView(
+                        pdfManager: pdfManager,
+                        bookmarkManager: bookmarkManager,
+                        isEditing: tabManager.isEditingPages
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, DesignTokens.spacingXS)
                 case .bookmarks:
                     bookmarksView
                 }
@@ -60,8 +68,9 @@ struct SidebarView: View {
                 .allowsHitTesting(false)
         )
         .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
+        .frame(width: DesignTokens.sidebarWidth)
     }
-    
+
     private var header: some View {
         HStack {
             Text(headerTitle)
@@ -69,9 +78,31 @@ struct SidebarView: View {
 
             Spacer()
 
+            // Edit/Done button - only show in thumbnail mode
+            if mode == .thumbnails {
+                Button {
+                    withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
+                        tabManager.isEditingPages.toggle()
+                    }
+                } label: {
+                    if tabManager.isEditingPages {
+                        Text("Done")
+                            .font(.system(size: 12))
+                    } else {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 12))
+                    }
+                }
+                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
+            }
+
             modeToggle
 
-            Button(action: onClose) {
+            Button {
+                tabManager.isEditingPages = false
+                onClose()
+            } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(.white.opacity(0.6))
@@ -95,6 +126,7 @@ struct SidebarView: View {
     private var modeToggle: some View {
         Button {
             withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
+                tabManager.isEditingPages = false
                 switch mode {
                 case .outline: mode = .thumbnails
                 case .thumbnails: mode = .bookmarks
@@ -104,7 +136,7 @@ struct SidebarView: View {
         } label: {
             Image(systemName: modeIcon)
                 .font(.system(size: DesignTokens.sidebarToggleIconSize))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
                 .frame(
                     width: DesignTokens.sidebarToggleButtonSize,
                     height: DesignTokens.sidebarToggleButtonSize
@@ -156,6 +188,7 @@ struct SidebarView: View {
     private func outlineItemRow(_ item: OutlineItem) -> some View {
         Button {
             if let index = item.pageIndex {
+                pdfManager.pushNavigationState()
                 pdfManager.goToPage(index)
             }
         } label: {
@@ -180,6 +213,25 @@ struct SidebarView: View {
                 (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
             }
         }
+        .contextMenu {
+            if item.pageIndex != nil {
+                Button("Copy Section as Markdown") {
+                    copySectionAsMarkdown(item)
+                }
+            }
+        }
+    }
+
+    private func copySectionAsMarkdown(_ item: OutlineItem) {
+        guard let document = pdfManager.document else { return }
+
+        let markdown = MarkdownExporter.export(
+            scope: .outlineSection(item, items),
+            document: document
+        )
+
+        guard !markdown.isEmpty else { return }
+        MarkdownExporter.copyToClipboard(markdown)
     }
 
     // MARK: - Bookmarks View
@@ -209,14 +261,28 @@ struct SidebarView: View {
     private func bookmarkRow(_ bookmark: BookmarkModel) -> some View {
         HStack {
             Button {
-                bookmarkManager.selectBookmark(bookmark.id)
+                if editingBookmarkID == nil {
+                    pdfManager.pushNavigationState()
+                    bookmarkManager.selectBookmark(bookmark.id)
+                }
             } label: {
                 HStack {
                     Image(systemName: "bookmark.fill")
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                    Text(bookmark.title)
-                        .lineLimit(1)
+
+                    if editingBookmarkID == bookmark.id {
+                        TextField("", text: $editingTitle)
+                            .textFieldStyle(.plain)
+                            .focused($isEditingBookmarkFocused)
+                            .onSubmit { commitBookmarkEdit(bookmark.id) }
+                            .onExitCommand { cancelBookmarkEdit() }
+                    } else {
+                        Text(bookmark.title)
+                            .lineLimit(1)
+                            .onTapGesture { startEditingBookmark(bookmark) }
+                    }
+
                     Spacer()
                     Text("\(bookmark.pageIndex + 1)")
                         .foregroundStyle(.secondary)
@@ -243,6 +309,28 @@ struct SidebarView: View {
                 (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
             }
         }
+    }
+
+    // MARK: - Bookmark Editing
+
+    private func startEditingBookmark(_ bookmark: BookmarkModel) {
+        editingBookmarkID = bookmark.id
+        editingTitle = bookmark.title
+        isEditingBookmarkFocused = true
+    }
+
+    private func commitBookmarkEdit(_ id: UUID) {
+        let trimmed = editingTitle.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            bookmarkManager.renameBookmark(id, to: trimmed)
+        }
+        editingBookmarkID = nil
+        editingTitle = ""
+    }
+
+    private func cancelBookmarkEdit() {
+        editingBookmarkID = nil
+        editingTitle = ""
     }
 }
 

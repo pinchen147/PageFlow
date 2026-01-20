@@ -61,6 +61,26 @@ struct DesignTokens {
     static let dialogWidth: CGFloat = 300
     static let textFieldWidth: CGFloat = 200
 
+    // MARK: - Thumbnail Grid
+
+    static let thumbnailHeight: CGFloat = 170
+    static let thumbnailRenderWidth: CGFloat = 240
+    static let thumbnailRenderHeight: CGFloat = 340
+    static let thumbnailGridPadding: CGFloat = 12
+    static let thumbnailCornerRadius: CGFloat = 4
+    static let thumbnailBorderWidth: CGFloat = 2
+    static let thumbnailBadgeFontSize: CGFloat = 12
+
+    // MARK: - Settings Window
+
+    static let settingsWindowWidth: CGFloat = 500
+    static let settingsWindowHeight: CGFloat = 450
+    static let colorWellWidth: CGFloat = 44
+    static let colorWellHeight: CGFloat = 20
+    static let presetRowHeight: CGFloat = 24
+    static let shortcutKeyDisplayWidth: CGFloat = 80
+    static let shortcutButtonWidth: CGFloat = 100
+
     // MARK: - Floating Toolbar
 
     static let floatingToolbarPadding: CGFloat = 16
@@ -84,6 +104,14 @@ struct DesignTokens {
     static let animationFast: Double = 0.15
     static let animationNormal: Double = 0.25
 
+    // MARK: - Autoscroll (Thumbnail Drag)
+
+    static let autoscrollEdgeZone: CGFloat = 60        // Edge detection zone from viewport edge
+    static let autoscrollHysteresis: CGFloat = 10     // Buffer to prevent jitter at boundary
+    static let autoscrollDwellTime: Double = 0.075    // Delay before activation (75ms)
+    static let autoscrollMinInterval: Double = 0.08   // Fastest scroll speed (at edge)
+    static let autoscrollMaxInterval: Double = 0.35   // Slowest scroll speed (at zone boundary)
+
     // MARK: - PDF Viewer
 
     static let pdfMinScale: CGFloat = 0.1
@@ -93,7 +121,12 @@ struct DesignTokens {
 
     // MARK: - Comments
 
-    static let commentHighlightColor = NSColor.gray.withAlphaComponent(0.6)
+    // #80808099 - must match default preset in SettingsManager (0x99 = 153 = 0.6 alpha)
+    static let commentHighlightColor: NSColor = {
+        let gray = CGFloat(0x80) / 255.0
+        let alpha = CGFloat(0x99) / 255.0
+        return NSColor(srgbRed: gray, green: gray, blue: gray, alpha: alpha)
+    }()
     static let commentSidebarWidth: CGFloat = sidebarWidth
     static let commentBubbleCornerRadius: CGFloat = 12
     static let commentTailSize: CGFloat = 8
@@ -102,6 +135,16 @@ struct DesignTokens {
     static let commentNoteIconSize: CGFloat = 24
     static let commentNoteOffset: CGFloat = 12
 
+    // Comment bubble styling (glassmorphism)
+    static let commentBubbleBackground: Double = 0.12
+    static let commentBubbleBackgroundSelected: Double = 0.18
+    static let commentTextOpacity: Double = 1.0
+    static let commentTextColor = Color.white
+    static let commentTextNSColor = NSColor.white
+    static let commentFontSize: CGFloat = 14
+    static let commentBubbleShadowRadius: CGFloat = 8
+    static let commentBubbleShadowOpacity: Double = 0.15
+
     // MARK: - Sidebar Toggle
 
     static let sidebarToggleButtonSize: CGFloat = 24
@@ -109,6 +152,10 @@ struct DesignTokens {
     static let sidebarToggleCornerRadius: CGFloat = 4
     static let sidebarToggleContainerCornerRadius: CGFloat = 6
     static let sidebarToggleContainerPadding: CGFloat = 2
+
+    // MARK: - Window
+
+    static let windowDragRegionHeight: CGFloat = 6
 
     // MARK: - Tabs
 

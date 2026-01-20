@@ -11,7 +11,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 @Observable
-class TabManager {
+@MainActor
+final class TabManager {
+    deinit {
+        if let monitor = editModeKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        #if DEBUG
+        Swift.print("[deinit] TabManager")
+        #endif
+    }
+
     // MARK: - Properties
 
     var tabs: [TabModel] = []
@@ -24,10 +34,28 @@ class TabManager {
     private var commentManagers: [UUID: CommentManager] = [:]
     private var bookmarkManagers: [UUID: BookmarkManager] = [:]
 
-    // Session persistence
-    private let sessionKey = "tabSession"
-    private let activeIndexKey = "tabSession_activeIndex"
-    private let defaults = UserDefaults.standard
+    // Per-tab UI state (not persisted) - internal for MainView access
+    var showingOutlineState: [UUID: Bool] = [:]
+    var showingCommentsState: [UUID: Bool] = [:]
+    var showingGoToPageState: [UUID: Bool] = [:]
+    var showingFileImporterState: [UUID: Bool] = [:]
+    var isEditingPagesState: [UUID: Bool] = [:]
+
+    // Edit mode keyboard shortcut monitor (intercepts Cmd+C/V for page copy/paste)
+    @ObservationIgnored private var editModeKeyMonitor: Any?
+
+    // Track open file picker panel for closing on drag-drop
+    private weak var openPanel: NSOpenPanel?
+
+    // Password dialog state
+    var pendingPasswordRequest: PasswordRequest?
+
+    struct PasswordRequest: Identifiable {
+        let id = UUID()
+        let tabID: UUID
+        let url: URL
+        let isSecurityScoped: Bool
+    }
 
     // MARK: - Computed Properties
 
@@ -64,6 +92,129 @@ class TabManager {
     var activeBookmarkManager: BookmarkManager? {
         guard let id = activeTabID else { return nil }
         return bookmarkManagers[id]
+    }
+
+    // MARK: - Sidebar State (Active Tab)
+
+    var showingOutline: Bool {
+        get {
+            guard let id = activeTabID else { return false }
+            return showingOutlineState[id] ?? false
+        }
+        set {
+            guard let id = activeTabID else { return }
+            showingOutlineState[id] = newValue
+        }
+    }
+
+    var showingComments: Bool {
+        get {
+            guard let id = activeTabID else { return false }
+            return showingCommentsState[id] ?? false
+        }
+        set {
+            guard let id = activeTabID else { return }
+            showingCommentsState[id] = newValue
+        }
+    }
+
+    var showingGoToPage: Bool {
+        get {
+            guard let id = activeTabID else { return false }
+            return showingGoToPageState[id] ?? false
+        }
+        set {
+            guard let id = activeTabID else { return }
+            showingGoToPageState[id] = newValue
+        }
+    }
+
+    var showingFileImporter: Bool {
+        get {
+            guard let id = activeTabID else { return false }
+            return showingFileImporterState[id] ?? false
+        }
+        set {
+            guard let id = activeTabID else { return }
+            showingFileImporterState[id] = newValue
+        }
+    }
+
+    var isEditingPages: Bool {
+        get {
+            guard let id = activeTabID else { return false }
+            return isEditingPagesState[id] ?? false
+        }
+        set {
+            guard let id = activeTabID else { return }
+            let wasEditing = isEditingPagesState[id] ?? false
+            isEditingPagesState[id] = newValue
+
+            // Start/stop keyboard monitor when edit mode changes
+            if newValue && !wasEditing {
+                startEditModeKeyMonitor()
+            } else if !newValue && wasEditing {
+                stopEditModeKeyMonitor()
+            }
+        }
+    }
+
+    func sidebarState(for tabID: UUID) -> (showingOutline: Bool, showingComments: Bool) {
+        (showingOutlineState[tabID] ?? false, showingCommentsState[tabID] ?? false)
+    }
+
+    func setShowingOutline(_ value: Bool, for tabID: UUID) {
+        showingOutlineState[tabID] = value
+    }
+
+    func setShowingComments(_ value: Bool, for tabID: UUID) {
+        showingCommentsState[tabID] = value
+    }
+
+    func setShowingGoToPage(_ value: Bool, for tabID: UUID) {
+        showingGoToPageState[tabID] = value
+    }
+
+    func setShowingFileImporter(_ value: Bool, for tabID: UUID) {
+        showingFileImporterState[tabID] = value
+    }
+
+    /// Opens NSOpenPanel directly - waits for window readiness
+    func openFilePicker(retryCount: Int = 0) {
+        // NSOpenPanel.begin() requires a key window - wait if not ready
+        guard NSApp.keyWindow != nil else {
+            guard retryCount < 10 else { return }  // Max 1 second total
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.openFilePicker(retryCount: retryCount + 1)
+            }
+            return
+        }
+
+        // Close any existing panel first
+        openPanel?.close()
+
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.message = "Select a PDF file to open"
+
+        openPanel = panel
+
+        panel.begin { [weak self] response in
+            self?.openPanel = nil
+            guard response == .OK, let url = panel.url else { return }
+            DispatchQueue.main.async {
+                self?.openDocument(url: url, isSecurityScoped: true, replaceCurrent: false)
+            }
+        }
+    }
+
+    /// Closes any open file picker panel
+    func closeFilePicker() {
+        openPanel?.close()
+        openPanel = nil
     }
 
     func dirtyPDFManagers() -> [(UUID, PDFManager)] {
@@ -116,16 +267,14 @@ class TabManager {
             return
         }
 
-        // Clean up managers
-        pdfManagers[tabID]?.closeDocument()
-        commentManagers[tabID]?.clearComments()
-        bookmarkManagers[tabID]?.clearBookmarks()
-        pdfManagers.removeValue(forKey: tabID)
-        searchManagers.removeValue(forKey: tabID)
-        annotationManagers.removeValue(forKey: tabID)
-        commentManagers.removeValue(forKey: tabID)
-        bookmarkManagers.removeValue(forKey: tabID)
+        // Stop keyboard monitor if closing tab was in edit mode
+        if activeTabID == tabID && (isEditingPagesState[tabID] ?? false) {
+            stopEditModeKeyMonitor()
+        }
 
+        // Note: closeDocument() in cleanupManagers handles undo cleanup via undoManagerProvider
+        // which correctly targets this tab's window, not keyWindow (fixes multi-window scenarios)
+        cleanupManagers(for: tabID)
         tabs.remove(at: index)
 
         // Handle tab selection after close
@@ -146,30 +295,41 @@ class TabManager {
         guard tabs.contains(where: { $0.id == tabID }),
               tabID != activeTabID else { return }
 
-        // Save current tab state before switching
+        // Exit edit mode before switching to ensure keyboard monitor stops
+        if isEditingPages {
+            isEditingPages = false
+        }
+
         saveCurrentTabState()
-
+        clearUndoStack()
         activeTabID = tabID
-
-        // Restore saved state for newly active tab
         restoreTabState(tabID)
     }
 
     func selectTabByIndex(_ index: Int) {
-        guard index >= 0, index < tabs.count else { return }
-        selectTab(tabs[index].id)
+        let tabsCopy = tabs
+        guard index >= 0, index < tabsCopy.count else { return }
+        selectTab(tabsCopy[index].id)
     }
 
     func selectNextTab() {
-        guard let currentIndex = activeTabIndex else { return }
-        let nextIndex = (currentIndex + 1) % tabs.count
-        selectTab(tabs[nextIndex].id)
+        let tabsCopy = tabs
+        let count = tabsCopy.count
+        guard count > 0,
+              let currentIndex = activeTabIndex,
+              currentIndex < count else { return }
+        let nextIndex = (currentIndex + 1) % count
+        selectTab(tabsCopy[nextIndex].id)
     }
 
     func selectPreviousTab() {
-        guard let currentIndex = activeTabIndex else { return }
-        let previousIndex = (currentIndex - 1 + tabs.count) % tabs.count
-        selectTab(tabs[previousIndex].id)
+        let tabsCopy = tabs
+        let count = tabsCopy.count
+        guard count > 0,
+              let currentIndex = activeTabIndex,
+              currentIndex < count else { return }
+        let previousIndex = (currentIndex - 1 + count) % count
+        selectTab(tabsCopy[previousIndex].id)
     }
 
     func moveTab(from source: IndexSet, to destination: Int) {
@@ -194,6 +354,10 @@ class TabManager {
            let activeID = activeTabID,
            (replaceCurrent || !activeTab.hasDocument),
            let pdfManager = pdfManagers[activeID] {
+            // Clear undo stack when replacing document to prevent dangling references
+            if activeTab.hasDocument {
+                NSApp.keyWindow?.undoManager?.removeAllActions()
+            }
             let result = pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped)
             handleLoadResult(result, for: activeID, url: url, isSecurityScoped: isSecurityScoped)
         } else {
@@ -218,51 +382,34 @@ class TabManager {
     }
 
     private func promptForPassword(tabID: UUID, url: URL, isSecurityScoped: Bool) {
-        guard let pdfManager = pdfManagers[tabID] else { return }
-
-        let alert = NSAlert()
-        alert.messageText = "Password Required"
-        alert.informativeText = "Enter password for \"\(url.lastPathComponent)\""
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-
-        let passwordField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        passwordField.placeholderString = "Password"
-        alert.accessoryView = passwordField
-        alert.window.initialFirstResponder = passwordField
-
-        let response = alert.runModal()
-
-        if response == .alertFirstButtonReturn {
-            let password = passwordField.stringValue
-            if pdfManager.unlockDocument(password: password) {
-                if let index = tabs.firstIndex(where: { $0.id == tabID }) {
-                    tabs[index].documentURL = url
-                    tabs[index].isSecurityScoped = isSecurityScoped
-                }
-            } else {
-                // Wrong password - show error and retry
-                showWrongPasswordAlert(tabID: tabID, url: url, isSecurityScoped: isSecurityScoped)
-            }
-        } else {
-            pdfManager.cancelPendingUnlock()
-        }
+        pendingPasswordRequest = PasswordRequest(
+            tabID: tabID,
+            url: url,
+            isSecurityScoped: isSecurityScoped
+        )
     }
 
-    private func showWrongPasswordAlert(tabID: UUID, url: URL, isSecurityScoped: Bool) {
-        let alert = NSAlert()
-        alert.messageText = "Incorrect Password"
-        alert.informativeText = "The password you entered is incorrect. Try again?"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Try Again")
-        alert.addButton(withTitle: "Cancel")
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            promptForPassword(tabID: tabID, url: url, isSecurityScoped: isSecurityScoped)
-        } else {
-            pdfManagers[tabID]?.cancelPendingUnlock()
+    func submitPassword(_ password: String) -> Bool {
+        guard let request = pendingPasswordRequest,
+              let pdfManager = pdfManagers[request.tabID] else {
+            return false
         }
+
+        if pdfManager.unlockDocument(password: password) {
+            if let index = tabs.firstIndex(where: { $0.id == request.tabID }) {
+                tabs[index].documentURL = request.url
+                tabs[index].isSecurityScoped = request.isSecurityScoped
+            }
+            pendingPasswordRequest = nil
+            return true
+        }
+        return false
+    }
+
+    func cancelPasswordPrompt() {
+        guard let request = pendingPasswordRequest else { return }
+        pdfManagers[request.tabID]?.cancelPendingUnlock()
+        pendingPasswordRequest = nil
     }
 
     func updateTabDocument(_ tabID: UUID, url: URL) {
@@ -286,7 +433,8 @@ class TabManager {
     private func createManagersForTab(_ tab: TabModel) {
         let pdfManager = PDFManager()
         let bookmarkManager = BookmarkManager()
-        bookmarkManager.configure(pdfManager: pdfManager)
+        // Note: bookmarkManager.configure() is called in PDFViewWrapper.makeNSView()
+        // when the undoManagerProvider is available
 
         pdfManagers[tab.id] = pdfManager
         searchManagers[tab.id] = SearchManager()
@@ -313,15 +461,15 @@ class TabManager {
         let alert = NSAlert()
         alert.icon = NSApp.applicationIconImage
         alert.messageText = "Do you want to save changes to \"\(pdfManager.documentTitle)\"?"
-        alert.informativeText = "Your changes will be lost if you don’t save."
+        alert.informativeText = "Your changes will be lost if you don't save."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Don’t Save")
+        alert.addButton(withTitle: "Don't Save")
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            return pdfManager.save()
+            return pdfManager.saveSync()  // Use sync for modal context
         case .alertSecondButtonReturn:
             return false
         default:
@@ -365,7 +513,7 @@ class TabManager {
         case failure(message: String)
     }
 
-    func saveActiveDocument() -> SaveResult {
+    func saveActiveDocument() async -> SaveResult {
         guard let id = activeTabID,
               let pdfManager = pdfManagers[id] else {
             return .failure(message: "No active document to save.")
@@ -375,13 +523,17 @@ class TabManager {
             return .failure(message: "Open a document before saving.")
         }
 
-        let saved = pdfManager.save()
+        guard pdfManager.isDirty else {
+            return .success(message: "")
+        }
+
+        let saved = await pdfManager.save()
         let result: SaveResult = saved ? .success(message: "Saved") : .failure(message: "Save failed.")
         postSaveNotification(result)
         return result
     }
 
-    func saveActiveDocumentAs() -> SaveResult {
+    func saveActiveDocumentAs() async -> SaveResult {
         guard let id = activeTabID,
               let pdfManager = pdfManagers[id] else {
             return .failure(message: "No active document to save.")
@@ -401,7 +553,7 @@ class TabManager {
             return .failure(message: "Save As cancelled.")
         }
 
-        let saved = pdfManager.saveAs(to: url)
+        let saved = await pdfManager.saveAs(to: url)
         if saved, let index = tabs.firstIndex(where: { $0.id == id }) {
             tabs[index].documentURL = url
         }
@@ -425,88 +577,93 @@ class TabManager {
         }
     }
 
-    // MARK: - Session Persistence
+    // MARK: - Undo Stack Management
 
-    func saveSession() {
-        saveCurrentTabState()
+    private func clearUndoStack() {
+        NSApp.keyWindow?.undoManager?.removeAllActions()
+    }
 
-        // Filter to tabs with actual documents
-        let persistableTabs = tabs.filter { $0.documentURL != nil }
+    private func cleanupManagers(for tabID: UUID) {
+        pdfManagers[tabID]?.closeDocument()
+        commentManagers[tabID]?.clearComments()
+        bookmarkManagers[tabID]?.clearBookmarks()
 
-        guard let data = try? JSONEncoder().encode(persistableTabs) else { return }
-        defaults.set(data, forKey: sessionKey)
+        pdfManagers.removeValue(forKey: tabID)
+        searchManagers.removeValue(forKey: tabID)
+        annotationManagers.removeValue(forKey: tabID)
+        commentManagers.removeValue(forKey: tabID)
+        bookmarkManagers.removeValue(forKey: tabID)
 
-        if let activeIndex = activeTabIndex {
-            defaults.set(activeIndex, forKey: activeIndexKey)
+        // Clean up UI state dictionaries to prevent memory leak
+        showingOutlineState.removeValue(forKey: tabID)
+        showingCommentsState.removeValue(forKey: tabID)
+        showingGoToPageState.removeValue(forKey: tabID)
+        showingFileImporterState.removeValue(forKey: tabID)
+        isEditingPagesState.removeValue(forKey: tabID)
+
+        // Clear pending password dialog if it was for this tab
+        if pendingPasswordRequest?.tabID == tabID {
+            pendingPasswordRequest = nil
         }
     }
 
-    func restoreSession() {
-        guard let data = defaults.data(forKey: sessionKey),
-              let savedTabs = try? JSONDecoder().decode([TabModel].self, from: data),
-              !savedTabs.isEmpty else {
-            return
-        }
+    // MARK: - Edit Mode Keyboard Monitor
 
-        // Clear initial empty tab
-        for tab in tabs {
-            pdfManagers[tab.id]?.closeDocument()
-            commentManagers[tab.id]?.clearComments()
-            bookmarkManagers[tab.id]?.clearBookmarks()
-        }
-        tabs.removeAll()
-        pdfManagers.removeAll()
-        searchManagers.removeAll()
-        annotationManagers.removeAll()
-        commentManagers.removeAll()
-        bookmarkManagers.removeAll()
+    private func startEditModeKeyMonitor() {
+        guard editModeKeyMonitor == nil else { return }
 
-        // Restore each tab - only keep if document loads successfully
-        for tab in savedTabs {
-            guard let url = tab.documentURL else { continue }
-
-            let restoredTab = tab
-            createManagersForTab(restoredTab)
-
-            // Load document and handle result
-            let result = pdfManagers[tab.id]?.loadDocument(from: url, isSecurityScoped: false) ?? .failed
-
-            switch result {
-            case .success:
-                tabs.append(restoredTab)
-            case .needsPassword:
-                // For session restore, prompt for password
-                tabs.append(restoredTab)
-                promptForPassword(tabID: tab.id, url: url, isSecurityScoped: false)
-            case .failed:
-                // Clean up managers if load failed
-                pdfManagers.removeValue(forKey: tab.id)
-                searchManagers.removeValue(forKey: tab.id)
-                annotationManagers.removeValue(forKey: tab.id)
-                commentManagers.removeValue(forKey: tab.id)
-                bookmarkManagers.removeValue(forKey: tab.id)
+        editModeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self, self.isEditingPages else {
+                return event
             }
-        }
 
-        // Restore active tab
-        let savedIndex = defaults.integer(forKey: activeIndexKey)
-        if savedIndex < tabs.count {
-            activeTabID = tabs[savedIndex].id
-        } else {
-            activeTabID = tabs.first?.id
-        }
+            // Don't intercept when text field/view is focused - let normal copy/paste work
+            if let responder = NSApp.keyWindow?.firstResponder,
+               responder is NSTextView || responder is NSTextField {
+                return event
+            }
 
-        // If no tabs were restored, create an empty one
-        if tabs.isEmpty {
-            let emptyTab = TabModel()
-            tabs = [emptyTab]
-            activeTabID = emptyTab.id
-            createManagersForTab(emptyTab)
+            // Check configured shortcuts for copy/cut/paste page operations
+            let copyShortcut = ShortcutModel.current(for: "copyPage")
+            let cutShortcut = ShortcutModel.current(for: "cutPage")
+            let pasteShortcut = ShortcutModel.current(for: "pastePage")
+
+            if copyShortcut.matches(event: event) {
+                if let pdfManager = self.activePDFManager {
+                    pdfManager.copyPage(at: pdfManager.currentPageIndex)
+                }
+                return nil
+            }
+
+            if cutShortcut.matches(event: event) {
+                if let pdfManager = self.activePDFManager,
+                   pdfManager.pageCount > 1 {
+                    pdfManager.cutPage(at: pdfManager.currentPageIndex)
+                }
+                return nil
+            }
+
+            if pasteShortcut.matches(event: event) {
+                if let pdfManager = self.activePDFManager, pdfManager.canPaste {
+                    _ = pdfManager.pastePage(after: pdfManager.currentPageIndex)
+                }
+                return nil
+            }
+
+            // Enter/Return exits edit mode
+            if event.keyCode == 36 {
+                self.isEditingPages = false
+                return nil
+            }
+
+            return event
         }
     }
 
-    func clearSession() {
-        defaults.removeObject(forKey: sessionKey)
-        defaults.removeObject(forKey: activeIndexKey)
+    private func stopEditModeKeyMonitor() {
+        if let monitor = editModeKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            editModeKeyMonitor = nil
+        }
     }
 }

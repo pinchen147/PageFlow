@@ -8,16 +8,26 @@
 import AppKit
 import Foundation
 import Observation
+import os.log
 
 @Observable
 @MainActor
 final class BookmarkManager {
+    private let logger = Logger(subsystem: "com.pageflow", category: "BookmarkManager")
+
+    deinit {
+        #if DEBUG
+        Swift.print("[deinit] BookmarkManager")
+        #endif
+    }
+
     // MARK: - State
 
     private(set) var bookmarks: [BookmarkModel] = []
     var selectedBookmarkID: UUID?
 
     private weak var pdfManager: PDFManager?
+    private var undoManagerProvider: (() -> UndoManager?)?
     private let defaults = UserDefaults.standard
     private let keyPrefix = "bookmarks:"
 
@@ -29,8 +39,20 @@ final class BookmarkManager {
 
     // MARK: - Configuration
 
-    func configure(pdfManager: PDFManager) {
+    func configure(
+        pdfManager: PDFManager,
+        undoManagerProvider: @escaping () -> UndoManager?
+    ) {
         self.pdfManager = pdfManager
+        self.undoManagerProvider = undoManagerProvider
+    }
+
+    private func getUndoManager(for action: String) -> UndoManager? {
+        guard let undoManager = undoManagerProvider?() else {
+            assertionFailure("UndoManager unavailable for: \(action)")
+            return nil
+        }
+        return undoManager
     }
 
     // MARK: - Actions
@@ -85,6 +107,29 @@ final class BookmarkManager {
         pdfManager?.goToPage(bookmark.pageIndex)
     }
 
+    func renameBookmark(_ id: UUID, to newTitle: String) {
+        guard !newTitle.trimmingCharacters(in: .whitespaces).isEmpty,
+              let index = bookmarks.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let oldTitle = bookmarks[index].title
+        guard oldTitle != newTitle else { return }
+
+        bookmarks[index].title = newTitle
+        pdfManager?.isDirty = true
+        save()
+
+        if let undoManager = getUndoManager(for: "Rename Bookmark") {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.renameBookmark(id, to: oldTitle)
+                }
+            }
+            undoManager.setActionName("Rename Bookmark")
+        }
+    }
+
     // MARK: - Document Loading
 
     func loadBookmarks(for documentURL: URL?) {
@@ -93,14 +138,17 @@ final class BookmarkManager {
 
         guard let url = documentURL,
               let key = storageKey(for: url),
-              let data = defaults.data(forKey: key),
-              let loaded = try? JSONDecoder().decode([BookmarkModel].self, from: data) else {
+              let data = defaults.data(forKey: key) else {
             return
         }
 
-        // Filter out bookmarks for pages that no longer exist
-        let pageCount = pdfManager?.pageCount ?? 0
-        bookmarks = loaded.filter { $0.pageIndex < pageCount }
+        do {
+            let loaded = try JSONDecoder().decode([BookmarkModel].self, from: data)
+            let pageCount = pdfManager?.pageCount ?? 0
+            bookmarks = loaded.filter { $0.pageIndex < pageCount }
+        } catch {
+            logger.error("Failed to decode bookmarks: \(error.localizedDescription)")
+        }
     }
 
     func clearBookmarks() {
@@ -112,12 +160,16 @@ final class BookmarkManager {
 
     private func save() {
         guard let url = pdfManager?.documentURL,
-              let key = storageKey(for: url),
-              let data = try? JSONEncoder().encode(bookmarks) else {
+              let key = storageKey(for: url) else {
             return
         }
 
-        defaults.set(data, forKey: key)
+        do {
+            let data = try JSONEncoder().encode(bookmarks)
+            defaults.set(data, forKey: key)
+        } catch {
+            logger.error("Failed to encode bookmarks: \(error.localizedDescription)")
+        }
     }
 
     private func storageKey(for url: URL) -> String? {
@@ -129,10 +181,12 @@ final class BookmarkManager {
     // MARK: - Undo/Redo
 
     private func registerUndoAdd(_ bookmark: BookmarkModel) {
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
+        guard let undoManager = getUndoManager(for: "Add Bookmark") else { return }
 
         undoManager.registerUndo(withTarget: self) { target in
-            target.undoAdd(bookmark)
+            MainActor.assumeIsolated {
+                target.undoAdd(bookmark)
+            }
         }
         undoManager.setActionName("Add Bookmark")
     }
@@ -145,9 +199,11 @@ final class BookmarkManager {
         pdfManager?.isDirty = true
         save()
 
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
+        guard let undoManager = getUndoManager(for: "Add Bookmark") else { return }
         undoManager.registerUndo(withTarget: self) { target in
-            target.redoAdd(bookmark)
+            MainActor.assumeIsolated {
+                target.redoAdd(bookmark)
+            }
         }
         undoManager.setActionName("Add Bookmark")
     }
@@ -161,10 +217,12 @@ final class BookmarkManager {
     }
 
     private func registerUndoRemove(_ bookmark: BookmarkModel) {
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
+        guard let undoManager = getUndoManager(for: "Remove Bookmark") else { return }
 
         undoManager.registerUndo(withTarget: self) { target in
-            target.undoRemove(bookmark)
+            MainActor.assumeIsolated {
+                target.undoRemove(bookmark)
+            }
         }
         undoManager.setActionName("Remove Bookmark")
     }
@@ -174,9 +232,11 @@ final class BookmarkManager {
         pdfManager?.isDirty = true
         save()
 
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
+        guard let undoManager = getUndoManager(for: "Remove Bookmark") else { return }
         undoManager.registerUndo(withTarget: self) { target in
-            target.removeBookmark(bookmark.id)
+            MainActor.assumeIsolated {
+                target.removeBookmark(bookmark.id)
+            }
         }
         undoManager.setActionName("Remove Bookmark")
     }

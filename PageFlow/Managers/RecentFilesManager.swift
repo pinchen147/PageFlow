@@ -7,9 +7,11 @@
 
 import Foundation
 import Observation
+import os.log
 
 @Observable
 class RecentFilesManager {
+    private let logger = Logger(subsystem: "com.pageflow", category: "RecentFilesManager")
     private let maxRecentFiles = 10
     private let recentFilesKey = "recentFiles"
     private let defaults = UserDefaults.standard
@@ -40,16 +42,22 @@ class RecentFilesManager {
     }
 
     private func loadRecentFiles() {
-        guard let data = defaults.data(forKey: recentFilesKey),
-              let urls = try? JSONDecoder().decode([URL].self, from: data) else {
-            return
-        }
+        guard let data = defaults.data(forKey: recentFilesKey) else { return }
 
-        recentFiles = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        do {
+            let urls = try JSONDecoder().decode([URL].self, from: data)
+            recentFiles = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        } catch {
+            logger.error("Failed to decode recent files: \(error.localizedDescription)")
+        }
     }
 
     private func saveRecentFiles() {
-        guard let data = try? JSONEncoder().encode(recentFiles) else { return }
-        defaults.set(data, forKey: recentFilesKey)
+        do {
+            let data = try JSONEncoder().encode(recentFiles)
+            defaults.set(data, forKey: recentFilesKey)
+        } catch {
+            logger.error("Failed to encode recent files: \(error.localizedDescription)")
+        }
     }
 }

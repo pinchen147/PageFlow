@@ -44,6 +44,7 @@ struct SearchBar: View {
                 Divider().frame(height: 16)
 
                 Button {
+                    pdfManager.pushNavigationState()
                     searchManager.previousResult()
                 } label: {
                     Image(systemName: "chevron.up")
@@ -53,6 +54,7 @@ struct SearchBar: View {
                 .disabled(!searchManager.hasResults)
 
                 Button {
+                    pdfManager.pushNavigationState()
                     searchManager.nextResult()
                 } label: {
                     Image(systemName: "chevron.down")
@@ -99,6 +101,7 @@ struct SearchBar: View {
 
     private func handleSearchSubmit() {
         if searchManager.hasResults {
+            pdfManager.pushNavigationState()
             searchManager.nextResult()
         } else {
             performSearch()

@@ -1,0 +1,409 @@
+2025-12-11 07:04:26 +0000 [MT] Initial pipeline context: <IDEDistributionProcessingPipelineContext: 0xb079acf00; archive(resolved)="<IDEArchive: 0xb09d234f0>", distributionTask(resolved)="2", distributionDestination(resolved)="1", distributionMethod(resolved)="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team(resolved)="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	Chain (11, self inclusive):
+	<IDEDistributionProcessingPipelineContext: 0xb079acf00; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionProcessingPipelineContext: 0xb079acc00; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionContext: 0xb07935e00; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionContext: 0xb07934f00; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionContext: 0xb07934c80; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionContext: 0xb07934a00; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionContext: 0xb07934780; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionContext: 0xb07934500; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="<IDEProvisioningBasicTeam: 0xb09eec520; teamID='V43797R8Q6', teamName='Pin Chen Chong'>">
+	<IDEDistributionContext: 0xb07934280; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="(null)">
+	<IDEDistributionContext: 0xb07934000; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="<IDEDistributionMethodDevelopmentSignedMac: 0xb079a4520>", team="(null)">
+	<IDEDistributionContext: 0x102afe690; archive = "<IDEArchive: 0xb09d234f0>", distributionMethod="(null)", team="(null)">
+</IDEDistributionProcessingPipelineContext: 0xb079acf00>
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionCreateDestRootStep
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionCopyItemStep
+2025-12-11 07:04:26 +0000 [MT] Running /usr/bin/ditto '-V' '/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app' '/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app'
+2025-12-11 07:04:26 +0000  >>> Copying /Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app 
+2025-12-11 07:04:26 +0000  copying file ./Contents/_CodeSignature/CodeResources ... 
+2025-12-11 07:04:26 +0000  4996 bytes for ./Contents/_CodeSignature/CodeResources
+2025-12-11 07:04:26 +0000  copying file ./Contents/MacOS/PageFlow ... 
+2025-12-11 07:04:26 +0000  1446224 bytes for ./Contents/MacOS/PageFlow
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/PageFlow-iOS-Default-1024x1024@1x.png ... 
+2025-12-11 07:04:26 +0000  1848973 bytes for ./Contents/Resources/PageFlow-iOS-Default-1024x1024@1x.png
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/PageFlow-iOS-Dark-1024x1024@1x.png ... 
+2025-12-11 07:04:26 +0000  2151254 bytes for ./Contents/Resources/PageFlow-iOS-Dark-1024x1024@1x.png
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/PageFlow-iOS-ClearDark-1024x1024@1x.png ... 
+2025-12-11 07:04:26 +0000  1837439 bytes for ./Contents/Resources/PageFlow-iOS-ClearDark-1024x1024@1x.png
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/PageFlow-iOS-ClearLight-1024x1024@1x.png ... 
+2025-12-11 07:04:26 +0000  1554448 bytes for ./Contents/Resources/PageFlow-iOS-ClearLight-1024x1024@1x.png
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/AppIcon.icns ... 
+2025-12-11 07:04:26 +0000  64425 bytes for ./Contents/Resources/AppIcon.icns
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/Assets.car ... 
+2025-12-11 07:04:26 +0000  1484792 bytes for ./Contents/Resources/Assets.car
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/PageFlow-iOS-TintedLight-1024x1024@1x.png ... 
+2025-12-11 07:04:26 +0000  1673805 bytes for ./Contents/Resources/PageFlow-iOS-TintedLight-1024x1024@1x.png
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/PageFlow-iOS-TintedDark-1024x1024@1x.png ... 
+2025-12-11 07:04:26 +0000  809763 bytes for ./Contents/Resources/PageFlow-iOS-TintedDark-1024x1024@1x.png
+2025-12-11 07:04:26 +0000  copying file ./Contents/Resources/Info.plist ... 
+2025-12-11 07:04:26 +0000  402 bytes for ./Contents/Resources/Info.plist
+2025-12-11 07:04:26 +0000  copying symlink ./Contents/Frameworks/Sparkle.framework/Resources ... 
+2025-12-11 07:04:26 +0000  linked ./Contents/Frameworks/Sparkle.framework/Resources
+2025-12-11 07:04:26 +0000  copying symlink ./Contents/Frameworks/Sparkle.framework/Versions/Current ... 
+2025-12-11 07:04:26 +0000  linked ./Contents/Frameworks/Sparkle.framework/Versions/Current
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/_CodeSignature/CodeResources ... 
+2025-12-11 07:04:26 +0000  17524 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/_CodeSignature/CodeResources
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/de.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  11648 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/de.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/he.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  9657 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/he.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ar.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  3554 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ar.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/el.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5934 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/el.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ja.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  8697 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ja.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fa.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5716 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fa.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/uk.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5842 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/uk.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_CN.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  7475 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_CN.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nb.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5539 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nb.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/es.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  7040 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/es.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/is.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  3954 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/is.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sl.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5646 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sl.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/da.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  4882 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/da.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/it.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  10956 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/it.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sk.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5675 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sk.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sv.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5160 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/sv.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ReleaseNotesColorStyle.css ... 
+2025-12-11 07:04:26 +0000  231 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ReleaseNotesColorStyle.css
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/cs.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  10774 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/cs.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ko.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  7797 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ko.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/Base.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5831 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/Base.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hu.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  4449 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hu.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_HK.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  6469 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_HK.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/tr.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  6183 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/tr.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pl.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5453 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pl.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_TW.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  7625 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/zh_TW.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-BR.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  9976 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-BR.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ru.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5784 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ru.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdatePermissionPrompt.nib/keyedobjects-110000.nib ... 
+2025-12-11 07:04:26 +0000  25365 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdatePermissionPrompt.nib/keyedobjects-110000.nib
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdatePermissionPrompt.nib/keyedobjects-101300.nib ... 
+2025-12-11 07:04:26 +0000  25388 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdatePermissionPrompt.nib/keyedobjects-101300.nib
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUStatus.nib ... 
+2025-12-11 07:04:26 +0000  13047 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUStatus.nib
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdateAlert.nib ... 
+2025-12-11 07:04:26 +0000  18461 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/SUUpdateAlert.nib
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fr.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  7855 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fr.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fi.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  3252 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/fi.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nl.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  9574 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nl.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/th.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5339 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/th.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nn.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5671 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/nn.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-PT.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  5984 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/pt-PT.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ro.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  6115 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ro.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/Info.plist ... 
+2025-12-11 07:04:26 +0000  1340 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/Info.plist
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hr.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  6367 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/hr.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ca.lproj/Sparkle.strings ... 
+2025-12-11 07:04:26 +0000  3501 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Resources/ca.lproj/Sparkle.strings
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate ... 
+2025-12-11 07:04:26 +0000  694928 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/_CodeSignature/CodeResources ... 
+2025-12-11 07:04:26 +0000  2446 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/_CodeSignature/CodeResources
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater ... 
+2025-12-11 07:04:26 +0000  274752 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/Resources/SUStatus.nib ... 
+2025-12-11 07:04:26 +0000  13047 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/Resources/SUStatus.nib
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/Info.plist ... 
+2025-12-11 07:04:26 +0000  2377 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/Info.plist
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/PkgInfo ... 
+2025-12-11 07:04:26 +0000  8 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/PkgInfo
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/_CodeSignature/CodeResources ... 
+2025-12-11 07:04:26 +0000  2200 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/_CodeSignature/CodeResources
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader ... 
+2025-12-11 07:04:26 +0000  172192 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/Info.plist ... 
+2025-12-11 07:04:26 +0000  1716 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/Info.plist
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/_CodeSignature/CodeResources ... 
+2025-12-11 07:04:26 +0000  2200 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/_CodeSignature/CodeResources
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer ... 
+2025-12-11 07:04:26 +0000  223936 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/Info.plist ... 
+2025-12-11 07:04:26 +0000  1604 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/Info.plist
+2025-12-11 07:04:26 +0000  copying file ./Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle ... 
+2025-12-11 07:04:26 +0000  860528 bytes for ./Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle
+2025-12-11 07:04:26 +0000  copying symlink ./Contents/Frameworks/Sparkle.framework/Autoupdate ... 
+2025-12-11 07:04:26 +0000  linked ./Contents/Frameworks/Sparkle.framework/Autoupdate
+2025-12-11 07:04:26 +0000  copying symlink ./Contents/Frameworks/Sparkle.framework/Updater.app ... 
+2025-12-11 07:04:26 +0000  linked ./Contents/Frameworks/Sparkle.framework/Updater.app
+2025-12-11 07:04:26 +0000  copying symlink ./Contents/Frameworks/Sparkle.framework/XPCServices ... 
+2025-12-11 07:04:26 +0000  linked ./Contents/Frameworks/Sparkle.framework/XPCServices
+copying symlink ./Contents/Frameworks/Sparkle.framework/Sparkle ... 
+2025-12-11 07:04:26 +0000  linked ./Contents/Frameworks/Sparkle.framework/Sparkle
+2025-12-11 07:04:26 +0000  copying file ./Contents/Info.plist ... 
+2025-12-11 07:04:26 +0000  1401 bytes for ./Contents/Info.plist
+2025-12-11 07:04:26 +0000  copying file ./Contents/PkgInfo ... 
+2025-12-11 07:04:26 +0000  8 bytes for ./Contents/PkgInfo
+2025-12-11 07:04:26 +0000 [MT] /usr/bin/ditto exited with 0
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionEmbedProfileStep
+2025-12-11 07:04:26 +0000 [MT] Skipping profile for item: <IDEDistributionItem: 0xb09d4fba0; bundleID='org.sparkle-project.DownloaderService', path='<DVTFilePath:0xb09e5e160:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f960; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.DownloaderService', executablePath='<DVTFilePath:0xb09e5e580:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader'>', hardenedRuntime='1'>'>
+2025-12-11 07:04:26 +0000 [MT] Skipping profile for item: <IDEDistributionItem: 0xb09ee0060; bundleID='org.sparkle-project.InstallerLauncher', path='<DVTFilePath:0xb09e5e820:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee0000; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.InstallerLauncher', executablePath='<DVTFilePath:0xb09e5ec40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer'>', hardenedRuntime='1'>'>
+2025-12-11 07:04:26 +0000 [MT] Skipping profile for item: <IDEDistributionItem: 0xb09d4f780; bundleID='(null)', path='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09d4fb40; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+    "com.apple.application-identifier" = "org.sparkle-project.Sparkle.Autoupdate";
+}', teamID='(null)', identifier='Autoupdate-5555494459251b2ebc0232c783a3e31c4a4e4056', executablePath='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', hardenedRuntime='1'>'>
+2025-12-11 07:04:26 +0000 [MT] Skipping profile for item: <IDEDistributionItem: 0xb09e5f900; bundleID='org.sparkle-project.Sparkle.Updater', path='<DVTFilePath:0xb09e5d740:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f840; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.Sparkle.Updater', executablePath='<DVTFilePath:0xb09e5db60:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater'>', hardenedRuntime='1'>'>
+2025-12-11 07:04:26 +0000 [MT] Skipping profile for item: <IDEDistributionItem: 0xb09ee0120; bundleID='org.sparkle-project.Sparkle', path='<DVTFilePath:0xb09dd4d20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee00c0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00480; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='(null)', teamID='V43797R8Q6', identifier='org.sparkle-project.Sparkle', executablePath='<DVTFilePath:0xb09e5ef40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle'>', hardenedRuntime='1'>'>
+2025-12-11 07:04:26 +0000 [MT] Skipping profile for item: <IDEDistributionItem: 0xb09ee0180; bundleID='com.raccoontechnologies.PageFlow', path='<DVTFilePath:0xb09d4fa20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee01e0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00480; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='{
+    "com.apple.security.app-sandbox" = 1;
+    "com.apple.security.files.user-selected.read-write" = 1;
+}', teamID='V43797R8Q6', identifier='com.raccoontechnologies.PageFlow', executablePath='<DVTFilePath:0xb09dd4300:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/MacOS/PageFlow'>', hardenedRuntime='1'>'>
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionInfoPlistStep
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionAppThinningPlistStep
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionSymbolsStep
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionSymbolsStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionAppThinningStep
+2025-12-11 07:04:26 +0000 [MT] Skipping step: IDEDistributionAppThinningStep because it said so
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionArchThinningStep
+2025-12-11 07:04:26 +0000 [MT] Archs to thin for item /Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc are []
+2025-12-11 07:04:26 +0000 [MT] Archs to thin for item /Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc are []
+2025-12-11 07:04:26 +0000 [MT] Archs to thin for item /Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate are []
+2025-12-11 07:04:26 +0000 [MT] Archs to thin for item /Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app are []
+2025-12-11 07:04:26 +0000 [MT] Archs to thin for item /Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B are []
+2025-12-11 07:04:26 +0000 [MT] Archs to thin for item /Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app are []
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionODRStep
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionStripXattrsStep
+2025-12-11 07:04:26 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-12-11 07:04:26 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-12-11 07:04:26 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-12-11 07:04:26 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-12-11 07:04:26 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-12-11 07:04:26 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-12-11 07:04:26 +0000 [MT] Processing step: IDEDistributionCodesignStep
+2025-12-11 07:04:26 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09d4fba0; bundleID='org.sparkle-project.DownloaderService', path='<DVTFilePath:0xb09e5e160:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f960; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.DownloaderService', executablePath='<DVTFilePath:0xb09e5e580:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader'>', hardenedRuntime='1'>'>: {
+}
+2025-12-11 07:04:26 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-12-11 07:04:26 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09d4fba0; bundleID='org.sparkle-project.DownloaderService', path='<DVTFilePath:0xb09e5e160:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f960; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.DownloaderService', executablePath='<DVTFilePath:0xb09e5e580:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader'>', hardenedRuntime='1'>'> are: {
+}
+2025-12-11 07:04:26 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xb09d4fba0; bundleID='org.sparkle-project.DownloaderService', path='<DVTFilePath:0xb09e5e160:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f960; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.DownloaderService', executablePath='<DVTFilePath:0xb09e5e580:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/MacOS/Downloader'>', hardenedRuntime='1'>'> to: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~3mxsKo
+2025-12-11 07:04:26 +0000 [MT] invoking codesign: <NSConcreteTask: 0xb07adb7f0; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    8753F2F0E59CB39218C0A6198680F438AB162385,
+    "--entitlements",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~3mxsKo",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+)'>
+2025-12-11 07:04:26 +0000 [MT] codesign output: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc: replacing existing signature
+/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc: signed bundle with Mach-O universal (x86_64 arm64) [org.sparkle-project.DownloaderService]
+2025-12-11 07:04:26 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09ee0060; bundleID='org.sparkle-project.InstallerLauncher', path='<DVTFilePath:0xb09e5e820:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee0000; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.InstallerLauncher', executablePath='<DVTFilePath:0xb09e5ec40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer'>', hardenedRuntime='1'>'>: {
+}
+2025-12-11 07:04:26 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-12-11 07:04:26 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09ee0060; bundleID='org.sparkle-project.InstallerLauncher', path='<DVTFilePath:0xb09e5e820:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee0000; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.InstallerLauncher', executablePath='<DVTFilePath:0xb09e5ec40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer'>', hardenedRuntime='1'>'> are: {
+}
+2025-12-11 07:04:26 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xb09ee0060; bundleID='org.sparkle-project.InstallerLauncher', path='<DVTFilePath:0xb09e5e820:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee0000; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.InstallerLauncher', executablePath='<DVTFilePath:0xb09e5ec40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/MacOS/Installer'>', hardenedRuntime='1'>'> to: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~agWiR2
+2025-12-11 07:04:26 +0000 [MT] invoking codesign: <NSConcreteTask: 0xb07adb930; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    8753F2F0E59CB39218C0A6198680F438AB162385,
+    "--entitlements",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~agWiR2",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
+)'>
+2025-12-11 07:04:26 +0000 [MT] codesign output: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc: replacing existing signature
+/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc: signed bundle with Mach-O universal (x86_64 arm64) [org.sparkle-project.InstallerLauncher]
+2025-12-11 07:04:26 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09d4f780; bundleID='(null)', path='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09d4fb40; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+    "com.apple.application-identifier" = "org.sparkle-project.Sparkle.Autoupdate";
+}', teamID='(null)', identifier='Autoupdate-5555494459251b2ebc0232c783a3e31c4a4e4056', executablePath='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', hardenedRuntime='1'>'>: {
+    "com.apple.application-identifier" = "org.sparkle-project.Sparkle.Autoupdate";
+}
+2025-12-11 07:04:26 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-12-11 07:04:26 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09d4f780; bundleID='(null)', path='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09d4fb40; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+    "com.apple.application-identifier" = "org.sparkle-project.Sparkle.Autoupdate";
+}', teamID='(null)', identifier='Autoupdate-5555494459251b2ebc0232c783a3e31c4a4e4056', executablePath='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', hardenedRuntime='1'>'> are: {
+    "com.apple.application-identifier" = "org.sparkle-project.Sparkle.Autoupdate";
+}
+2025-12-11 07:04:26 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xb09d4f780; bundleID='(null)', path='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09d4fb40; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+    "com.apple.application-identifier" = "org.sparkle-project.Sparkle.Autoupdate";
+}', teamID='(null)', identifier='Autoupdate-5555494459251b2ebc0232c783a3e31c4a4e4056', executablePath='<DVTFilePath:0xb09e5d680:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>', hardenedRuntime='1'>'> to: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~MaR3Sx
+2025-12-11 07:04:26 +0000 [MT] invoking codesign: <NSConcreteTask: 0xb07adb930; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    8753F2F0E59CB39218C0A6198680F438AB162385,
+    "--entitlements",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~MaR3Sx",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+)'>
+2025-12-11 07:04:27 +0000 [MT] codesign output: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate: replacing existing signature
+/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate: signed Mach-O universal (x86_64 arm64) [Autoupdate-5555494459251b2ebc0232c783a3e31c4a4e4056]
+2025-12-11 07:04:27 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09e5f900; bundleID='org.sparkle-project.Sparkle.Updater', path='<DVTFilePath:0xb09e5d740:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f840; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.Sparkle.Updater', executablePath='<DVTFilePath:0xb09e5db60:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater'>', hardenedRuntime='1'>'>: {
+}
+2025-12-11 07:04:27 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-12-11 07:04:27 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09e5f900; bundleID='org.sparkle-project.Sparkle.Updater', path='<DVTFilePath:0xb09e5d740:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f840; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.Sparkle.Updater', executablePath='<DVTFilePath:0xb09e5db60:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater'>', hardenedRuntime='1'>'> are: {
+}
+2025-12-11 07:04:27 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xb09e5f900; bundleID='org.sparkle-project.Sparkle.Updater', path='<DVTFilePath:0xb09e5d740:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09e5f840; isSigned='1', isAdHocSigned='1', signingCertificate='(null)', entitlements='{
+}', teamID='(null)', identifier='org.sparkle-project.Sparkle.Updater', executablePath='<DVTFilePath:0xb09e5db60:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/MacOS/Updater'>', hardenedRuntime='1'>'> to: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~LBYiz5
+2025-12-11 07:04:27 +0000 [MT] invoking codesign: <NSConcreteTask: 0xb07adb930; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    8753F2F0E59CB39218C0A6198680F438AB162385,
+    "--entitlements",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~LBYiz5",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+)'>
+2025-12-11 07:04:27 +0000 [MT] codesign output: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app: replacing existing signature
+/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app: signed app bundle with Mach-O universal (x86_64 arm64) [org.sparkle-project.Sparkle.Updater]
+2025-12-11 07:04:27 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09ee0120; bundleID='org.sparkle-project.Sparkle', path='<DVTFilePath:0xb09dd4d20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee00c0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00480; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='(null)', teamID='V43797R8Q6', identifier='org.sparkle-project.Sparkle', executablePath='<DVTFilePath:0xb09e5ef40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle'>', hardenedRuntime='1'>'>: {
+}
+2025-12-11 07:04:27 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-12-11 07:04:27 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09ee0120; bundleID='org.sparkle-project.Sparkle', path='<DVTFilePath:0xb09dd4d20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee00c0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00240; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='(null)', teamID='V43797R8Q6', identifier='org.sparkle-project.Sparkle', executablePath='<DVTFilePath:0xb09e5ef40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle'>', hardenedRuntime='1'>'> are: {
+}
+2025-12-11 07:04:27 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xb09ee0120; bundleID='org.sparkle-project.Sparkle', path='<DVTFilePath:0xb09dd4d20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee00c0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00240; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='(null)', teamID='V43797R8Q6', identifier='org.sparkle-project.Sparkle', executablePath='<DVTFilePath:0xb09e5ef40:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle'>', hardenedRuntime='1'>'> to: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~IUNjJm
+2025-12-11 07:04:27 +0000 [MT] invoking codesign: <NSConcreteTask: 0xb07adb930; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    8753F2F0E59CB39218C0A6198680F438AB162385,
+    "--entitlements",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~IUNjJm",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B"
+)'>
+2025-12-11 07:04:27 +0000 [MT] codesign output: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B: replacing existing signature
+/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B: signed bundle with Mach-O universal (x86_64 arm64) [org.sparkle-project.Sparkle]
+2025-12-11 07:04:27 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09ee0180; bundleID='com.raccoontechnologies.PageFlow', path='<DVTFilePath:0xb09d4fa20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee01e0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00480; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='{
+    "com.apple.security.app-sandbox" = 1;
+    "com.apple.security.files.user-selected.read-write" = 1;
+}', teamID='V43797R8Q6', identifier='com.raccoontechnologies.PageFlow', executablePath='<DVTFilePath:0xb09dd4300:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/MacOS/PageFlow'>', hardenedRuntime='1'>'>: {
+    "com.apple.security.app-sandbox" = 1;
+    "com.apple.security.files.user-selected.read-write" = 1;
+}
+2025-12-11 07:04:27 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-12-11 07:04:27 +0000 [MT] Entitlements for <IDEDistributionItem: 0xb09ee0180; bundleID='com.raccoontechnologies.PageFlow', path='<DVTFilePath:0xb09d4fa20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee01e0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00240; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='{
+    "com.apple.security.app-sandbox" = 1;
+    "com.apple.security.files.user-selected.read-write" = 1;
+}', teamID='V43797R8Q6', identifier='com.raccoontechnologies.PageFlow', executablePath='<DVTFilePath:0xb09dd4300:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/MacOS/PageFlow'>', hardenedRuntime='1'>'> are: {
+    "com.apple.security.app-sandbox" = 1;
+    "com.apple.security.files.user-selected.read-write" = 1;
+}
+2025-12-11 07:04:27 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xb09ee0180; bundleID='com.raccoontechnologies.PageFlow', path='<DVTFilePath:0xb09d4fa20:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xb09ee01e0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xb07a00240; name='Apple Development: pinchen147@gmail.com (9NSGWD56KN)', hash='8753F2F0E59CB39218C0A6198680F438AB162385', serialNumber='236107F9404433D01764270482B2F105', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-07-06 08:01:42 +0000''>', entitlements='{
+    "com.apple.security.app-sandbox" = 1;
+    "com.apple.security.files.user-selected.read-write" = 1;
+}', teamID='V43797R8Q6', identifier='com.raccoontechnologies.PageFlow', executablePath='<DVTFilePath:0xb09dd4300:'/Users/pinchen/Developer/PageFlow/PageFlow.xcarchive/Products/Applications/PageFlow.app/Contents/MacOS/PageFlow'>', hardenedRuntime='1'>'> to: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~hbFLVD
+2025-12-11 07:04:27 +0000 [MT] invoking codesign: <NSConcreteTask: 0xb07adb930; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    8753F2F0E59CB39218C0A6198680F438AB162385,
+    "--entitlements",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/entitlements~~~hbFLVD",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app"
+)'>
+2025-12-11 07:04:27 +0000 [MT] codesign output: /var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app: replacing existing signature
+/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app: signed app bundle with Mach-O universal (x86_64 arm64) [com.raccoontechnologies.PageFlow]
+2025-12-11 07:04:27 +0000 [MT] Processing step: IDEDistributionZipODRItemStep
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-12-11 07:04:27 +0000 [MT] Processing step: IDEDistributionSkipPackagingStep
+2025-12-11 07:04:27 +0000 [MT] Processing step: IDEDistributionAppStoreInformationStep
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionAppStoreInformationStep because it said so
+2025-12-11 07:04:27 +0000 [MT] Processing step: IDEDistributionGenerateProcessedDistributionItems
+2025-12-11 07:04:27 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xb09ee3540:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc'>
+2025-12-11 07:04:27 +0000 [MT] [OPTIONAL] Didn't find embedded provisioning profile for <DVTFilePath:0xb09ee3540:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc'>: Error Domain=NSCocoaErrorDomain Code=4 "No file at <DVTFilePath:0xb09f39730:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/embedded.provisionprofile'>" UserInfo={NSLocalizedDescription=No file at <DVTFilePath:0xb09f39730:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc/Contents/embedded.provisionprofile'>}
+2025-12-11 07:04:27 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xb09ee3780:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app'>
+2025-12-11 07:04:27 +0000 [MT] [OPTIONAL] Didn't find embedded provisioning profile for <DVTFilePath:0xb09ee3780:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app'>: Error Domain=NSCocoaErrorDomain Code=4 "No file at <DVTFilePath:0xb09f397a0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/embedded.provisionprofile'>" UserInfo={NSLocalizedDescription=No file at <DVTFilePath:0xb09f397a0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app/Contents/embedded.provisionprofile'>}
+2025-12-11 07:04:27 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xb0a4105a0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>
+2025-12-11 07:04:27 +0000 [MT] [OPTIONAL] Didn't find info dictionary for <DVTFilePath:0xb0a4105a0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>: Error Domain=DVTFoundationNSBundleAdditionsErrorDomain Code=1 "Couldn't load Info dictionary for <DVTFilePath:0xb0a4105a0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>" UserInfo={NSLocalizedDescription=Couldn't load Info dictionary for <DVTFilePath:0xb0a4105a0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>}
+2025-12-11 07:04:27 +0000 [MT] [OPTIONAL] Can't have a profile, not a bundle at <DVTFilePath:0xb0a4105a0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate'>
+2025-12-11 07:04:27 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xb09ee2dc0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc'>
+2025-12-11 07:04:27 +0000 [MT] [OPTIONAL] Didn't find embedded provisioning profile for <DVTFilePath:0xb09ee2dc0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc'>: Error Domain=NSCocoaErrorDomain Code=4 "No file at <DVTFilePath:0xb09f396c0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/embedded.provisionprofile'>" UserInfo={NSLocalizedDescription=No file at <DVTFilePath:0xb09f396c0:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents/embedded.provisionprofile'>}
+2025-12-11 07:04:27 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xb09ee3960:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/Frameworks/Sparkle.framework/Versions/B'>
+2025-12-11 07:04:27 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xb09ee3900:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app'>
+2025-12-11 07:04:27 +0000 [MT] [OPTIONAL] Didn't find embedded provisioning profile for <DVTFilePath:0xb09ee3900:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app'>: Error Domain=NSCocoaErrorDomain Code=4 "No file at <DVTFilePath:0xb09f39810:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/embedded.provisionprofile'>" UserInfo={NSLocalizedDescription=No file at <DVTFilePath:0xb09f39810:'/var/folders/6s/tb4mcpq94sz89019hxt8_25h0000gn/T/XcodeDistPipeline.~~~N5Sxm0/Root/Applications/PageFlow.app/Contents/embedded.provisionprofile'>}
+2025-12-11 07:04:27 +0000 [MT] Processing step: IDEDistributionCreateManifestStep
+2025-12-11 07:04:27 +0000 [MT] Skipping step: IDEDistributionCreateManifestStep because it said so

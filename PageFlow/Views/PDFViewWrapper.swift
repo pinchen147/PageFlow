@@ -14,6 +14,7 @@ struct PDFViewWrapper: NSViewRepresentable {
     var searchManager: SearchManager
     @Bindable var annotationManager: AnnotationManager
     @Bindable var commentManager: CommentManager
+    @Bindable var bookmarkManager: BookmarkManager
     var isActive: Bool
 
     func makeNSView(context: Context) -> StablePDFView {
@@ -62,14 +63,54 @@ struct PDFViewWrapper: NSViewRepresentable {
             return coordinator.processControlScroll(event: event, pdfView: pdfView)
         }
 
+        // Setup link navigation callback for back/forward history
+        pdfView.onLinkNavigation = { [weak pdfManager] in
+            pdfManager?.pushNavigationState()
+        }
+
+        // Setup markdown export callbacks for page context menu
+        pdfView.onCopyPageAsMarkdown = { [weak pdfManager, weak commentManager] in
+            guard let pdfManager = pdfManager,
+                  let document = pdfManager.document else { return }
+
+            let markdown = MarkdownExporter.export(
+                scope: .currentPage(pdfManager.currentPageIndex),
+                document: document,
+                comments: commentManager?.comments ?? []
+            )
+            guard !markdown.isEmpty else { return }
+            MarkdownExporter.copyToClipboard(markdown)
+        }
+
+        pdfView.onCopyDocumentAsMarkdown = { [weak pdfManager, weak commentManager] in
+            guard let pdfManager = pdfManager,
+                  let document = pdfManager.document else { return }
+
+            let markdown = MarkdownExporter.export(
+                scope: .entireDocument,
+                document: document,
+                comments: commentManager?.comments ?? []
+            )
+            guard !markdown.isEmpty else { return }
+            MarkdownExporter.copyToClipboard(markdown)
+        }
+
+        // Setup bookmark toggle callback for page context menu
+        pdfView.onToggleBookmark = { [weak pdfManager, weak bookmarkManager] in
+            guard let pdfManager = pdfManager,
+                  let bookmarkManager = bookmarkManager else { return }
+            bookmarkManager.toggleBookmark(at: pdfManager.currentPageIndex)
+        }
+
         pdfView.onAnnotationRemove = { [weak pdfView, weak annotationManager, weak pdfManager] annotation in
             guard let page = annotation.page else { return }
 
             // Remove annotation from page - this is the core operation
             page.removeAnnotation(annotation)
 
-            // Mark document as dirty
+            // Mark document as dirty and trigger thumbnail refresh
             pdfManager?.isDirty = true
+            pdfManager?.pageVersion += 1
 
             // Clear selection if this annotation was selected
             if annotationManager?.selectedAnnotation === annotation {
@@ -83,16 +124,78 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
 
             // Register undo
-            if let undoManager = NSApp.keyWindow?.undoManager {
+            if let undoManager = pdfView?.undoManager {
                 undoManager.registerUndo(withTarget: page) { [weak pdfView, weak pdfManager] targetPage in
                     targetPage.addAnnotation(annotation)
                     pdfManager?.isDirty = true
+                    pdfManager?.pageVersion += 1
                     pdfView?.needsDisplay = true
                     pdfView?.layoutDocumentView()
                 }
                 undoManager.setActionName("Remove Annotation")
             }
         }
+
+        pdfView.onAnnotationColorChange = { [weak pdfView, weak pdfManager] annotation, color in
+            let previousColor = annotation.color
+
+            // Change the annotation color
+            annotation.color = color
+
+            // Mark document as dirty and trigger thumbnail refresh
+            pdfManager?.isDirty = true
+            pdfManager?.pageVersion += 1
+
+            // Force PDFView to redraw
+            pdfView?.needsDisplay = true
+            pdfView?.layoutDocumentView()
+
+            // Register undo
+            if let undoManager = pdfView?.undoManager {
+                undoManager.registerUndo(withTarget: annotation) { [weak pdfView, weak pdfManager] targetAnnotation in
+                    targetAnnotation.color = previousColor
+                    pdfManager?.isDirty = true
+                    pdfManager?.pageVersion += 1
+                    pdfView?.needsDisplay = true
+                    pdfView?.layoutDocumentView()
+                }
+                undoManager.setActionName("Change Color")
+            }
+        }
+
+        pdfView.onCommentColorChange = { [weak pdfView, weak pdfManager] annotation, color in
+            let previousColor = annotation.color
+
+            // Change the comment annotation color (alpha is baked into preset)
+            annotation.color = color
+
+            // Mark document as dirty and trigger thumbnail refresh
+            pdfManager?.isDirty = true
+            pdfManager?.pageVersion += 1
+
+            // Force PDFView to redraw
+            pdfView?.needsDisplay = true
+            pdfView?.layoutDocumentView()
+
+            // Register undo
+            if let undoManager = pdfView?.undoManager {
+                undoManager.registerUndo(withTarget: annotation) { [weak pdfView, weak pdfManager] targetAnnotation in
+                    targetAnnotation.color = previousColor
+                    pdfManager?.isDirty = true
+                    pdfManager?.pageVersion += 1
+                    pdfView?.needsDisplay = true
+                    pdfView?.layoutDocumentView()
+                }
+                undoManager.setActionName("Change Comment Color")
+            }
+        }
+
+        // Create the undoManagerProvider closure for all managers
+        let undoManagerProvider: () -> UndoManager? = { [weak pdfView] in
+            pdfView?.undoManager
+        }
+
+        pdfManager.undoManagerProvider = undoManagerProvider
 
         annotationManager.configure(
             pdfManager: pdfManager,
@@ -102,7 +205,8 @@ struct PDFViewWrapper: NSViewRepresentable {
                 // Get page from selection itself, not currentPage (fixes two-page continuous mode)
                 let page = selection.pages.first ?? pdfView.currentPage
                 return (selection, page)
-            }
+            },
+            undoManagerProvider: undoManagerProvider
         )
 
         commentManager.configure(
@@ -115,7 +219,13 @@ struct PDFViewWrapper: NSViewRepresentable {
                     return (selection, page)
                 }
                 return (nil, pdfView.currentPage)
-            }
+            },
+            undoManagerProvider: undoManagerProvider
+        )
+
+        bookmarkManager.configure(
+            pdfManager: pdfManager,
+            undoManagerProvider: undoManagerProvider
         )
 
         context.coordinator.setPDFView(pdfView)
@@ -151,24 +261,30 @@ struct PDFViewWrapper: NSViewRepresentable {
         context.coordinator.handleActivationChange(isActive: isActive, pdfView: pdfView)
 
         if pdfView.document !== pdfManager.document {
-            annotationManager.selectedAnnotation = nil
             pdfView.document = pdfManager.document
 
+            // Go to first page (scroll to top handled after fit)
             if let currentPage = pdfManager.currentPage {
                 pdfView.go(to: currentPage)
             }
 
             if let document = pdfManager.document {
+                annotationManager.loadAnnotations(from: document)
                 commentManager.loadComments(from: document)
             } else {
+                annotationManager.clearAnnotations()
                 commentManager.clearComments()
             }
 
             pdfView.autoScales = false
             if pdfManager.fitOnceRequested {
-                performOneTimeFit(on: pdfView)
+                performOneTimeFit(on: pdfView, scrollToTop: true)
             } else {
                 pdfView.scaleFactor = pdfManager.scaleFactor
+                // Scroll to top after scale is set
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    self.centerContent(in: pdfView, scrollToTop: true)
+                }
             }
         } else if let currentPage = pdfManager.currentPage,
                   pdfView.currentPage !== currentPage {
@@ -250,7 +366,13 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.onAnnotationClick = nil
         pdfView.onAnnotationDeselect = nil
         pdfView.onAnnotationRemove = nil
+        pdfView.onAnnotationColorChange = nil
+        pdfView.onCommentColorChange = nil
         pdfView.onControlScroll = nil
+        pdfView.onLinkNavigation = nil
+        pdfView.onCopyPageAsMarkdown = nil
+        pdfView.onCopyDocumentAsMarkdown = nil
+        pdfView.onToggleBookmark = nil
 
         // Clear the activePDFView reference if it points to this view
         if coordinator.pdfManager.activePDFView === pdfView {
@@ -260,18 +382,18 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     // MARK: - Private
 
-    private func performOneTimeFit(on pdfView: StablePDFView) {
-        performFit(on: pdfView, retryCount: 0)
+    private func performOneTimeFit(on pdfView: StablePDFView, scrollToTop: Bool = false) {
+        performFit(on: pdfView, retryCount: 0, scrollToTop: scrollToTop)
     }
 
-    private func performFit(on pdfView: StablePDFView, retryCount: Int) {
+    private func performFit(on pdfView: StablePDFView, retryCount: Int, scrollToTop: Bool = false) {
         DispatchQueue.main.async {
             guard self.pdfManager.fitOnceRequested else { return }
 
             // Check if view is ready
             if (pdfView.bounds.isEmpty || pdfView.document == nil) && retryCount < 10 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self.performFit(on: pdfView, retryCount: retryCount + 1)
+                    self.performFit(on: pdfView, retryCount: retryCount + 1, scrollToTop: scrollToTop)
                 }
                 return
             }
@@ -290,37 +412,44 @@ struct PDFViewWrapper: NSViewRepresentable {
                 let clampedScale = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
                 pdfView.scaleFactor = clampedScale
                 self.pdfManager.scaleFactor = clampedScale
-
-                // Navigate to top of current page
-                let pageBounds = currentPage.bounds(for: .mediaBox)
-                let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
-                pdfView.go(to: PDFDestination(page: currentPage, at: topLeft))
             }
 
             self.pdfManager.fitOnceRequested = false
             self.pdfManager.scaleNeedsUpdate = false
 
-            // Center content after layout updates
+            // Center content after layout updates (and scroll to top for new documents)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                self.centerContent(in: pdfView)
+                self.centerContent(in: pdfView, scrollToTop: scrollToTop)
             }
         }
     }
 
-    private func centerContent(in pdfView: StablePDFView) {
+    private func centerContent(in pdfView: StablePDFView, scrollToTop: Bool = false) {
         guard let scrollView = pdfView.documentScrollView,
               let documentView = scrollView.documentView else { return }
 
         let docWidth = documentView.bounds.width
         let clipWidth = scrollView.contentView.bounds.width
+        let docHeight = documentView.bounds.height
+        let clipHeight = scrollView.contentView.bounds.height
 
-        // Only center if content is wider than view (otherwise PDFView handles it)
-        guard docWidth > clipWidth else { return }
+        // Calculate horizontal center if content is wider than view
+        let centeredX: CGFloat
+        if docWidth > clipWidth {
+            centeredX = (docWidth - clipWidth) / 2.0
+        } else {
+            centeredX = scrollView.contentView.bounds.origin.x
+        }
 
-        let centeredX = (docWidth - clipWidth) / 2.0
-        let currentY = scrollView.contentView.bounds.origin.y
-        let origin = NSPoint(x: centeredX, y: currentY)
+        // Scroll to top (max Y in flipped coordinates) or preserve current Y
+        let targetY: CGFloat
+        if scrollToTop {
+            targetY = max(0, docHeight - clipHeight)
+        } else {
+            targetY = scrollView.contentView.bounds.origin.y
+        }
 
+        let origin = NSPoint(x: centeredX, y: targetY)
         scrollView.contentView.scroll(to: origin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
@@ -468,20 +597,27 @@ struct PDFViewWrapper: NSViewRepresentable {
             let offsetX = pointInViewAfterZoom.x - pointInView.x
             let offsetY = pointInViewAfterZoom.y - pointInView.y
 
-            if let scrollView = pdfView.documentScrollView {
+            if let scrollView = pdfView.documentScrollView,
+               let documentView = scrollView.documentView {
                 let visibleRect = scrollView.documentVisibleRect
+                let docBounds = documentView.bounds
 
                 var newOrigin = NSPoint(
                     x: visibleRect.origin.x + offsetX,
                     y: visibleRect.origin.y + offsetY
                 )
 
-                if let documentView = scrollView.documentView {
-                    let maxX = max(0, documentView.bounds.width - visibleRect.width)
-                    let maxY = max(0, documentView.bounds.height - visibleRect.height)
+                // Center horizontally if document is narrower than view
+                if docBounds.width <= visibleRect.width {
+                    newOrigin.x = (docBounds.width - visibleRect.width) / 2.0
+                } else {
+                    let maxX = docBounds.width - visibleRect.width
                     newOrigin.x = max(0, min(newOrigin.x, maxX))
-                    newOrigin.y = max(0, min(newOrigin.y, maxY))
                 }
+
+                // Clamp vertical position
+                let maxY = max(0, docBounds.height - visibleRect.height)
+                newOrigin.y = max(0, min(newOrigin.y, maxY))
 
                 scrollView.contentView.scroll(to: newOrigin)
                 scrollView.reflectScrolledClipView(scrollView.contentView)

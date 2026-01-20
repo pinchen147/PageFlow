@@ -1,0 +1,315 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/runner/work/Sparkle/Sparkle/build/Build/Products/Release/Sparkle Test App.app/Contents/MacOS/Sparkle Test App'
+relocations:
+  - { offset: 0xCCA32, size: 0x8, addend: 0x0, symName: _SPUDeltaCompressionModeDefault, symObjAddr: 0x454, symBinAddr: 0x10002EB88, symSize: 0x0 }
+  - { offset: 0xCCFDF, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem initWithRelativeFilePath:commands:mode:]', symObjAddr: 0x160, symBinAddr: 0x100011C38, symSize: 0x94 }
+  - { offset: 0xCD037, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem relativeFilePath]', symObjAddr: 0x1F4, symBinAddr: 0x100011CCC, symSize: 0xC }
+  - { offset: 0xCD05F, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem itemFilePath]', symObjAddr: 0x200, symBinAddr: 0x100011CD8, symSize: 0xC }
+  - { offset: 0xCD087, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem setItemFilePath:]', symObjAddr: 0x20C, symBinAddr: 0x100011CE4, symSize: 0x10 }
+  - { offset: 0xCD0BB, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem clonedRelativePath]', symObjAddr: 0x21C, symBinAddr: 0x100011CF4, symSize: 0xC }
+  - { offset: 0xCD0E3, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem setClonedRelativePath:]', symObjAddr: 0x228, symBinAddr: 0x100011D00, symSize: 0x10 }
+  - { offset: 0xCD117, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem sourcePath]', symObjAddr: 0x238, symBinAddr: 0x100011D10, symSize: 0xC }
+  - { offset: 0xCD13F, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem setSourcePath:]', symObjAddr: 0x244, symBinAddr: 0x100011D1C, symSize: 0x10 }
+  - { offset: 0xCD173, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem commands]', symObjAddr: 0x254, symBinAddr: 0x100011D2C, symSize: 0xC }
+  - { offset: 0xCD19B, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem xarContext]', symObjAddr: 0x260, symBinAddr: 0x100011D38, symSize: 0xC }
+  - { offset: 0xCD1C3, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem setXarContext:]', symObjAddr: 0x26C, symBinAddr: 0x100011D44, symSize: 0xC }
+  - { offset: 0xCD1F5, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem mode]', symObjAddr: 0x278, symBinAddr: 0x100011D50, symSize: 0xC }
+  - { offset: 0xCD21D, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem setMode:]', symObjAddr: 0x284, symBinAddr: 0x100011D5C, symSize: 0xC }
+  - { offset: 0xCD24F, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem codedDataLength]', symObjAddr: 0x290, symBinAddr: 0x100011D68, symSize: 0xC }
+  - { offset: 0xCD277, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem setCodedDataLength:]', symObjAddr: 0x29C, symBinAddr: 0x100011D74, symSize: 0xC }
+  - { offset: 0xCD2A9, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveItem .cxx_destruct]', symObjAddr: 0x2A8, symBinAddr: 0x100000F08, symSize: 0x48 }
+  - { offset: 0xCD2DC, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader initWithCompression:compressionLevel:fileSystemCompression:majorVersion:minorVersion:beforeTreeHash:afterTreeHash:bundleCreationDate:]', symObjAddr: 0x2F0, symBinAddr: 0x100011D80, symSize: 0xE4 }
+  - { offset: 0xCD37F, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader beforeTreeHash]', symObjAddr: 0x3D4, symBinAddr: 0x100000F50, symSize: 0x10 }
+  - { offset: 0xCD3A7, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader afterTreeHash]', symObjAddr: 0x3E4, symBinAddr: 0x100000F60, symSize: 0x10 }
+  - { offset: 0xCD3CF, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader compression]', symObjAddr: 0x3F4, symBinAddr: 0x100011E64, symSize: 0xC }
+  - { offset: 0xCD3F7, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader compressionLevel]', symObjAddr: 0x400, symBinAddr: 0x100011E70, symSize: 0xC }
+  - { offset: 0xCD41F, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader fileSystemCompression]', symObjAddr: 0x40C, symBinAddr: 0x100011E7C, symSize: 0x18 }
+  - { offset: 0xCD447, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader majorVersion]', symObjAddr: 0x424, symBinAddr: 0x100011E94, symSize: 0xC }
+  - { offset: 0xCD46F, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader minorVersion]', symObjAddr: 0x430, symBinAddr: 0x100011EA0, symSize: 0xC }
+  - { offset: 0xCD497, size: 0x8, addend: 0x0, symName: '-[SPUDeltaArchiveHeader .cxx_destruct]', symObjAddr: 0x448, symBinAddr: 0x100000F70, symSize: 0xC }
+  - { offset: 0xCD512, size: 0x8, addend: 0x0, symName: '+[SPUSparkleDeltaArchive maySupportSafeExtraction]', symObjAddr: 0x0, symBinAddr: 0x100000F7C, symSize: 0x8 }
+  - { offset: 0xCD7B3, size: 0x8, addend: 0x0, symName: '+[SPUSparkleDeltaArchive maySupportSafeExtraction]', symObjAddr: 0x0, symBinAddr: 0x100000F7C, symSize: 0x8 }
+  - { offset: 0xCD7E6, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive initWithPatchFileForWriting:]', symObjAddr: 0x8, symBinAddr: 0x100011EAC, symSize: 0x8C }
+  - { offset: 0xCD864, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_18, symObjAddr: 0x49B8, symBinAddr: 0x10000444C, symSize: 0xC }
+  - { offset: 0xCD87C, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_1, symObjAddr: 0x48D0, symBinAddr: 0x100004364, symSize: 0x8 }
+  - { offset: 0xCD894, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_16, symObjAddr: 0x49A8, symBinAddr: 0x10000443C, symSize: 0x8 }
+  - { offset: 0xCD8AC, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_12, symObjAddr: 0x4984, symBinAddr: 0x100004418, symSize: 0xC }
+  - { offset: 0xCD8C4, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive dealloc]', symObjAddr: 0xF8, symBinAddr: 0x100000F84, symSize: 0x44 }
+  - { offset: 0xCD8F7, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive close]', symObjAddr: 0x13C, symBinAddr: 0x100000FC8, symSize: 0x88 }
+  - { offset: 0xCD9F0, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive createBuffers]', symObjAddr: 0x1C4, symBinAddr: 0x100011F38, symSize: 0x1A4 }
+  - { offset: 0xCDACB, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_21, symObjAddr: 0x49E0, symBinAddr: 0x100004474, symSize: 0x14 }
+  - { offset: 0xCDAE3, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_0, symObjAddr: 0x48C0, symBinAddr: 0x100004354, symSize: 0x10 }
+  - { offset: 0xCDAFB, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_17, symObjAddr: 0x49B0, symBinAddr: 0x100004444, symSize: 0x8 }
+  - { offset: 0xCDB13, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_14, symObjAddr: 0x4998, symBinAddr: 0x10000442C, symSize: 0x8 }
+  - { offset: 0xCDB2B, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive _readBuffer:length:]', symObjAddr: 0x368, symBinAddr: 0x1000120DC, symSize: 0x4BC }
+  - { offset: 0xCDD3D, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_11, symObjAddr: 0x496C, symBinAddr: 0x100004400, symSize: 0x18 }
+  - { offset: 0xCDDAC, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_10, symObjAddr: 0x4954, symBinAddr: 0x1000043E8, symSize: 0x18 }
+  - { offset: 0xCDDC4, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_20, symObjAddr: 0x49CC, symBinAddr: 0x100004460, symSize: 0x14 }
+  - { offset: 0xCDDFD, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_7, symObjAddr: 0x491C, symBinAddr: 0x1000043B0, symSize: 0x10 }
+  - { offset: 0xCDE15, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_8, symObjAddr: 0x492C, symBinAddr: 0x1000043C0, symSize: 0x10 }
+  - { offset: 0xCDE2D, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_6, symObjAddr: 0x490C, symBinAddr: 0x1000043A0, symSize: 0x10 }
+  - { offset: 0xCDE45, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive readHeader]', symObjAddr: 0x824, symBinAddr: 0x100001050, symSize: 0x7E4 }
+  - { offset: 0xCE1A0, size: 0x8, addend: 0x0, symName: _compressionAlgorithmForMode, symObjAddr: 0x1008, symBinAddr: 0x100001834, symSize: 0x64 }
+  - { offset: 0xCE1DC, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive _readRelativeFilePaths]', symObjAddr: 0x106C, symBinAddr: 0x100012598, symSize: 0x2E8 }
+  - { offset: 0xCE22F, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive readHeader].cold.1', symObjAddr: 0x4654, symBinAddr: 0x1000130C4, symSize: 0x64 }
+  - { offset: 0xCE279, size: 0x8, addend: 0x0, symName: _compressionAlgorithmForMode.cold.1, symObjAddr: 0x46B8, symBinAddr: 0x100013128, symSize: 0x28 }
+  - { offset: 0xCE291, size: 0x8, addend: 0x0, symName: _compressionAlgorithmForMode.cold.2, symObjAddr: 0x46E0, symBinAddr: 0x100013150, symSize: 0x28 }
+  - { offset: 0xCE2A9, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive _readRelativeFilePaths]', symObjAddr: 0x106C, symBinAddr: 0x100012598, symSize: 0x2E8 }
+  - { offset: 0xCE485, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_15, symObjAddr: 0x49A0, symBinAddr: 0x100004434, symSize: 0x8 }
+  - { offset: 0xCE49D, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_13, symObjAddr: 0x4990, symBinAddr: 0x100004424, symSize: 0x8 }
+  - { offset: 0xCE4B5, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_9, symObjAddr: 0x493C, symBinAddr: 0x1000043D0, symSize: 0x18 }
+  - { offset: 0xCE4CD, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_5, symObjAddr: 0x4904, symBinAddr: 0x100004398, symSize: 0x8 }
+  - { offset: 0xCE4E5, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_19, symObjAddr: 0x49C4, symBinAddr: 0x100004458, symSize: 0x8 }
+  - { offset: 0xCE4FD, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive enumerateItems:]', symObjAddr: 0x1354, symBinAddr: 0x100012880, symSize: 0x460 }
+  - { offset: 0xCE7D3, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_4, symObjAddr: 0x48FC, symBinAddr: 0x100004390, symSize: 0x8 }
+  - { offset: 0xCE7EB, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_3, symObjAddr: 0x48E8, symBinAddr: 0x10000437C, symSize: 0x14 }
+  - { offset: 0xCE803, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_2, symObjAddr: 0x48D8, symBinAddr: 0x10000436C, symSize: 0x10 }
+  - { offset: 0xCE81B, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive extractItem:]', symObjAddr: 0x17B4, symBinAddr: 0x100001898, symSize: 0x84C }
+  - { offset: 0xCEB10, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive extractItem:].cold.2', symObjAddr: 0x4730, symBinAddr: 0x1000131A0, symSize: 0x28 }
+  - { offset: 0xCEB28, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive extractItem:].cold.1', symObjAddr: 0x4708, symBinAddr: 0x100013178, symSize: 0x28 }
+  - { offset: 0xCEB40, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive _writeBuffer:length:]', symObjAddr: 0x2000, symBinAddr: 0x100012CE0, symSize: 0x3E4 }
+  - { offset: 0xCED5F, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive writeHeader:]', symObjAddr: 0x23E4, symBinAddr: 0x1000020E4, symSize: 0x674 }
+  - { offset: 0xCF097, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive writeHeader:].cold.1', symObjAddr: 0x4758, symBinAddr: 0x1000131C8, symSize: 0x50 }
+  - { offset: 0xCF0E1, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive addItem:]', symObjAddr: 0x2A58, symBinAddr: 0x100002758, symSize: 0x8 }
+  - { offset: 0xCF124, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems]', symObjAddr: 0x2A60, symBinAddr: 0x100002760, symSize: 0x1BB0 }
+  - { offset: 0xCFB63, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive error]', symObjAddr: 0x4610, symBinAddr: 0x100004310, symSize: 0x8 }
+  - { offset: 0xCFB80, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems].cold.1', symObjAddr: 0x47A8, symBinAddr: 0x100013218, symSize: 0x28 }
+  - { offset: 0xCFC20, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems].cold.4', symObjAddr: 0x4820, symBinAddr: 0x100013290, symSize: 0x28 }
+  - { offset: 0xCFC38, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems].cold.2', symObjAddr: 0x47D0, symBinAddr: 0x100013240, symSize: 0x28 }
+  - { offset: 0xCFC50, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems].cold.6', symObjAddr: 0x4870, symBinAddr: 0x1000132E0, symSize: 0x28 }
+  - { offset: 0xCFC68, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems].cold.5', symObjAddr: 0x4848, symBinAddr: 0x1000132B8, symSize: 0x28 }
+  - { offset: 0xCFC80, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems].cold.7', symObjAddr: 0x4898, symBinAddr: 0x100013308, symSize: 0x28 }
+  - { offset: 0xCFC98, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive finishEncodingItems].cold.3', symObjAddr: 0x47F8, symBinAddr: 0x100013268, symSize: 0x28 }
+  - { offset: 0xCFCB0, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive error]', symObjAddr: 0x4610, symBinAddr: 0x100004310, symSize: 0x8 }
+  - { offset: 0xCFCE7, size: 0x8, addend: 0x0, symName: '-[SPUSparkleDeltaArchive .cxx_destruct]', symObjAddr: 0x4618, symBinAddr: 0x100004318, symSize: 0x3C }
+  - { offset: 0xCFF90, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive initWithPatchFileForWriting:]', symObjAddr: 0x0, symBinAddr: 0x100013330, symSize: 0x8C }
+  - { offset: 0xD0131, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive initWithPatchFileForWriting:]', symObjAddr: 0x0, symBinAddr: 0x100013330, symSize: 0x8C }
+  - { offset: 0xD019D, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_0, symObjAddr: 0x112C, symBinAddr: 0x100005474, symSize: 0x10 }
+  - { offset: 0xD01BF, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive dealloc]', symObjAddr: 0xF0, symBinAddr: 0x100004488, symSize: 0x44 }
+  - { offset: 0xD01F2, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive close]', symObjAddr: 0x134, symBinAddr: 0x1000044CC, symSize: 0x2C }
+  - { offset: 0xD0245, size: 0x8, addend: 0x0, symName: '+[SPUXarDeltaArchive maySupportSafeExtraction]', symObjAddr: 0x160, symBinAddr: 0x1000044F8, symSize: 0x8 }
+  - { offset: 0xD0278, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive readHeader]', symObjAddr: 0x168, symBinAddr: 0x100004500, symSize: 0x32C }
+  - { offset: 0xD0592, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive writeHeader:]', symObjAddr: 0x494, symBinAddr: 0x10000482C, symSize: 0x3E4 }
+  - { offset: 0xD086C, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive addItem:]', symObjAddr: 0x878, symBinAddr: 0x100004C10, symSize: 0x430 }
+  - { offset: 0xD0ACC, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive finishEncodingItems]', symObjAddr: 0xCA8, symBinAddr: 0x100005040, symSize: 0x4 }
+  - { offset: 0xD0AFC, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive enumerateItems:]', symObjAddr: 0xCAC, symBinAddr: 0x100005044, symSize: 0x224 }
+  - { offset: 0xD0E42, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive extractItem:]', symObjAddr: 0xED0, symBinAddr: 0x100005268, symSize: 0x1C8 }
+  - { offset: 0xD0EF1, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive extractItem:].cold.2', symObjAddr: 0x1104, symBinAddr: 0x1000133E4, symSize: 0x28 }
+  - { offset: 0xD0F09, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive extractItem:].cold.1', symObjAddr: 0x10DC, symBinAddr: 0x1000133BC, symSize: 0x28 }
+  - { offset: 0xD0F21, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive error]', symObjAddr: 0x1098, symBinAddr: 0x100005430, symSize: 0x8 }
+  - { offset: 0xD0F58, size: 0x8, addend: 0x0, symName: '-[SPUXarDeltaArchive .cxx_destruct]', symObjAddr: 0x10A0, symBinAddr: 0x100005438, symSize: 0x3C }
+  - { offset: 0xD11E3, size: 0x8, addend: 0x0, symName: _SUBinaryDeltaMajorVersionDefault, symObjAddr: 0x113C, symBinAddr: 0x10002EC50, symSize: 0x0 }
+  - { offset: 0xD1230, size: 0x8, addend: 0x0, symName: _SUBinaryDeltaMajorVersionLatest, symObjAddr: 0x113E, symBinAddr: 0x10002EC52, symSize: 0x0 }
+  - { offset: 0xD1246, size: 0x8, addend: 0x0, symName: _SUBinaryDeltaMajorVersionFirst, symObjAddr: 0x1140, symBinAddr: 0x10002EC54, symSize: 0x0 }
+  - { offset: 0xD12C8, size: 0x8, addend: 0x0, symName: _deltaCompressionStringFromMode, symObjAddr: 0x128, symBinAddr: 0x100005484, symSize: 0x40 }
+  - { offset: 0xD12F3, size: 0x8, addend: 0x0, symName: _compareFiles, symObjAddr: 0x168, symBinAddr: 0x1000054C4, symSize: 0x20 }
+  - { offset: 0xD1364, size: 0x8, addend: 0x0, symName: _pathRelativeToDirectory, symObjAddr: 0x188, symBinAddr: 0x1000054E4, symSize: 0x8C }
+  - { offset: 0xD13AF, size: 0x8, addend: 0x0, symName: _stringWithFileSystemRepresentation, symObjAddr: 0x214, symBinAddr: 0x100005570, symSize: 0x64 }
+  - { offset: 0xD1402, size: 0x8, addend: 0x0, symName: _latestMinorVersionForMajorVersion, symObjAddr: 0x278, symBinAddr: 0x1000055D4, symSize: 0x2C }
+  - { offset: 0xD142D, size: 0x8, addend: 0x0, symName: _temporaryFilename, symObjAddr: 0x2A4, symBinAddr: 0x100005600, symSize: 0x148 }
+  - { offset: 0xD153E, size: 0x8, addend: 0x0, symName: _getRawHashOfTreeAndFileTablesWithVersion, symObjAddr: 0x520, symBinAddr: 0x100005748, symSize: 0x748 }
+  - { offset: 0xD1FBF, size: 0x8, addend: 0x0, symName: _sha1HashOfBuffer, symObjAddr: 0x10AC, symBinAddr: 0x100005FBC, symSize: 0x68 }
+  - { offset: 0xD206F, size: 0x8, addend: 0x0, symName: _sha1HashOfBuffer.cold.1, symObjAddr: 0x1114, symBinAddr: 0x10001340C, symSize: 0x28 }
+  - { offset: 0xD212B, size: 0x8, addend: 0x0, symName: _getRawHashFromDisplayHash, symObjAddr: 0xC68, symBinAddr: 0x100005E90, symSize: 0x7C }
+  - { offset: 0xD2205, size: 0x8, addend: 0x0, symName: _displayHashFromRawHash, symObjAddr: 0xCE4, symBinAddr: 0x100005F0C, symSize: 0xB0 }
+  - { offset: 0xD2262, size: 0x8, addend: 0x0, symName: _sha1HashOfBuffer.cold.1, symObjAddr: 0x1114, symBinAddr: 0x10001340C, symSize: 0x28 }
+  - { offset: 0xD2377, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation initWithRelativePath:clonedRelativePath:oldTree:newTree:oldPermissions:newPermissions:changingPermissions:]', symObjAddr: 0x0, symBinAddr: 0x100013434, symSize: 0x1A8 }
+  - { offset: 0xD25B3, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation initWithRelativePath:clonedRelativePath:oldTree:newTree:oldPermissions:newPermissions:changingPermissions:]', symObjAddr: 0x0, symBinAddr: 0x100013434, symSize: 0x1A8 }
+  - { offset: 0xD267E, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_0, symObjAddr: 0x451C, symBinAddr: 0x10000A230, symSize: 0x10 }
+  - { offset: 0xD2696, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation main]', symObjAddr: 0x1A8, symBinAddr: 0x100006024, symSize: 0xD8 }
+  - { offset: 0xD275C, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation relativePath]', symObjAddr: 0x280, symBinAddr: 0x1000060FC, symSize: 0x10 }
+  - { offset: 0xD2793, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation clonedRelativePath]', symObjAddr: 0x290, symBinAddr: 0x10000610C, symSize: 0x10 }
+  - { offset: 0xD27CA, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation resultPath]', symObjAddr: 0x2A0, symBinAddr: 0x10000611C, symSize: 0x10 }
+  - { offset: 0xD2801, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation oldPermissions]', symObjAddr: 0x2B0, symBinAddr: 0x10000612C, symSize: 0x10 }
+  - { offset: 0xD2838, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation permissions]', symObjAddr: 0x2C0, symBinAddr: 0x10000613C, symSize: 0x10 }
+  - { offset: 0xD286F, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation fromPath]', symObjAddr: 0x2D0, symBinAddr: 0x10000614C, symSize: 0x10 }
+  - { offset: 0xD28A6, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation changingPermissions]', symObjAddr: 0x2E0, symBinAddr: 0x10000615C, symSize: 0x10 }
+  - { offset: 0xD28DD, size: 0x8, addend: 0x0, symName: '-[CreateBinaryDeltaOperation .cxx_destruct]', symObjAddr: 0x2F0, symBinAddr: 0x10000616C, symSize: 0xA4 }
+  - { offset: 0xD29D4, size: 0x8, addend: 0x0, symName: _createBinaryDelta, symObjAddr: 0x394, symBinAddr: 0x100006210, symSize: 0x31B8 }
+  - { offset: 0xD37C7, size: 0x8, addend: 0x0, symName: _infoForFile, symObjAddr: 0x354C, symBinAddr: 0x1000093C8, symSize: 0x17C }
+  - { offset: 0xD383A, size: 0x8, addend: 0x0, symName: _aclExists, symObjAddr: 0x36C8, symBinAddr: 0x100009544, symSize: 0x70 }
+  - { offset: 0xD38E8, size: 0x8, addend: 0x0, symName: _codeSignatureExtendedAttributeExists, symObjAddr: 0x3738, symBinAddr: 0x1000095B4, symSize: 0x128 }
+  - { offset: 0xD38F3, size: 0x8, addend: 0x0, symName: _codeSignatureExtendedAttributeExists, symObjAddr: 0x3738, symBinAddr: 0x1000095B4, symSize: 0x128 }
+  - { offset: 0xD3A85, size: 0x8, addend: 0x0, symName: _temporaryPatchFile, symObjAddr: 0x3860, symBinAddr: 0x1000096DC, symSize: 0xF0 }
+  - { offset: 0xD3AF8, size: 0x8, addend: 0x0, symName: _temporaryPatchFile, symObjAddr: 0x3860, symBinAddr: 0x1000096DC, symSize: 0xF0 }
+  - { offset: 0xD3B7D, size: 0x8, addend: 0x0, symName: _cloneableRelativePath, symObjAddr: 0x3B08, symBinAddr: 0x100009984, symSize: 0x80C }
+  - { offset: 0xD3DF9, size: 0x8, addend: 0x0, symName: _shouldDeleteThenExtract, symObjAddr: 0x4314, symBinAddr: 0x10000A190, symSize: 0xA0 }
+  - { offset: 0xD3E34, size: 0x8, addend: 0x0, symName: _shouldChangePermissions, symObjAddr: 0x39D4, symBinAddr: 0x100009850, symSize: 0x134 }
+  - { offset: 0xD3EC4, size: 0x8, addend: 0x0, symName: _createBinaryDelta.cold.4, symObjAddr: 0x442C, symBinAddr: 0x100013654, symSize: 0x28 }
+  - { offset: 0xD3EDC, size: 0x8, addend: 0x0, symName: _createBinaryDelta.cold.3, symObjAddr: 0x4404, symBinAddr: 0x10001362C, symSize: 0x28 }
+  - { offset: 0xD3EF4, size: 0x8, addend: 0x0, symName: _createBinaryDelta.cold.2, symObjAddr: 0x43DC, symBinAddr: 0x100013604, symSize: 0x28 }
+  - { offset: 0xD3F0C, size: 0x8, addend: 0x0, symName: _createBinaryDelta.cold.1, symObjAddr: 0x43B4, symBinAddr: 0x1000135DC, symSize: 0x28 }
+  - { offset: 0xD3F24, size: 0x8, addend: 0x0, symName: _infoForFile.cold.2, symObjAddr: 0x447C, symBinAddr: 0x1000136A4, symSize: 0x28 }
+  - { offset: 0xD3F3C, size: 0x8, addend: 0x0, symName: _infoForFile.cold.1, symObjAddr: 0x4454, symBinAddr: 0x10001367C, symSize: 0x28 }
+  - { offset: 0xD3F9E, size: 0x8, addend: 0x0, symName: _aclExists.cold.1, symObjAddr: 0x44A4, symBinAddr: 0x1000136CC, symSize: 0x28 }
+  - { offset: 0xD401A, size: 0x8, addend: 0x0, symName: _codeSignatureExtendedAttributeExists.cold.2, symObjAddr: 0x44F4, symBinAddr: 0x10001371C, symSize: 0x28 }
+  - { offset: 0xD4032, size: 0x8, addend: 0x0, symName: _codeSignatureExtendedAttributeExists.cold.1, symObjAddr: 0x44CC, symBinAddr: 0x1000136F4, symSize: 0x28 }
+  - { offset: 0xD4075, size: 0x8, addend: 0x0, symName: ___createBinaryDelta_block_invoke, symObjAddr: 0x3950, symBinAddr: 0x1000097CC, symSize: 0x74 }
+  - { offset: 0xD40F9, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s, symObjAddr: 0x39C4, symBinAddr: 0x100009840, symSize: 0x8 }
+  - { offset: 0xD4120, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s, symObjAddr: 0x39CC, symBinAddr: 0x100009848, symSize: 0x8 }
+  - { offset: 0xD4425, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x10000A240, symSize: 0x4 }
+  - { offset: 0xD4433, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x10000A240, symSize: 0x4 }
+  - { offset: 0xD446D, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x10000A240, symSize: 0x4 }
+  - { offset: 0xD44EC, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController initWithAppcastItem:reply:]', symObjAddr: 0x0, symBinAddr: 0x10000A244, symSize: 0xA0 }
+  - { offset: 0xD46A6, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController initWithAppcastItem:reply:]', symObjAddr: 0x0, symBinAddr: 0x10000A244, symSize: 0xA0 }
+  - { offset: 0xD470E, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController viewDidLoad]', symObjAddr: 0xA0, symBinAddr: 0x10000A2E4, symSize: 0x13C }
+  - { offset: 0xD4719, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController initWithAppcastItem:reply:].cold.2', symObjAddr: 0x5E4, symBinAddr: 0x1000139EC, symSize: 0x50 }
+  - { offset: 0xD4731, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController initWithAppcastItem:reply:].cold.1', symObjAddr: 0x5BC, symBinAddr: 0x1000139C4, symSize: 0x28 }
+  - { offset: 0xD4749, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController viewDidLoad]', symObjAddr: 0xA0, symBinAddr: 0x10000A2E4, symSize: 0x13C }
+  - { offset: 0xD47F5, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController displayReleaseNotes:]', symObjAddr: 0x1DC, symBinAddr: 0x100013744, symSize: 0x74 }
+  - { offset: 0xD4857, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_2, symObjAddr: 0x648, symBinAddr: 0x10000A594, symSize: 0x8 }
+  - { offset: 0xD4879, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_0, symObjAddr: 0x634, symBinAddr: 0x10000A580, symSize: 0xC }
+  - { offset: 0xD4891, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController displayHTMLReleaseNotes:]', symObjAddr: 0x250, symBinAddr: 0x1000137B8, symSize: 0x60 }
+  - { offset: 0xD4920, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController displayPlainTextReleaseNotes:encoding:]', symObjAddr: 0x2B0, symBinAddr: 0x100013818, symSize: 0x84 }
+  - { offset: 0xD49DD, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_1, symObjAddr: 0x640, symBinAddr: 0x10000A58C, symSize: 0x8 }
+  - { offset: 0xD49F5, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController showReleaseNotesWithDownloadData:]', symObjAddr: 0x334, symBinAddr: 0x10001389C, symSize: 0x128 }
+  - { offset: 0xD4B33, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController installUpdate:]', symObjAddr: 0x45C, symBinAddr: 0x10000A420, symSize: 0x4C }
+  - { offset: 0xD4B85, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController installUpdateLater:]', symObjAddr: 0x4A8, symBinAddr: 0x10000A46C, symSize: 0x4C }
+  - { offset: 0xD4BD7, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController skipUpdate:]', symObjAddr: 0x4F4, symBinAddr: 0x10000A4B8, symSize: 0x4C }
+  - { offset: 0xD4C29, size: 0x8, addend: 0x0, symName: '-[SUInstallUpdateViewController .cxx_destruct]', symObjAddr: 0x540, symBinAddr: 0x10000A504, symSize: 0x7C }
+  - { offset: 0xD4CCE, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver initWithWindow:]', symObjAddr: 0x0, symBinAddr: 0x100013A3C, symSize: 0x7C }
+  - { offset: 0xD4EA8, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver initWithWindow:]', symObjAddr: 0x0, symBinAddr: 0x100013A3C, symSize: 0x7C }
+  - { offset: 0xD4EEA, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver addUpdateButtonWithTitle:action:]', symObjAddr: 0x88, symBinAddr: 0x100013AB8, symSize: 0x160 }
+  - { offset: 0xD4F6D, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_1, symObjAddr: 0xCA4, symBinAddr: 0x10000AC88, symSize: 0xC }
+  - { offset: 0xD4F8F, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver updateButtonAction:]', symObjAddr: 0x1E8, symBinAddr: 0x10000A59C, symSize: 0x18 }
+  - { offset: 0xD4FDC, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_8, symObjAddr: 0xCEC, symBinAddr: 0x10000ACBC, symSize: 0xC }
+  - { offset: 0xD4FF4, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_3, symObjAddr: 0xCB8, symBinAddr: 0x10000AC9C, symSize: 0x8 }
+  - { offset: 0xD500C, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdatePermissionRequest:reply:]', symObjAddr: 0x22C, symBinAddr: 0x10000A5B4, symSize: 0x60 }
+  - { offset: 0xD5082, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateWithAppcastItem:reply:]', symObjAddr: 0x28C, symBinAddr: 0x10000A614, symSize: 0x234 }
+  - { offset: 0xD5137, size: 0x8, addend: 0x0, symName: ___Block_byref_object_copy_, symObjAddr: 0x4C0, symBinAddr: 0x10000A848, symSize: 0x10 }
+  - { offset: 0xD515C, size: 0x8, addend: 0x0, symName: ___Block_byref_object_dispose_, symObjAddr: 0x4D0, symBinAddr: 0x10000A858, symSize: 0x8 }
+  - { offset: 0xD517B, size: 0x8, addend: 0x0, symName: '___61-[SUPopUpTitlebarUserDriver showUpdateWithAppcastItem:reply:]_block_invoke', symObjAddr: 0x4D8, symBinAddr: 0x10000A860, symSize: 0x64 }
+  - { offset: 0xD522A, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40b48r56w, symObjAddr: 0x53C, symBinAddr: 0x10000A8C4, symSize: 0x50 }
+  - { offset: 0xD5253, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48r56w, symObjAddr: 0x58C, symBinAddr: 0x10000A914, symSize: 0x3C }
+  - { offset: 0xD5272, size: 0x8, addend: 0x0, symName: '___61-[SUPopUpTitlebarUserDriver showUpdateWithAppcastItem:reply:]_block_invoke.8', symObjAddr: 0x5C8, symBinAddr: 0x10000A950, symSize: 0x64 }
+  - { offset: 0xD52DD, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48r, symObjAddr: 0x62C, symBinAddr: 0x10000A9B4, symSize: 0x3C }
+  - { offset: 0xD5306, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48r, symObjAddr: 0x668, symBinAddr: 0x10000A9F0, symSize: 0x34 }
+  - { offset: 0xD5325, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateFoundWithAppcastItem:state:reply:]', symObjAddr: 0x69C, symBinAddr: 0x10000AA24, symSize: 0x78 }
+  - { offset: 0xD53A8, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateFoundWithAppcastItem:state:reply:].cold.1', symObjAddr: 0xBB0, symBinAddr: 0x100013EC8, symSize: 0x84 }
+  - { offset: 0xD53D6, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateReleaseNotesWithDownloadData:]', symObjAddr: 0x714, symBinAddr: 0x10000AA9C, symSize: 0xC }
+  - { offset: 0xD5419, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateReleaseNotesFailedToDownloadWithError:]', symObjAddr: 0x720, symBinAddr: 0x10000AAA8, symSize: 0x4 }
+  - { offset: 0xD5454, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateInFocus]', symObjAddr: 0x724, symBinAddr: 0x10000AAAC, symSize: 0x70 }
+  - { offset: 0xD5487, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showReadyToInstallAndRelaunch:]', symObjAddr: 0x794, symBinAddr: 0x100013C18, symSize: 0x88 }
+  - { offset: 0xD54E7, size: 0x8, addend: 0x0, symName: '___59-[SUPopUpTitlebarUserDriver showReadyToInstallAndRelaunch:]_block_invoke', symObjAddr: 0x81C, symBinAddr: 0x10000AB1C, symSize: 0x10 }
+  - { offset: 0xD5541, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32b, symObjAddr: 0x82C, symBinAddr: 0x10000AB2C, symSize: 0x10 }
+  - { offset: 0xD5592, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUserInitiatedUpdateCheckWithCancellation:]', symObjAddr: 0x844, symBinAddr: 0x100013CA0, symSize: 0x14 }
+  - { offset: 0xD55D2, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUserInitiatedUpdateCheckWithCancellation:]', symObjAddr: 0x844, symBinAddr: 0x100013CA0, symSize: 0x14 }
+  - { offset: 0xD55FB, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver acceptAcknowledgementAfterDelay:]', symObjAddr: 0x858, symBinAddr: 0x10000AB3C, symSize: 0xA0 }
+  - { offset: 0xD56DD, size: 0x8, addend: 0x0, symName: '___61-[SUPopUpTitlebarUserDriver acceptAcknowledgementAfterDelay:]_block_invoke', symObjAddr: 0x8F8, symBinAddr: 0x10000ABDC, symSize: 0xC }
+  - { offset: 0xD5724, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdaterError:acknowledgement:]', symObjAddr: 0x904, symBinAddr: 0x100013CB4, symSize: 0x68 }
+  - { offset: 0xD57A1, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_2, symObjAddr: 0xCB0, symBinAddr: 0x10000AC94, symSize: 0x8 }
+  - { offset: 0xD57C9, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_0, symObjAddr: 0xC9C, symBinAddr: 0x10000AC80, symSize: 0x8 }
+  - { offset: 0xD57E1, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateNotFoundWithError:acknowledgement:]', symObjAddr: 0x96C, symBinAddr: 0x100013D1C, symSize: 0x38 }
+  - { offset: 0xD5866, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_6, symObjAddr: 0xCD8, symBinAddr: 0x10000ACB0, symSize: 0xC }
+  - { offset: 0xD587E, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showDownloadInitiatedWithCancellation:]', symObjAddr: 0x9A4, symBinAddr: 0x10000ABE8, symSize: 0x4 }
+  - { offset: 0xD58B9, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showDownloadDidReceiveExpectedContentLength:]', symObjAddr: 0x9A8, symBinAddr: 0x100013D54, symSize: 0x38 }
+  - { offset: 0xD5928, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showDownloadDidReceiveDataOfLength:]', symObjAddr: 0x9E0, symBinAddr: 0x10000ABEC, symSize: 0x40 }
+  - { offset: 0xD5994, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showDownloadDidReceiveDataOfLength:].cold.1', symObjAddr: 0xC34, symBinAddr: 0x100013F4C, symSize: 0x68 }
+  - { offset: 0xD59CC, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showDownloadDidStartExtractingUpdate]', symObjAddr: 0xA20, symBinAddr: 0x100013D8C, symSize: 0x14 }
+  - { offset: 0xD5A00, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showDownloadDidStartExtractingUpdate]', symObjAddr: 0xA20, symBinAddr: 0x100013D8C, symSize: 0x14 }
+  - { offset: 0xD5A29, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showExtractionReceivedProgress:]', symObjAddr: 0xA34, symBinAddr: 0x100013DA0, symSize: 0x64 }
+  - { offset: 0xD5AAE, size: 0x8, addend: 0x0, symName: _OUTLINED_FUNCTION_5, symObjAddr: 0xCCC, symBinAddr: 0x10000ACA4, symSize: 0xC }
+  - { offset: 0xD5ADD, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showInstallingUpdateWithApplicationTerminated:retryTerminatingApplication:]', symObjAddr: 0xA98, symBinAddr: 0x100013E04, symSize: 0x5C }
+  - { offset: 0xD5BA4, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver showUpdateInstalledAndRelaunched:acknowledgement:]', symObjAddr: 0xAF4, symBinAddr: 0x100013E60, symSize: 0x3C }
+  - { offset: 0xD5C4D, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver dismissUpdateInstallation]', symObjAddr: 0xB30, symBinAddr: 0x100013E9C, symSize: 0x2C }
+  - { offset: 0xD5C84, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver dismissUpdateInstallation]', symObjAddr: 0xB30, symBinAddr: 0x100013E9C, symSize: 0x2C }
+  - { offset: 0xD5CBE, size: 0x8, addend: 0x0, symName: '-[SUPopUpTitlebarUserDriver .cxx_destruct]', symObjAddr: 0xB5C, symBinAddr: 0x10000AC2C, symSize: 0x54 }
+  - { offset: 0xD604A, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:]', symObjAddr: 0x0, symBinAddr: 0x10000ACC8, symSize: 0x828 }
+  - { offset: 0xD6066, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2', symObjAddr: 0x950, symBinAddr: 0x10000B618, symSize: 0x9C8 }
+  - { offset: 0xD6572, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48s56s64s72s80s88s, symObjAddr: 0x1318, symBinAddr: 0x10000BFE0, symSize: 0x58 }
+  - { offset: 0xD674B, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:]', symObjAddr: 0x0, symBinAddr: 0x10000ACC8, symSize: 0x828 }
+  - { offset: 0xD6A5E, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke', symObjAddr: 0x828, symBinAddr: 0x10000B4F0, symSize: 0x128 }
+  - { offset: 0xD6A69, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate signApplicationIfRequiredAtPath:completion:]', symObjAddr: 0x13C8, symBinAddr: 0x100013FB4, symSize: 0x144 }
+  - { offset: 0xD6AC4, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.11', symObjAddr: 0x186C, symBinAddr: 0x1000142A0, symSize: 0x28 }
+  - { offset: 0xD6ADC, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.10', symObjAddr: 0x1844, symBinAddr: 0x100014278, symSize: 0x28 }
+  - { offset: 0xD6AF4, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.9', symObjAddr: 0x181C, symBinAddr: 0x100014250, symSize: 0x28 }
+  - { offset: 0xD6B0C, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.2', symObjAddr: 0x1704, symBinAddr: 0x100014138, symSize: 0x28 }
+  - { offset: 0xD6B24, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.4', symObjAddr: 0x1754, symBinAddr: 0x100014188, symSize: 0x28 }
+  - { offset: 0xD6B3C, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.5', symObjAddr: 0x177C, symBinAddr: 0x1000141B0, symSize: 0x28 }
+  - { offset: 0xD6B54, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.6', symObjAddr: 0x17A4, symBinAddr: 0x1000141D8, symSize: 0x28 }
+  - { offset: 0xD6B6C, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.8', symObjAddr: 0x17F4, symBinAddr: 0x100014228, symSize: 0x28 }
+  - { offset: 0xD6B84, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.7', symObjAddr: 0x17CC, symBinAddr: 0x100014200, symSize: 0x28 }
+  - { offset: 0xD6B9C, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.1', symObjAddr: 0x16C4, symBinAddr: 0x1000140F8, symSize: 0x40 }
+  - { offset: 0xD6BCC, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationDidFinishLaunching:].cold.3', symObjAddr: 0x172C, symBinAddr: 0x100014160, symSize: 0x28 }
+  - { offset: 0xD6BE4, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke', symObjAddr: 0x828, symBinAddr: 0x10000B4F0, symSize: 0x128 }
+  - { offset: 0xD6D59, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.13', symObjAddr: 0x1A64, symBinAddr: 0x100014498, symSize: 0x28 }
+  - { offset: 0xD6D71, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.12', symObjAddr: 0x1A3C, symBinAddr: 0x100014470, symSize: 0x28 }
+  - { offset: 0xD6D89, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.1', symObjAddr: 0x1894, symBinAddr: 0x1000142C8, symSize: 0x28 }
+  - { offset: 0xD6DA1, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.11', symObjAddr: 0x1A14, symBinAddr: 0x100014448, symSize: 0x28 }
+  - { offset: 0xD6DB9, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.5', symObjAddr: 0x1934, symBinAddr: 0x100014368, symSize: 0x28 }
+  - { offset: 0xD6DD1, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.10', symObjAddr: 0x19EC, symBinAddr: 0x100014420, symSize: 0x28 }
+  - { offset: 0xD6DE9, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.4', symObjAddr: 0x190C, symBinAddr: 0x100014340, symSize: 0x28 }
+  - { offset: 0xD6E01, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.6', symObjAddr: 0x195C, symBinAddr: 0x100014390, symSize: 0x28 }
+  - { offset: 0xD6E19, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.2', symObjAddr: 0x18BC, symBinAddr: 0x1000142F0, symSize: 0x28 }
+  - { offset: 0xD6E31, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.7', symObjAddr: 0x1984, symBinAddr: 0x1000143B8, symSize: 0x28 }
+  - { offset: 0xD6E49, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.3', symObjAddr: 0x18E4, symBinAddr: 0x100014318, symSize: 0x28 }
+  - { offset: 0xD6E61, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.8', symObjAddr: 0x19AC, symBinAddr: 0x1000143E0, symSize: 0x28 }
+  - { offset: 0xD6E79, size: 0x8, addend: 0x0, symName: '___59-[SUTestApplicationDelegate applicationDidFinishLaunching:]_block_invoke_2.cold.9', symObjAddr: 0x19D4, symBinAddr: 0x100014408, symSize: 0x18 }
+  - { offset: 0xD6E91, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40s48s56s64s72s80s88s, symObjAddr: 0x1318, symBinAddr: 0x10000BFE0, symSize: 0x58 }
+  - { offset: 0xD6EBA, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s48s56s64s72s80s88s, symObjAddr: 0x1370, symBinAddr: 0x10000C038, symSize: 0x58 }
+  - { offset: 0xD6ED9, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate allowedChannelsForUpdater:]', symObjAddr: 0x150C, symBinAddr: 0x10000C090, symSize: 0x88 }
+  - { offset: 0xD6F1E, size: 0x8, addend: 0x0, symName: '___72-[SUTestApplicationDelegate signApplicationIfRequiredAtPath:completion:]_block_invoke', symObjAddr: 0x1594, symBinAddr: 0x10000C118, symSize: 0x34 }
+  - { offset: 0xD6F8D, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40b, symObjAddr: 0x15C8, symBinAddr: 0x10000C14C, symSize: 0x34 }
+  - { offset: 0xD6F98, size: 0x8, addend: 0x0, symName: '___72-[SUTestApplicationDelegate signApplicationIfRequiredAtPath:completion:]_block_invoke.cold.1', symObjAddr: 0x1A8C, symBinAddr: 0x1000144C0, symSize: 0x28 }
+  - { offset: 0xD6FB0, size: 0x8, addend: 0x0, symName: ___copy_helper_block_e8_32s40b, symObjAddr: 0x15C8, symBinAddr: 0x10000C14C, symSize: 0x34 }
+  - { offset: 0xD6FD9, size: 0x8, addend: 0x0, symName: ___destroy_helper_block_e8_32s40s, symObjAddr: 0x15FC, symBinAddr: 0x10000C180, symSize: 0x28 }
+  - { offset: 0xD6FF8, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate applicationWillTerminate:]', symObjAddr: 0x1624, symBinAddr: 0x10000C1A8, symSize: 0x8 }
+  - { offset: 0xD7039, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate checkForUpdates:]', symObjAddr: 0x162C, symBinAddr: 0x10000C1B0, symSize: 0x8 }
+  - { offset: 0xD707A, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate validateMenuItem:]', symObjAddr: 0x1634, symBinAddr: 0x10000C1B8, symSize: 0x48 }
+  - { offset: 0xD70C3, size: 0x8, addend: 0x0, symName: '-[SUTestApplicationDelegate .cxx_destruct]', symObjAddr: 0x167C, symBinAddr: 0x10000C200, symSize: 0x48 }
+  - { offset: 0xD745F, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection initWithNativeHandle:workingDirectory:delegate:]', symObjAddr: 0x0, symBinAddr: 0x10000C248, symSize: 0x1A4 }
+  - { offset: 0xD7756, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection initWithNativeHandle:workingDirectory:delegate:]', symObjAddr: 0x0, symBinAddr: 0x10000C248, symSize: 0x1A4 }
+  - { offset: 0xD7832, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection close]', symObjAddr: 0x1A4, symBinAddr: 0x10000C3EC, symSize: 0x124 }
+  - { offset: 0xD7865, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection initWithNativeHandle:workingDirectory:delegate:].cold.5', symObjAddr: 0xD94, symBinAddr: 0x1000147DC, symSize: 0x28 }
+  - { offset: 0xD787D, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection initWithNativeHandle:workingDirectory:delegate:].cold.4', symObjAddr: 0xD6C, symBinAddr: 0x1000147B4, symSize: 0x28 }
+  - { offset: 0xD7895, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection initWithNativeHandle:workingDirectory:delegate:].cold.3', symObjAddr: 0xD44, symBinAddr: 0x10001478C, symSize: 0x28 }
+  - { offset: 0xD78AD, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection initWithNativeHandle:workingDirectory:delegate:].cold.2', symObjAddr: 0xD1C, symBinAddr: 0x100014764, symSize: 0x28 }
+  - { offset: 0xD78C5, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection initWithNativeHandle:workingDirectory:delegate:].cold.1', symObjAddr: 0xCF4, symBinAddr: 0x10001473C, symSize: 0x28 }
+  - { offset: 0xD78DD, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection close]', symObjAddr: 0x1A4, symBinAddr: 0x10000C3EC, symSize: 0x124 }
+  - { offset: 0xD792A, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection close].cold.1', symObjAddr: 0xDBC, symBinAddr: 0x100014804, symSize: 0x28 }
+  - { offset: 0xD7942, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection stream:handleEvent:]', symObjAddr: 0x2C8, symBinAddr: 0x10000C510, symSize: 0x324 }
+  - { offset: 0xD7ADA, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection checkIfCanWriteNow]', symObjAddr: 0x734, symBinAddr: 0x10000C834, symSize: 0x28 }
+  - { offset: 0xD7B12, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection queueWrite:]', symObjAddr: 0x75C, symBinAddr: 0x10000C85C, symSize: 0x70 }
+  - { offset: 0xD7B2D, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection write:status:]', symObjAddr: 0x640, symBinAddr: 0x10001453C, symSize: 0xF4 }
+  - { offset: 0xD7BC1, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection write404]', symObjAddr: 0x5EC, symBinAddr: 0x1000144E8, symSize: 0x54 }
+  - { offset: 0xD7C1B, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection queueWrite:]', symObjAddr: 0x75C, symBinAddr: 0x10000C85C, symSize: 0x70 }
+  - { offset: 0xD7C95, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection writeNow]', symObjAddr: 0x7CC, symBinAddr: 0x10000C8CC, symSize: 0xB4 }
+  - { offset: 0xD7CA0, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection checkIfCanWriteNow].cold.2', symObjAddr: 0xE0C, symBinAddr: 0x100014854, symSize: 0x54 }
+  - { offset: 0xD7CB8, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection checkIfCanWriteNow].cold.1', symObjAddr: 0xDE4, symBinAddr: 0x10001482C, symSize: 0x28 }
+  - { offset: 0xD7CD0, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection queueWrite:].cold.4', symObjAddr: 0xED8, symBinAddr: 0x100014920, symSize: 0x3C }
+  - { offset: 0xD7CE8, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection queueWrite:].cold.1', symObjAddr: 0xE60, symBinAddr: 0x1000148A8, symSize: 0x28 }
+  - { offset: 0xD7D00, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection queueWrite:].cold.3', symObjAddr: 0xEB0, symBinAddr: 0x1000148F8, symSize: 0x28 }
+  - { offset: 0xD7D18, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection queueWrite:].cold.2', symObjAddr: 0xE88, symBinAddr: 0x1000148D0, symSize: 0x28 }
+  - { offset: 0xD7D30, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection writeNow]', symObjAddr: 0x7CC, symBinAddr: 0x10000C8CC, symSize: 0xB4 }
+  - { offset: 0xD7DC5, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection writeNow].cold.5', symObjAddr: 0xFB4, symBinAddr: 0x1000149FC, symSize: 0x64 }
+  - { offset: 0xD7DDD, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection writeNow].cold.4', symObjAddr: 0xF8C, symBinAddr: 0x1000149D4, symSize: 0x28 }
+  - { offset: 0xD7DF5, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection writeNow].cold.1', symObjAddr: 0xF14, symBinAddr: 0x10001495C, symSize: 0x28 }
+  - { offset: 0xD7E0D, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection writeNow].cold.3', symObjAddr: 0xF64, symBinAddr: 0x1000149AC, symSize: 0x28 }
+  - { offset: 0xD7E25, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection writeNow].cold.2', symObjAddr: 0xF3C, symBinAddr: 0x100014984, symSize: 0x28 }
+  - { offset: 0xD7E3D, size: 0x8, addend: 0x0, symName: '-[SUTestWebServerConnection .cxx_destruct]', symObjAddr: 0x880, symBinAddr: 0x10000C980, symSize: 0x50 }
+  - { offset: 0xD7E70, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer initWithPort:workingDirectory:]', symObjAddr: 0x8D0, symBinAddr: 0x10000C9D0, symSize: 0x1B4 }
+  - { offset: 0xD8023, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer initWithPort:workingDirectory:].cold.4', symObjAddr: 0x1090, symBinAddr: 0x100014AD8, symSize: 0x44 }
+  - { offset: 0xD803B, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer initWithPort:workingDirectory:].cold.5', symObjAddr: 0x10D4, symBinAddr: 0x100014B1C, symSize: 0x64 }
+  - { offset: 0xD8053, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer initWithPort:workingDirectory:].cold.3', symObjAddr: 0x1068, symBinAddr: 0x100014AB0, symSize: 0x28 }
+  - { offset: 0xD806B, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer initWithPort:workingDirectory:].cold.2', symObjAddr: 0x1040, symBinAddr: 0x100014A88, symSize: 0x28 }
+  - { offset: 0xD8083, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer initWithPort:workingDirectory:].cold.1', symObjAddr: 0x1018, symBinAddr: 0x100014A60, symSize: 0x28 }
+  - { offset: 0xD809B, size: 0x8, addend: 0x0, symName: _connectCallback, symObjAddr: 0xA84, symBinAddr: 0x10000CB84, symSize: 0x38 }
+  - { offset: 0xD8130, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer connectionDidClose:]', symObjAddr: 0xABC, symBinAddr: 0x10000CBBC, symSize: 0x54 }
+  - { offset: 0xD813B, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer accept:]', symObjAddr: 0xB10, symBinAddr: 0x10000CC10, symSize: 0x70 }
+  - { offset: 0xD81BC, size: 0x8, addend: 0x0, symName: _connectCallback.cold.2, symObjAddr: 0x1160, symBinAddr: 0x100014BA8, symSize: 0x28 }
+  - { offset: 0xD81D4, size: 0x8, addend: 0x0, symName: _connectCallback.cold.1, symObjAddr: 0x1138, symBinAddr: 0x100014B80, symSize: 0x28 }
+  - { offset: 0xD81EC, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer connectionDidClose:]', symObjAddr: 0xABC, symBinAddr: 0x10000CBBC, symSize: 0x54 }
+  - { offset: 0xD8240, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer accept:]', symObjAddr: 0xB10, symBinAddr: 0x10000CC10, symSize: 0x70 }
+  - { offset: 0xD824B, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer connectionDidClose:].cold.2', symObjAddr: 0x11B0, symBinAddr: 0x100014BF8, symSize: 0x28 }
+  - { offset: 0xD8263, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer connectionDidClose:].cold.1', symObjAddr: 0x1188, symBinAddr: 0x100014BD0, symSize: 0x28 }
+  - { offset: 0xD827B, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer accept:].cold.2', symObjAddr: 0x1200, symBinAddr: 0x100014C48, symSize: 0x28 }
+  - { offset: 0xD8293, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer accept:].cold.1', symObjAddr: 0x11D8, symBinAddr: 0x100014C20, symSize: 0x28 }
+  - { offset: 0xD82AB, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer close]', symObjAddr: 0xB80, symBinAddr: 0x100014630, symSize: 0x10C }
+  - { offset: 0xD833A, size: 0x8, addend: 0x0, symName: '-[SUTestWebServer .cxx_destruct]', symObjAddr: 0xCC4, symBinAddr: 0x10000CC80, symSize: 0x30 }
+  - { offset: 0xD83DD, size: 0x8, addend: 0x0, symName: '-[SUUpdateSettingsWindowController windowNibName]', symObjAddr: 0x0, symBinAddr: 0x10000CCB0, symSize: 0x14 }
+  - { offset: 0xD841E, size: 0x8, addend: 0x0, symName: '-[SUUpdateSettingsWindowController windowNibName]', symObjAddr: 0x0, symBinAddr: 0x10000CCB0, symSize: 0x14 }
+  - { offset: 0xD848E, size: 0x8, addend: 0x0, symName: '-[SUUpdateSettingsWindowController updater]', symObjAddr: 0x14, symBinAddr: 0x10000CCC4, symSize: 0x10 }
+  - { offset: 0xD84C5, size: 0x8, addend: 0x0, symName: '-[SUUpdateSettingsWindowController setUpdater:]', symObjAddr: 0x24, symBinAddr: 0x10000CCD4, symSize: 0x14 }
+  - { offset: 0xD8506, size: 0x8, addend: 0x0, symName: '-[SUUpdateSettingsWindowController .cxx_destruct]', symObjAddr: 0x38, symBinAddr: 0x10000CCE8, symSize: 0x14 }
+...

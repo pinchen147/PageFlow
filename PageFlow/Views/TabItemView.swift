@@ -11,10 +11,7 @@ struct TabItemView: View {
     let tab: TabModel
     let isActive: Bool
     let isDirty: Bool
-    let onSelect: () -> Void
-    let onClose: () -> Void
-
-    @State private var isHovering = false
+    let isHovering: Bool
 
     var body: some View {
         HStack(spacing: DesignTokens.spacingXS) {
@@ -33,16 +30,10 @@ struct TabItemView: View {
             }
 
             if isHovering || isActive {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                .buttonStyle(.plain)
-                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-                .onHover { hovering in
-                    (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-                }
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
             }
         }
         .padding(.horizontal, DesignTokens.spacingSM)
@@ -58,12 +49,6 @@ struct TabItemView: View {
         )
         .shadow(color: .black.opacity(0.1), radius: isActive ? 8 : 4, y: isActive ? 4 : 2)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            isHovering = hovering
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
-        .onTapGesture {
-            onSelect()
-        }
+        // Gesture handling moved to TabBarView for unified tap/drag detection
     }
 }

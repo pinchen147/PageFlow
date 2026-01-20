@@ -13,6 +13,12 @@ import PDFKit
 @Observable
 @MainActor
 final class CommentManager {
+    deinit {
+        #if DEBUG
+        Swift.print("[deinit] CommentManager")
+        #endif
+    }
+
     // MARK: - State
 
     var comments: [CommentModel] = []
@@ -21,16 +27,27 @@ final class CommentManager {
 
     private weak var pdfManager: PDFManager?
     private var selectionProvider: (() -> (PDFSelection?, PDFPage?))?
+    private var undoManagerProvider: (() -> UndoManager?)?
     private var highlights: [UUID: PDFAnnotation] = [:]
 
     // MARK: - Configuration
 
     func configure(
         pdfManager: PDFManager,
-        selectionProvider: @escaping () -> (PDFSelection?, PDFPage?)
+        selectionProvider: @escaping () -> (PDFSelection?, PDFPage?),
+        undoManagerProvider: @escaping () -> UndoManager?
     ) {
         self.pdfManager = pdfManager
         self.selectionProvider = selectionProvider
+        self.undoManagerProvider = undoManagerProvider
+    }
+
+    private func getUndoManager(for action: String) -> UndoManager? {
+        guard let undoManager = undoManagerProvider?() else {
+            assertionFailure("UndoManager unavailable for: \(action)")
+            return nil
+        }
+        return undoManager
     }
 
     // MARK: - Actions
@@ -53,6 +70,7 @@ final class CommentManager {
 
         let commentID = UUID()
         highlight.userName = commentID.uuidString
+        highlight.modificationDate = Date()
 
         page.addAnnotation(highlight)
 
@@ -68,6 +86,7 @@ final class CommentManager {
         selectedCommentID = commentID
         editingCommentID = commentID
         pdfManager?.isDirty = true
+        pdfManager?.pageVersion += 1
 
         registerUndoAdd(model, highlight: highlight, page: page)
         return commentID
@@ -77,12 +96,13 @@ final class CommentManager {
         guard let index = comments.firstIndex(where: { $0.id == id }) else {
             return
         }
-
-        let oldText = comments[index].text
         comments[index].text = text
+        if let highlight = highlights[id] {
+            highlight.contents = text
+        } else {
+            assertionFailure("Orphaned comment: highlight missing for ID \(id)")
+        }
         pdfManager?.isDirty = true
-
-        registerUndoUpdate(id, oldText: oldText, newText: text)
     }
 
     func deleteComment(_ id: UUID) {
@@ -102,6 +122,7 @@ final class CommentManager {
         if selectedCommentID == id { selectedCommentID = nil }
         if editingCommentID == id { editingCommentID = nil }
         pdfManager?.isDirty = true
+        pdfManager?.pageVersion += 1
 
         if let page {
             registerUndoDelete(comment, highlight: highlight, page: page)
@@ -151,14 +172,19 @@ final class CommentManager {
             let commentHighlights = page.annotations.filter(isCommentHighlight)
 
             for highlight in commentHighlights {
-                let commentID = UUID(uuidString: highlight.userName ?? "") ?? UUID()
-                highlight.userName = commentID.uuidString
+                let existingUUID = highlight.userName.flatMap { UUID(uuidString: $0) }
+                let commentID = existingUUID ?? UUID()
+                if existingUUID == nil {
+                    // Regenerating UUID for comment with missing/invalid userName
+                    highlight.userName = commentID.uuidString
+                }
 
                 let model = CommentModel(
                     id: commentID,
                     text: highlight.contents ?? "",
                     pageIndex: pageIndex,
-                    bounds: highlight.bounds
+                    bounds: highlight.bounds,
+                    createdAt: highlight.modificationDate ?? Date()
                 )
 
                 comments.append(model)
@@ -203,7 +229,7 @@ final class CommentManager {
 
         let highlight = PDFAnnotation(bounds: union, forType: .highlight, withProperties: nil)
         highlight.markupType = .highlight
-        highlight.color = DesignTokens.commentHighlightColor
+        highlight.color = SettingsManager.shared.commentPresets.first?.color ?? DesignTokens.commentHighlightColor
         highlight.quadrilateralPoints = buildQuadPoints(from: rects, relativeTo: union)
         return highlight
     }
@@ -225,9 +251,11 @@ final class CommentManager {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         color.getRed(&r, green: &g, blue: &b, alpha: &a)
 
-        let target = DesignTokens.commentHighlightColor.usingColorSpace(.deviceRGB)
+        guard let target = DesignTokens.commentHighlightColor.usingColorSpace(.deviceRGB) else {
+            return false
+        }
         var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
-        target?.getRed(&tr, green: &tg, blue: &tb, alpha: &ta)
+        target.getRed(&tr, green: &tg, blue: &tb, alpha: &ta)
 
         let tolerance: CGFloat = 0.1
         let matches =
@@ -241,65 +269,81 @@ final class CommentManager {
     // MARK: - Undo/Redo
 
     private func registerUndoAdd(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
+        guard let undoManager = getUndoManager(for: "Add Comment") else { return }
 
-        undoManager.registerUndo(withTarget: self) { target in
-            target.undoAdd(comment, highlight: highlight, page: page)
+        undoManager.registerUndo(withTarget: self) { [weak highlight, weak page] target in
+            MainActor.assumeIsolated {
+                guard let highlight = highlight, let page = page else { return }
+                target.undoAdd(comment, highlight: highlight, page: page)
+            }
         }
         undoManager.setActionName("Add Comment")
     }
 
     private func undoAdd(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
+        // Capture current text before removing (user may have edited since creation)
+        let currentText = comments.first { $0.id == comment.id }?.text ?? comment.text
+        let updatedComment = CommentModel(
+            id: comment.id,
+            text: currentText,
+            pageIndex: comment.pageIndex,
+            bounds: comment.bounds
+        )
+
         page.removeAnnotation(highlight)
         comments.removeAll { $0.id == comment.id }
         highlights.removeValue(forKey: comment.id)
         if selectedCommentID == comment.id { selectedCommentID = nil }
         if editingCommentID == comment.id { editingCommentID = nil }
         pdfManager?.isDirty = true
+        pdfManager?.pageVersion += 1
 
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
-        undoManager.registerUndo(withTarget: self) { target in
-            target.redoAdd(comment, highlight: highlight, page: page)
+        guard let undoManager = getUndoManager(for: "Add Comment") else { return }
+        undoManager.registerUndo(withTarget: self) { [weak highlight, weak page] target in
+            MainActor.assumeIsolated {
+                guard let highlight = highlight, let page = page else { return }
+                target.redoAdd(updatedComment, highlight: highlight, page: page)
+            }
         }
         undoManager.setActionName("Add Comment")
     }
 
     private func redoAdd(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
         page.addAnnotation(highlight)
+        highlight.contents = comment.text
         comments.append(comment)
         highlights[comment.id] = highlight
         pdfManager?.isDirty = true
+        pdfManager?.pageVersion += 1
 
         registerUndoAdd(comment, highlight: highlight, page: page)
     }
 
-    private func registerUndoUpdate(_ id: UUID, oldText: String, newText: String) {
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
-
-        undoManager.registerUndo(withTarget: self) { target in
-            target.updateComment(id, text: oldText)
-        }
-        undoManager.setActionName("Edit Comment")
-    }
-
     private func registerUndoDelete(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
+        guard let undoManager = getUndoManager(for: "Delete Comment") else { return }
 
-        undoManager.registerUndo(withTarget: self) { target in
-            target.undoDelete(comment, highlight: highlight, page: page)
+        undoManager.registerUndo(withTarget: self) { [weak highlight, weak page] target in
+            MainActor.assumeIsolated {
+                guard let highlight = highlight, let page = page else { return }
+                target.undoDelete(comment, highlight: highlight, page: page)
+            }
         }
         undoManager.setActionName("Delete Comment")
     }
 
     private func undoDelete(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
         page.addAnnotation(highlight)
+        highlight.contents = comment.text
         comments.append(comment)
         highlights[comment.id] = highlight
         pdfManager?.isDirty = true
+        pdfManager?.pageVersion += 1
 
-        guard let undoManager = NSApp.keyWindow?.undoManager else { return }
+        guard let undoManager = getUndoManager(for: "Delete Comment") else { return }
         undoManager.registerUndo(withTarget: self) { target in
-            target.deleteComment(comment.id)
+            MainActor.assumeIsolated {
+                target.deleteComment(comment.id)
+            }
         }
         undoManager.setActionName("Delete Comment")
     }

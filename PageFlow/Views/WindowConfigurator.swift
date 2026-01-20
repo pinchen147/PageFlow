@@ -28,8 +28,11 @@ struct WindowConfigurator: NSViewRepresentable {
 
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = false
         window.styleMask.insert(.fullSizeContentView)
+
+        // Allow window dragging from views that return mouseDownCanMoveWindow = true
+        // DO NOT set isMovable = false - that breaks everything
+        window.isMovableByWindowBackground = false
 
         // Set window background to match PDF viewer
         window.backgroundColor = DesignTokens.viewerBackground

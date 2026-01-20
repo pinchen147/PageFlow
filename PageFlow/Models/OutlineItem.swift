@@ -37,4 +37,21 @@ struct OutlineItem: Identifiable {
         }
         children = items.isEmpty ? nil : items
     }
+
+    /// Calculates the page range for this outline section
+    func pageRange(in document: PDFDocument, siblings: [OutlineItem]) -> Range<Int> {
+        guard let start = pageIndex, start < document.pageCount else {
+            return 0..<0
+        }
+
+        // Find next sibling's page to determine end boundary
+        if let selfIndex = siblings.firstIndex(where: { $0.id == id }),
+           selfIndex + 1 < siblings.count,
+           let nextPage = siblings[selfIndex + 1].pageIndex,
+           nextPage > start {
+            return start..<nextPage
+        }
+
+        return start..<document.pageCount
+    }
 }

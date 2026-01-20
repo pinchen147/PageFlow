@@ -12,15 +12,16 @@ struct FloatingToolbar: View {
     @Bindable var annotationManager: AnnotationManager
     @Bindable var commentManager: CommentManager
     @Bindable var bookmarkManager: BookmarkManager
-    @Binding var showingFileImporter: Bool
+    var onOpenFilePicker: () -> Void
     @Binding var isTopBarHovered: Bool
     @Binding var showingOutline: Bool
     @Binding var showingComments: Bool
+    var toolbarPinned: Bool
     @State private var lastFitTapTime: Date?
     private let doubleTapWindow: TimeInterval = 0.3
 
     var body: some View {
-        let isVisible = isTopBarHovered
+        let isVisible = toolbarPinned || isTopBarHovered
 
         expandedContainer
         .frame(height: DesignTokens.collapsedToolbarSize)
@@ -49,7 +50,7 @@ struct FloatingToolbar: View {
 
     private var expandedToolbar: some View {
         HStack(spacing: DesignTokens.spacingXS) {
-            toolbarButton(icon: "doc", action: { showingFileImporter = true })
+            toolbarButton(icon: "doc", action: onOpenFilePicker)
             Divider().frame(height: 16)
             toolbarButton(
                 icon: pdfManager.interactionMode == .pan ? "cursorarrow" : "hand.raised",
@@ -98,6 +99,9 @@ struct FloatingToolbar: View {
                 disabled: !pdfManager.hasDocument
             )
             Divider().frame(height: 16)
+            toolbarButton(icon: "arrow.uturn.backward", action: { pdfManager.goBack() }, disabled: !pdfManager.canGoBack)
+            toolbarButton(icon: "arrow.uturn.forward", action: { pdfManager.goForward() }, disabled: !pdfManager.canGoForward)
+            Divider().frame(height: 16)
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
             toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
         }
@@ -105,36 +109,17 @@ struct FloatingToolbar: View {
         .padding(.vertical, DesignTokens.spacingXS)
     }
 
-    private var underlinePalette: [(String, NSColor)] {
-        [
-            ("Black", DesignTokens.underlineColor),
-            ("Yellow", DesignTokens.underlineYellow),
-            ("Green", DesignTokens.underlineGreen),
-            ("Red", DesignTokens.underlineRed),
-            ("Blue", DesignTokens.underlineBlue)
-        ]
-    }
-
-    private var highlightPalette: [(String, NSColor)] {
-        [
-            ("Yellow", DesignTokens.highlightYellow),
-            ("Green", DesignTokens.highlightGreen),
-            ("Red", DesignTokens.highlightRed),
-            ("Blue", DesignTokens.highlightBlue)
-        ]
-    }
-
     private var colorMenu: some View {
         Menu {
             Text("Underline").font(.caption)
-            ForEach(underlinePalette, id: \.0) { label, color in
+            ForEach(SettingsManager.shared.underlinePresets) { preset in
                 Button {
-                    annotationManager.underlineColor = color
+                    annotationManager.underlineColor = preset.color
                 } label: {
                     HStack {
-                        Circle().fill(Color(nsColor: color)).frame(width: 12, height: 12)
-                        Text(label)
-                        if color.isEqual(to: annotationManager.underlineColor) {
+                        Circle().fill(Color(nsColor: preset.color)).frame(width: 12, height: 12)
+                        Text(preset.name)
+                        if preset.color.isEqual(to: annotationManager.underlineColor) {
                             Spacer()
                             Image(systemName: "checkmark")
                         }
@@ -143,14 +128,14 @@ struct FloatingToolbar: View {
             }
             Divider()
             Text("Highlight").font(.caption)
-            ForEach(highlightPalette, id: \.0) { label, color in
+            ForEach(SettingsManager.shared.highlightPresets) { preset in
                 Button {
-                    annotationManager.highlightColor = color
+                    annotationManager.highlightColor = preset.color
                 } label: {
                     HStack {
-                        Circle().fill(Color(nsColor: color)).frame(width: 12, height: 12)
-                        Text(label)
-                        if color.isEqual(to: annotationManager.highlightColor) {
+                        Circle().fill(Color(nsColor: preset.color)).frame(width: 12, height: 12)
+                        Text(preset.name)
+                        if preset.color.isEqual(to: annotationManager.highlightColor) {
                             Spacer()
                             Image(systemName: "checkmark")
                         }

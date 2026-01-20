@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PDFKit
+import UniformTypeIdentifiers
 
 @main
 struct PageFlowApp: App {
@@ -17,10 +18,8 @@ struct PageFlowApp: App {
 
     @FocusedValue(\.tabManager) private var focusedTabManager
     @FocusedValue(\.showingSearch) private var focusedShowingSearch
+    @FocusedValue(\.showingToolbar) private var focusedShowingToolbar
     @FocusedValue(\.showingOutline) private var focusedShowingOutline
-    @FocusedValue(\.showingComments) private var focusedShowingComments
-    @FocusedValue(\.showingGoToPage) private var focusedShowingGoToPage
-    @FocusedValue(\.showingFileImporter) private var focusedShowingFileImporter
 
     #if ENABLE_SPARKLE
     @State private var updateManager = UpdateManager()
@@ -38,19 +37,32 @@ struct PageFlowApp: App {
         focusedTabManager?.activePDFManager
     }
 
+    private var isEditingPages: Bool {
+        focusedTabManager?.isEditingPages ?? false
+    }
+
+    private var pageCount: Int {
+        pdfManager?.pageCount ?? 0
+    }
+
     private var showingSidebarLabel: String {
-        (focusedShowingOutline?.wrappedValue == true) ? "Hide Sidebar" : "Show Sidebar"
+        "Toggle Sidebar"  // Static to prevent body re-evaluation
     }
 
     private var showingCommentsLabel: String {
-        (focusedShowingComments?.wrappedValue == true) ? "Hide Comments" : "Show Comments"
+        (focusedTabManager?.showingComments == true) ? "Hide Comments" : "Show Comments"
+    }
+
+    private var showingToolbarLabel: String {
+        (focusedShowingToolbar?.wrappedValue == true) ? "Hide Toolbar" : "Show Toolbar"
     }
 
     // MARK: - Body
 
     var body: some Scene {
         WindowGroup {
-            TabContainerView(recentFilesManager: recentFilesManager)
+            TabContainerView()
+                .environment(recentFilesManager)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -86,7 +98,7 @@ struct PageFlowApp: App {
                 Divider()
 
                 Button("Open…") {
-                    focusedShowingFileImporter?.wrappedValue = true
+                    focusedTabManager?.openFilePicker()
                 }
                 .keyboardShortcut("o", modifiers: .command)
                 .disabled(focusedTabManager == nil)
@@ -119,13 +131,13 @@ struct PageFlowApp: App {
             // MARK: File Menu - Save/Print
             CommandGroup(after: .importExport) {
                 Button("Save") {
-                    handleSave()
+                    Task { await handleSave() }
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!hasDocument)
 
                 Button("Save As…") {
-                    handleSaveAs()
+                    Task { await handleSaveAs() }
                 }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!hasDocument)
@@ -165,6 +177,42 @@ struct PageFlowApp: App {
                 }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(!hasDocument)
+
+                Divider()
+
+                Button("Delete Page") {
+                    guard let manager = pdfManager,
+                          manager.pageCount > 1 else { return }
+                    manager.deletePage(at: manager.currentPageIndex)
+                }
+                .keyboardShortcut(for: "deletePage")
+                .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
+
+                Divider()
+
+                // Copy/Cut/Paste shortcuts displayed in menu; actual key handling via TabManager
+                // event monitor to avoid conflict with system clipboard when not in edit mode.
+                Button("Copy Page") {
+                    guard let manager = pdfManager else { return }
+                    manager.copyPage(at: manager.currentPageIndex)
+                }
+                .keyboardShortcut(for: "copyPage")
+                .disabled(!hasDocument || !isEditingPages)
+
+                Button("Cut Page") {
+                    guard let manager = pdfManager,
+                          manager.pageCount > 1 else { return }
+                    manager.cutPage(at: manager.currentPageIndex)
+                }
+                .keyboardShortcut(for: "cutPage")
+                .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
+
+                Button("Paste Page") {
+                    guard let manager = pdfManager else { return }
+                    _ = manager.pastePage(after: manager.currentPageIndex)
+                }
+                .keyboardShortcut(for: "pastePage")
+                .disabled(!hasDocument || !isEditingPages || !(pdfManager?.canPaste ?? false))
             }
 
             // MARK: View Menu
@@ -172,26 +220,26 @@ struct PageFlowApp: App {
                 Button("Zoom In") {
                     pdfManager?.zoomIn()
                 }
-                .keyboardShortcut("+", modifiers: .command)
+                .keyboardShortcut(for: "zoomIn")
                 .disabled(!hasDocument)
 
                 Button("Zoom Out") {
                     pdfManager?.zoomOut()
                 }
-                .keyboardShortcut("-", modifiers: .command)
+                .keyboardShortcut(for: "zoomOut")
                 .disabled(!hasDocument)
 
                 Button("Actual Size") {
                     pdfManager?.resetZoom()
                 }
-                .keyboardShortcut("0", modifiers: .command)
+                .keyboardShortcut(for: "actualSize")
                 .disabled(!hasDocument)
 
                 Button("Zoom to Fit") {
                     pdfManager?.requestFitOnce()
                     pdfManager?.scaleNeedsUpdate = true
                 }
-                .keyboardShortcut("9", modifiers: .command)
+                .keyboardShortcut(for: "zoomToFit")
                 .disabled(!hasDocument)
 
                 Divider()
@@ -227,20 +275,22 @@ struct PageFlowApp: App {
                 Divider()
 
                 Button(showingSidebarLabel) {
-                    withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                        focusedShowingOutline?.wrappedValue.toggle()
-                    }
+                    focusedTabManager?.showingOutline.toggle()
                 }
                 .keyboardShortcut("s", modifiers: [.command, .option])
                 .disabled(!hasDocument)
 
                 Button(showingCommentsLabel) {
-                    withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                        focusedShowingComments?.wrappedValue.toggle()
-                    }
+                    focusedTabManager?.showingComments.toggle()
                 }
-                .keyboardShortcut("c", modifiers: [.command, .option])
+                .keyboardShortcut("e", modifiers: [.command, .option])
                 .disabled(!hasDocument)
+
+                Button(showingToolbarLabel) {
+                    focusedShowingToolbar?.wrappedValue.toggle()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+                .disabled(focusedTabManager == nil)
 
                 Divider()
 
@@ -252,16 +302,30 @@ struct PageFlowApp: App {
 
             // MARK: Go Menu
             CommandMenu("Go") {
+                Button("Back") {
+                    pdfManager?.goBack()
+                }
+                .keyboardShortcut(for: "goBack")
+                .disabled(!(pdfManager?.canGoBack ?? false))
+
+                Button("Forward") {
+                    pdfManager?.goForward()
+                }
+                .keyboardShortcut(for: "goForward")
+                .disabled(!(pdfManager?.canGoForward ?? false))
+
+                Divider()
+
                 Button("Next Page") {
                     pdfManager?.nextPage()
                 }
-                .keyboardShortcut(.downArrow, modifiers: .command)
+                .keyboardShortcut(for: "nextPage")
                 .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) >= (pdfManager?.pageCount ?? 1) - 1)
 
                 Button("Previous Page") {
                     pdfManager?.previousPage()
                 }
-                .keyboardShortcut(.upArrow, modifiers: .command)
+                .keyboardShortcut(for: "previousPage")
                 .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) == 0)
 
                 Divider()
@@ -281,9 +345,10 @@ struct PageFlowApp: App {
                 Divider()
 
                 Button("Go to Page…") {
-                    focusedShowingGoToPage?.wrappedValue = true
+                    guard let tabManager = focusedTabManager else { return }
+                    tabManager.showingGoToPage.toggle()
                 }
-                .keyboardShortcut("g", modifiers: [.command, .option])
+                .keyboardShortcut(for: "goToPage")
                 .disabled(!hasDocument)
             }
 
@@ -304,19 +369,19 @@ struct PageFlowApp: App {
                 Button("Highlight Selection") {
                     focusedTabManager?.activeAnnotationManager?.highlightSelection()
                 }
-                .keyboardShortcut("y", modifiers: .command)
+                .keyboardShortcut(for: "highlight")
                 .disabled(!hasDocument)
 
                 Button("Underline Selection") {
                     focusedTabManager?.activeAnnotationManager?.underlineSelection()
                 }
-                .keyboardShortcut("u", modifiers: .command)
+                .keyboardShortcut(for: "underline")
                 .disabled(!hasDocument)
 
                 Button("Add Comment") {
                     _ = focusedTabManager?.activeCommentManager?.addComment()
                 }
-                .keyboardShortcut("e", modifiers: .command)
+                .keyboardShortcut(for: "comment")
                 .disabled(!hasDocument)
 
                 Divider()
@@ -327,7 +392,7 @@ struct PageFlowApp: App {
                         manager.toggleBookmark(at: pageIndex)
                     }
                 }
-                .keyboardShortcut("d", modifiers: .command)
+                .keyboardShortcut(for: "bookmark")
                 .disabled(!hasDocument)
 
                 Divider()
@@ -335,13 +400,38 @@ struct PageFlowApp: App {
                 Button("Rotate Clockwise") {
                     pdfManager?.rotateClockwise()
                 }
-                .keyboardShortcut("r", modifiers: .command)
+                .keyboardShortcut(for: "rotateClockwise")
                 .disabled(!hasDocument)
 
                 Button("Rotate Counter-Clockwise") {
                     pdfManager?.rotateCounterClockwise()
                 }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .keyboardShortcut(for: "rotateCounterClockwise")
+                .disabled(!hasDocument)
+
+                Divider()
+
+                Button("Copy Page as Markdown") {
+                    copyCurrentPageAsMarkdown()
+                }
+                .keyboardShortcut(for: "copyPageAsMarkdown")
+                .disabled(!hasDocument)
+
+                Button("Copy Document as Markdown") {
+                    copyEntireDocumentAsMarkdown()
+                }
+                .keyboardShortcut(for: "copyDocumentAsMarkdown")
+                .disabled(!hasDocument)
+
+                Menu("Save as Markdown") {
+                    Button("Current Page…") {
+                        savePageAsMarkdownFile()
+                    }
+
+                    Button("Entire Document…") {
+                        saveAsMarkdownFile()
+                    }
+                }
                 .disabled(!hasDocument)
             }
 
@@ -370,6 +460,11 @@ struct PageFlowApp: App {
                 }
             }
         }
+
+        // MARK: Settings Window
+        Settings {
+            SettingsView()
+        }
     }
 
     // MARK: - Helper Methods
@@ -379,15 +474,17 @@ struct PageFlowApp: App {
         recentFilesManager.addRecentFile(url)
     }
 
-    private func handleSave() {
-        guard let result = focusedTabManager?.saveActiveDocument() else { return }
+    private func handleSave() async {
+        guard let tabManager = focusedTabManager else { return }
+        let result = await tabManager.saveActiveDocument()
         if case .failure(let message) = result {
             showAlert(message: message)
         }
     }
 
-    private func handleSaveAs() {
-        guard let result = focusedTabManager?.saveActiveDocumentAs() else { return }
+    private func handleSaveAs() async {
+        guard let tabManager = focusedTabManager else { return }
+        let result = await tabManager.saveActiveDocumentAs()
         if case .failure(let message) = result {
             showAlert(message: message)
         }
@@ -401,6 +498,88 @@ struct PageFlowApp: App {
     }
 
     private func openNewWindow() {
-        NSApp.sendAction(#selector(NSResponder.newWindowForTab(_:)), to: nil, from: nil)
+        let contentView = TabContainerView()
+            .environment(recentFilesManager)
+        appDelegate.createNewWindow(with: contentView)
+    }
+
+    // MARK: - Markdown Export
+
+    private var comments: [CommentModel] {
+        focusedTabManager?.activeCommentManager?.comments ?? []
+    }
+
+    private func copyCurrentPageAsMarkdown() {
+        exportMarkdown(scope: .currentPage(pdfManager?.currentPageIndex ?? 0))
+    }
+
+    private func copyEntireDocumentAsMarkdown() {
+        exportMarkdown(scope: .entireDocument)
+    }
+
+    private func exportMarkdown(scope: ExportScope) {
+        guard let document = pdfManager?.document else { return }
+
+        let markdown = MarkdownExporter.export(scope: scope, document: document, comments: comments)
+        guard !markdown.isEmpty else { return }
+
+        MarkdownExporter.copyToClipboard(markdown)
+    }
+
+    private func savePageAsMarkdownFile() {
+        guard let manager = pdfManager,
+              let document = manager.document else { return }
+
+        let pageIndex = manager.currentPageIndex
+        let markdown = MarkdownExporter.export(
+            scope: .currentPage(pageIndex),
+            document: document,
+            comments: comments
+        )
+        guard !markdown.isEmpty else { return }
+
+        let filename = manager.documentURL?.deletingPathExtension().lastPathComponent ?? "document"
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = "\(filename)-page\(pageIndex + 1).md"
+        panel.canCreateDirectories = true
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try markdown.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                self.showAlert(message: "Failed to save: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func saveAsMarkdownFile() {
+        guard let manager = pdfManager,
+              let document = manager.document else { return }
+
+        let markdown = MarkdownExporter.export(
+            scope: .entireDocument,
+            document: document,
+            comments: comments
+        )
+        guard !markdown.isEmpty else { return }
+
+        let filename = manager.documentURL?.deletingPathExtension().lastPathComponent ?? "document"
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.nameFieldStringValue = "\(filename).md"
+        panel.canCreateDirectories = true
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try markdown.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                self.showAlert(message: "Failed to save: \(error.localizedDescription)")
+            }
+        }
     }
 }
