@@ -66,404 +66,437 @@ struct PageFlowApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
-            // MARK: App Menu
-            CommandGroup(after: .appInfo) {
-                Button(defaultPDFManager.isDefaultPDFReader ? "✓ Default PDF Reader" : "Set as Default PDF Reader…") {
-                    defaultPDFManager.setAsDefaultPDFReader()
-                }
-                .disabled(defaultPDFManager.isDefaultPDFReader)
-
-                #if ENABLE_SPARKLE
-                Divider()
-                Button("Check for Updates…") {
-                    updateManager.checkForUpdates()
-                }
-                .disabled(!updateManager.canCheckForUpdates)
-                #endif
-            }
-
-            // MARK: File Menu - New Items
-            CommandGroup(replacing: .newItem) {
-                Button("New Tab") {
-                    focusedTabManager?.createNewTab()
-                }
-                .keyboardShortcut("t", modifiers: .command)
-                .disabled(focusedTabManager == nil)
-
-                Button("New Window") {
-                    openNewWindow()
-                }
-                .keyboardShortcut("n", modifiers: .command)
-
-                Divider()
-
-                Button("Open…") {
-                    focusedTabManager?.openFilePicker()
-                }
-                .keyboardShortcut("o", modifiers: .command)
-                .disabled(focusedTabManager == nil)
-
-                Menu("Open Recent") {
-                    ForEach(recentFilesManager.recentFiles, id: \.self) { url in
-                        Button(url.deletingPathExtension().lastPathComponent) {
-                            openRecentFile(url)
-                        }
-                    }
-
-                    if !recentFilesManager.recentFiles.isEmpty {
-                        Divider()
-                        Button("Clear Menu") {
-                            recentFilesManager.clearRecentFiles()
-                        }
-                    }
-                }
-                .disabled(recentFilesManager.recentFiles.isEmpty)
-
-                Divider()
-
-                Button("Close Tab") {
-                    focusedTabManager?.closeActiveTab()
-                }
-                .keyboardShortcut("w", modifiers: .command)
-                .disabled(focusedTabManager?.tabs.isEmpty != false)
-            }
-
-            // MARK: File Menu - Save/Print
-            CommandGroup(after: .importExport) {
-                Button("Save") {
-                    Task { await handleSave() }
-                }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(!hasDocument)
-
-                Button("Save As…") {
-                    Task { await handleSaveAs() }
-                }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Button("Print…") {
-                    pdfManager?.print()
-                }
-                .keyboardShortcut("p", modifiers: .command)
-                .disabled(!hasDocument)
-            }
-
-            // MARK: Edit Menu - Undo/Redo
-            CommandGroup(before: .pasteboard) {
-                Button("Undo") {
-                    NSApp.sendAction(#selector(UndoManager.undo), to: nil, from: nil)
-                }
-                .keyboardShortcut("z", modifiers: .command)
-
-                Button("Redo") {
-                    NSApp.sendAction(#selector(UndoManager.redo), to: nil, from: nil)
-                }
-                .keyboardShortcut("z", modifiers: [.command, .shift])
-
-                Divider()
-            }
-
-            // MARK: Edit Menu - Find
-            CommandGroup(after: .pasteboard) {
-                Divider()
-
-                Button("Find…") {
-                    if hasDocument {
-                        focusedShowingSearch?.wrappedValue.toggle()
-                    }
-                }
-                .keyboardShortcut("f", modifiers: .command)
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Button("Delete Page") {
-                    guard let manager = pdfManager,
-                          manager.pageCount > 1 else { return }
-                    manager.deletePage(at: manager.currentPageIndex)
-                }
-                .keyboardShortcut(for: "deletePage")
-                .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
-
-                Divider()
-
-                // Copy/Cut/Paste shortcuts displayed in menu; actual key handling via TabManager
-                // event monitor to avoid conflict with system clipboard when not in edit mode.
-                Button("Copy Page") {
-                    guard let manager = pdfManager else { return }
-                    manager.copyPage(at: manager.currentPageIndex)
-                }
-                .keyboardShortcut(for: "copyPage")
-                .disabled(!hasDocument || !isEditingPages)
-
-                Button("Cut Page") {
-                    guard let manager = pdfManager,
-                          manager.pageCount > 1 else { return }
-                    manager.cutPage(at: manager.currentPageIndex)
-                }
-                .keyboardShortcut(for: "cutPage")
-                .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
-
-                Button("Paste Page") {
-                    guard let manager = pdfManager else { return }
-                    _ = manager.pastePage(after: manager.currentPageIndex)
-                }
-                .keyboardShortcut(for: "pastePage")
-                .disabled(!hasDocument || !isEditingPages || !(pdfManager?.canPaste ?? false))
-            }
-
-            // MARK: View Menu
-            CommandMenu("View") {
-                Button("Zoom In") {
-                    pdfManager?.zoomIn()
-                }
-                .keyboardShortcut(for: "zoomIn")
-                .disabled(!hasDocument)
-
-                Button("Zoom Out") {
-                    pdfManager?.zoomOut()
-                }
-                .keyboardShortcut(for: "zoomOut")
-                .disabled(!hasDocument)
-
-                Button("Actual Size") {
-                    pdfManager?.resetZoom()
-                }
-                .keyboardShortcut(for: "actualSize")
-                .disabled(!hasDocument)
-
-                Button("Zoom to Fit") {
-                    pdfManager?.requestFitOnce()
-                    pdfManager?.scaleNeedsUpdate = true
-                }
-                .keyboardShortcut(for: "zoomToFit")
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Toggle("Auto-Scale", isOn: Binding(
-                    get: { pdfManager?.isAutoScaling ?? false },
-                    set: { newValue in
-                        guard let manager = pdfManager else { return }
-                        manager.isAutoScaling = newValue
-                        if newValue {
-                            manager.requestFitOnce()
-                            manager.scaleNeedsUpdate = true
-                        }
-                    }
-                ))
-                .disabled(!hasDocument || (pdfManager?.displayMode == .twoUp || pdfManager?.displayMode == .twoUpContinuous))
-
-                Divider()
-
-                // Display Mode options
-                Picker("Display", selection: Binding(
-                    get: { pdfManager?.displayMode ?? .singlePageContinuous },
-                    set: { pdfManager?.displayMode = $0 }
-                )) {
-                    Text("Single Page").tag(PDFDisplayMode.singlePage)
-                    Text("Single Page Continuous").tag(PDFDisplayMode.singlePageContinuous)
-                    Text("Two Pages").tag(PDFDisplayMode.twoUp)
-                    Text("Two Pages Continuous").tag(PDFDisplayMode.twoUpContinuous)
-                }
-                .pickerStyle(.inline)
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Button(showingSidebarLabel) {
-                    focusedTabManager?.showingOutline.toggle()
-                }
-                .keyboardShortcut("s", modifiers: [.command, .option])
-                .disabled(!hasDocument)
-
-                Button(showingCommentsLabel) {
-                    focusedTabManager?.showingComments.toggle()
-                }
-                .keyboardShortcut("e", modifiers: [.command, .option])
-                .disabled(!hasDocument)
-
-                Button(showingToolbarLabel) {
-                    focusedShowingToolbar?.wrappedValue.toggle()
-                }
-                .keyboardShortcut("t", modifiers: [.command, .shift])
-                .disabled(focusedTabManager == nil)
-
-                Divider()
-
-                Button("Enter Full Screen") {
-                    NSApp.keyWindow?.toggleFullScreen(nil)
-                }
-                .keyboardShortcut("f", modifiers: [.command, .control])
-            }
-
-            // MARK: Go Menu
-            CommandMenu("Go") {
-                Button("Back") {
-                    pdfManager?.goBack()
-                }
-                .keyboardShortcut(for: "goBack")
-                .disabled(!(pdfManager?.canGoBack ?? false))
-
-                Button("Forward") {
-                    pdfManager?.goForward()
-                }
-                .keyboardShortcut(for: "goForward")
-                .disabled(!(pdfManager?.canGoForward ?? false))
-
-                Divider()
-
-                Button("Next Page") {
-                    pdfManager?.nextPage()
-                }
-                .keyboardShortcut(for: "nextPage")
-                .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) >= (pdfManager?.pageCount ?? 1) - 1)
-
-                Button("Previous Page") {
-                    pdfManager?.previousPage()
-                }
-                .keyboardShortcut(for: "previousPage")
-                .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) == 0)
-
-                Divider()
-
-                Button("First Page") {
-                    pdfManager?.goToFirstPage()
-                }
-                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                .disabled(!hasDocument)
-
-                Button("Last Page") {
-                    pdfManager?.goToLastPage()
-                }
-                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Button("Go to Page…") {
-                    guard let tabManager = focusedTabManager else { return }
-                    tabManager.showingGoToPage.toggle()
-                }
-                .keyboardShortcut(for: "goToPage")
-                .disabled(!hasDocument)
-            }
-
-            // MARK: Tools Menu
-            CommandMenu("Tools") {
-                Button("Select Mode") {
-                    pdfManager?.interactionMode = .select
-                }
-                .disabled(!hasDocument || pdfManager?.interactionMode == .select)
-
-                Button("Pan Mode") {
-                    pdfManager?.interactionMode = .pan
-                }
-                .disabled(!hasDocument || pdfManager?.interactionMode == .pan)
-
-                Divider()
-
-                Button("Highlight Selection") {
-                    focusedTabManager?.activeAnnotationManager?.highlightSelection()
-                }
-                .keyboardShortcut(for: "highlight")
-                .disabled(!hasDocument)
-
-                Button("Underline Selection") {
-                    focusedTabManager?.activeAnnotationManager?.underlineSelection()
-                }
-                .keyboardShortcut(for: "underline")
-                .disabled(!hasDocument)
-
-                Button("Add Comment") {
-                    _ = focusedTabManager?.activeCommentManager?.addComment()
-                }
-                .keyboardShortcut(for: "comment")
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Button("Toggle Bookmark") {
-                    if let manager = focusedTabManager?.activeBookmarkManager,
-                       let pageIndex = pdfManager?.currentPageIndex {
-                        manager.toggleBookmark(at: pageIndex)
-                    }
-                }
-                .keyboardShortcut(for: "bookmark")
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Button("Rotate Clockwise") {
-                    pdfManager?.rotateClockwise()
-                }
-                .keyboardShortcut(for: "rotateClockwise")
-                .disabled(!hasDocument)
-
-                Button("Rotate Counter-Clockwise") {
-                    pdfManager?.rotateCounterClockwise()
-                }
-                .keyboardShortcut(for: "rotateCounterClockwise")
-                .disabled(!hasDocument)
-
-                Divider()
-
-                Button("Copy Page as Markdown") {
-                    copyCurrentPageAsMarkdown()
-                }
-                .keyboardShortcut(for: "copyPageAsMarkdown")
-                .disabled(!hasDocument)
-
-                Button("Copy Document as Markdown") {
-                    copyEntireDocumentAsMarkdown()
-                }
-                .keyboardShortcut(for: "copyDocumentAsMarkdown")
-                .disabled(!hasDocument)
-
-                Menu("Save as Markdown") {
-                    Button("Current Page…") {
-                        savePageAsMarkdownFile()
-                    }
-
-                    Button("Entire Document…") {
-                        saveAsMarkdownFile()
-                    }
-                }
-                .disabled(!hasDocument)
-            }
-
-            // MARK: Tab Menu
-            CommandMenu("Tab") {
-                Button("Select Next Tab") {
-                    focusedTabManager?.selectNextTab()
-                }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
-                .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
-
-                Button("Select Previous Tab") {
-                    focusedTabManager?.selectPreviousTab()
-                }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
-                .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
-
-                Divider()
-
-                ForEach(1...9, id: \.self) { index in
-                    Button("Select Tab \(index)") {
-                        focusedTabManager?.selectTabByIndex(index - 1)
-                    }
-                    .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
-                    .disabled(index > (focusedTabManager?.tabCount ?? 0))
-                }
-            }
+            CommandGroup(after: .appInfo) { appMenuContent }
+            CommandGroup(replacing: .newItem) { fileNewMenuContent }
+            CommandGroup(after: .importExport) { fileSaveMenuContent }
+            CommandGroup(replacing: .undoRedo) { editUndoMenuContent }
+            CommandGroup(after: .pasteboard) { editFindMenuContent }
+            CommandMenu("View") { viewMenuContent }
+            CommandMenu("Go") { goMenuContent }
+            CommandMenu("Tools") { toolsMenuContent }
+            CommandMenu("Tab") { tabMenuContent }
         }
 
         // MARK: Settings Window
         Settings {
             SettingsView()
+        }
+    }
+
+    // MARK: - App Menu
+
+    @ViewBuilder
+    private var appMenuContent: some View {
+        Button(defaultPDFManager.isDefaultPDFReader ? "✓ Default PDF Reader" : "Set as Default PDF Reader…") {
+            defaultPDFManager.setAsDefaultPDFReader()
+        }
+        .disabled(defaultPDFManager.isDefaultPDFReader)
+
+        #if ENABLE_SPARKLE
+        Divider()
+        Button("Check for Updates…") {
+            updateManager.checkForUpdates()
+        }
+        .disabled(!updateManager.canCheckForUpdates)
+        #endif
+    }
+
+    // MARK: - File Menu
+
+    @ViewBuilder
+    private var fileNewMenuContent: some View {
+        Button("New Tab") {
+            focusedTabManager?.createNewTab()
+        }
+        .keyboardShortcut("t", modifiers: .command)
+        .disabled(focusedTabManager == nil)
+
+        Button("New Window") {
+            openNewWindow()
+        }
+        .keyboardShortcut("n", modifiers: .command)
+
+        Divider()
+
+        Button("Open…") {
+            focusedTabManager?.openFilePicker()
+        }
+        .keyboardShortcut("o", modifiers: .command)
+        .disabled(focusedTabManager == nil)
+
+        Menu("Open Recent") {
+            ForEach(recentFilesManager.recentFiles, id: \.self) { url in
+                Button(url.deletingPathExtension().lastPathComponent) {
+                    openRecentFile(url)
+                }
+            }
+
+            if !recentFilesManager.recentFiles.isEmpty {
+                Divider()
+                Button("Clear Menu") {
+                    recentFilesManager.clearRecentFiles()
+                }
+            }
+        }
+        .disabled(recentFilesManager.recentFiles.isEmpty)
+
+        Divider()
+
+        Button("Close Tab") {
+            focusedTabManager?.closeActiveTab()
+        }
+        .keyboardShortcut("w", modifiers: .command)
+        .disabled(focusedTabManager?.tabs.isEmpty != false)
+    }
+
+    @ViewBuilder
+    private var fileSaveMenuContent: some View {
+        Button("Save") {
+            Task { await handleSave() }
+        }
+        .keyboardShortcut("s", modifiers: .command)
+        .disabled(!hasDocument)
+
+        Button("Save As…") {
+            Task { await handleSaveAs() }
+        }
+        .keyboardShortcut("s", modifiers: [.command, .shift])
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Button("Print…") {
+            pdfManager?.print()
+        }
+        .keyboardShortcut("p", modifiers: .command)
+        .disabled(!hasDocument)
+    }
+
+    // MARK: - Edit Menu
+
+    private var activeUndoManager: UndoManager? {
+        guard let tabManager = focusedTabManager,
+              let tabID = tabManager.activeTabID else { return nil }
+        return tabManager.undoManagers[tabID]
+    }
+
+    @ViewBuilder
+    private var editUndoMenuContent: some View {
+        Button("Undo") {
+            let um = activeUndoManager
+            #if DEBUG
+            Swift.print("[UNDO] pressed: um=\(um.map { "\(ObjectIdentifier($0))" } ?? "nil"), canUndo=\(um?.canUndo ?? false)")
+            #endif
+            um?.undo()
+        }
+        .keyboardShortcut("z", modifiers: .command)
+
+        Button("Redo") {
+            let um = activeUndoManager
+            #if DEBUG
+            Swift.print("[REDO] pressed: um=\(um.map { "\(ObjectIdentifier($0))" } ?? "nil"), canRedo=\(um?.canRedo ?? false)")
+            #endif
+            um?.redo()
+        }
+        .keyboardShortcut("z", modifiers: [.command, .shift])
+    }
+
+    @ViewBuilder
+    private var editFindMenuContent: some View {
+        Divider()
+
+        Button("Find…") {
+            if hasDocument {
+                focusedShowingSearch?.wrappedValue.toggle()
+            }
+        }
+        .keyboardShortcut("f", modifiers: .command)
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Button("Delete Page") {
+            guard let manager = pdfManager,
+                  manager.pageCount > 1 else { return }
+            manager.deletePage(at: manager.currentPageIndex)
+        }
+        .keyboardShortcut(for: "deletePage")
+        .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
+
+        Divider()
+
+        Button("Copy Page") {
+            guard let manager = pdfManager else { return }
+            manager.copyPage(at: manager.currentPageIndex)
+        }
+        .keyboardShortcut(for: "copyPage")
+        .disabled(!hasDocument || !isEditingPages)
+
+        Button("Cut Page") {
+            guard let manager = pdfManager,
+                  manager.pageCount > 1 else { return }
+            manager.cutPage(at: manager.currentPageIndex)
+        }
+        .keyboardShortcut(for: "cutPage")
+        .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
+
+        Button("Paste Page") {
+            guard let manager = pdfManager else { return }
+            _ = manager.pastePage(after: manager.currentPageIndex)
+        }
+        .keyboardShortcut(for: "pastePage")
+        .disabled(!hasDocument || !isEditingPages || !(pdfManager?.canPaste ?? false))
+    }
+
+    // MARK: - View Menu
+
+    @ViewBuilder
+    private var viewMenuContent: some View {
+        Button("Zoom In") {
+            pdfManager?.zoomIn()
+        }
+        .keyboardShortcut(for: "zoomIn")
+        .disabled(!hasDocument)
+
+        Button("Zoom Out") {
+            pdfManager?.zoomOut()
+        }
+        .keyboardShortcut(for: "zoomOut")
+        .disabled(!hasDocument)
+
+        Button("Actual Size") {
+            pdfManager?.resetZoom()
+        }
+        .keyboardShortcut(for: "actualSize")
+        .disabled(!hasDocument)
+
+        Button("Zoom to Fit") {
+            pdfManager?.requestFitOnce()
+            pdfManager?.scaleNeedsUpdate = true
+        }
+        .keyboardShortcut(for: "zoomToFit")
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Toggle("Auto-Scale", isOn: Binding(
+            get: { pdfManager?.isAutoScaling ?? false },
+            set: { newValue in
+                guard let manager = pdfManager else { return }
+                manager.isAutoScaling = newValue
+                if newValue {
+                    manager.requestFitOnce()
+                    manager.scaleNeedsUpdate = true
+                }
+            }
+        ))
+        .disabled(!hasDocument || (pdfManager?.displayMode == .twoUp || pdfManager?.displayMode == .twoUpContinuous))
+
+        Divider()
+
+        Picker("Display", selection: Binding(
+            get: { pdfManager?.displayMode ?? .singlePageContinuous },
+            set: { pdfManager?.displayMode = $0 }
+        )) {
+            Text("Single Page").tag(PDFDisplayMode.singlePage)
+            Text("Single Page Continuous").tag(PDFDisplayMode.singlePageContinuous)
+            Text("Two Pages").tag(PDFDisplayMode.twoUp)
+            Text("Two Pages Continuous").tag(PDFDisplayMode.twoUpContinuous)
+        }
+        .pickerStyle(.inline)
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Button(showingSidebarLabel) {
+            focusedTabManager?.showingOutline.toggle()
+        }
+        .keyboardShortcut("s", modifiers: [.command, .option])
+        .disabled(!hasDocument)
+
+        Button(showingCommentsLabel) {
+            focusedTabManager?.showingComments.toggle()
+        }
+        .keyboardShortcut("e", modifiers: [.command, .option])
+        .disabled(!hasDocument)
+
+        Button(showingToolbarLabel) {
+            focusedShowingToolbar?.wrappedValue.toggle()
+        }
+        .keyboardShortcut("t", modifiers: [.command, .shift])
+        .disabled(focusedTabManager == nil)
+
+        Divider()
+
+        Button("Enter Full Screen") {
+            NSApp.keyWindow?.toggleFullScreen(nil)
+        }
+        .keyboardShortcut("f", modifiers: [.command, .control])
+    }
+
+    // MARK: - Go Menu
+
+    @ViewBuilder
+    private var goMenuContent: some View {
+        Button("Back") {
+            pdfManager?.goBack()
+        }
+        .keyboardShortcut(for: "goBack")
+        .disabled(!(pdfManager?.canGoBack ?? false))
+
+        Button("Forward") {
+            pdfManager?.goForward()
+        }
+        .keyboardShortcut(for: "goForward")
+        .disabled(!(pdfManager?.canGoForward ?? false))
+
+        Divider()
+
+        Button("Next Page") {
+            pdfManager?.nextPage()
+        }
+        .keyboardShortcut(for: "nextPage")
+        .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) >= (pdfManager?.pageCount ?? 1) - 1)
+
+        Button("Previous Page") {
+            pdfManager?.previousPage()
+        }
+        .keyboardShortcut(for: "previousPage")
+        .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) == 0)
+
+        Divider()
+
+        Button("First Page") {
+            pdfManager?.goToFirstPage()
+        }
+        .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+        .disabled(!hasDocument)
+
+        Button("Last Page") {
+            pdfManager?.goToLastPage()
+        }
+        .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Button("Go to Page…") {
+            guard let tabManager = focusedTabManager else { return }
+            tabManager.showingGoToPage.toggle()
+        }
+        .keyboardShortcut(for: "goToPage")
+        .disabled(!hasDocument)
+    }
+
+    // MARK: - Tools Menu
+
+    @ViewBuilder
+    private var toolsMenuContent: some View {
+        Button("Select Mode") {
+            pdfManager?.interactionMode = .select
+        }
+        .disabled(!hasDocument || pdfManager?.interactionMode == .select)
+
+        Button("Pan Mode") {
+            pdfManager?.interactionMode = .pan
+        }
+        .disabled(!hasDocument || pdfManager?.interactionMode == .pan)
+
+        Divider()
+
+        Button("Highlight Selection") {
+            focusedTabManager?.activeAnnotationManager?.highlightSelection()
+        }
+        .keyboardShortcut(for: "highlight")
+        .disabled(!hasDocument)
+
+        Button("Underline Selection") {
+            focusedTabManager?.activeAnnotationManager?.underlineSelection()
+        }
+        .keyboardShortcut(for: "underline")
+        .disabled(!hasDocument)
+
+        Button("Add Comment") {
+            _ = focusedTabManager?.activeCommentManager?.addComment()
+        }
+        .keyboardShortcut(for: "comment")
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Button("Toggle Bookmark") {
+            if let manager = focusedTabManager?.activeBookmarkManager,
+               let pageIndex = pdfManager?.currentPageIndex {
+                manager.toggleBookmark(at: pageIndex)
+            }
+        }
+        .keyboardShortcut(for: "bookmark")
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Button("Rotate Clockwise") {
+            pdfManager?.rotateClockwise()
+        }
+        .keyboardShortcut(for: "rotateClockwise")
+        .disabled(!hasDocument)
+
+        Button("Rotate Counter-Clockwise") {
+            pdfManager?.rotateCounterClockwise()
+        }
+        .keyboardShortcut(for: "rotateCounterClockwise")
+        .disabled(!hasDocument)
+
+        Divider()
+
+        Button("Copy Page as Markdown") {
+            copyCurrentPageAsMarkdown()
+        }
+        .keyboardShortcut(for: "copyPageAsMarkdown")
+        .disabled(!hasDocument)
+
+        Button("Copy Document as Markdown") {
+            copyEntireDocumentAsMarkdown()
+        }
+        .keyboardShortcut(for: "copyDocumentAsMarkdown")
+        .disabled(!hasDocument)
+
+        Menu("Save as Markdown") {
+            Button("Current Page…") {
+                savePageAsMarkdownFile()
+            }
+
+            Button("Entire Document…") {
+                saveAsMarkdownFile()
+            }
+        }
+        .disabled(!hasDocument)
+    }
+
+    // MARK: - Tab Menu
+
+    @ViewBuilder
+    private var tabMenuContent: some View {
+        Button("Select Next Tab") {
+            focusedTabManager?.selectNextTab()
+        }
+        .keyboardShortcut("]", modifiers: [.command, .shift])
+        .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
+
+        Button("Select Previous Tab") {
+            focusedTabManager?.selectPreviousTab()
+        }
+        .keyboardShortcut("[", modifiers: [.command, .shift])
+        .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
+
+        Divider()
+
+        ForEach(1...9, id: \.self) { index in
+            Button("Select Tab \(index)") {
+                focusedTabManager?.selectTabByIndex(index - 1)
+            }
+            .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
+            .disabled(index > (focusedTabManager?.tabCount ?? 0))
         }
     }
 

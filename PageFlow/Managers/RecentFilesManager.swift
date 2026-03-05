@@ -10,7 +10,8 @@ import Observation
 import os.log
 
 @Observable
-class RecentFilesManager {
+@MainActor
+final class RecentFilesManager {
     private let logger = Logger(subsystem: "com.pageflow", category: "RecentFilesManager")
     private let maxRecentFiles = 10
     private let recentFilesKey = "recentFiles"

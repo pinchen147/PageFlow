@@ -12,11 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let firstLaunchManager = FirstLaunchManager()
     private var windowControllers: [NSWindowController] = []
 
+    /// URLs received before any TabManager registered (cold launch from Finder)
+    private(set) var pendingURLs: [URL] = []
+
     func createNewWindow(with contentView: some View) {
         let hostingController = NSHostingController(rootView: contentView)
 
         let window = NSWindow(contentViewController: hostingController)
-        window.setContentSize(NSSize(width: 900, height: 700))
+        window.setContentSize(NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -46,12 +49,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let pdfURLs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
         guard !pdfURLs.isEmpty else { return }
 
-        // Open in existing window if available, otherwise SwiftUI will create new window
+        // Activate existing tab if already open, otherwise open in existing/new window
         if let tabManager = WindowRegistry.shared.anyTabManager() {
+            tabManager.closeFilePicker()
             for url in pdfURLs {
+                if !WindowRegistry.shared.activateExistingDocument(for: url) {
+                    tabManager.openDocument(url: url, isSecurityScoped: false)
+                }
+            }
+        } else {
+            pendingURLs.append(contentsOf: pdfURLs)
+        }
+    }
+
+    /// Delivers any URLs buffered during cold launch to the given TabManager.
+    func flushPendingURLs(to tabManager: TabManager) {
+        guard !pendingURLs.isEmpty else { return }
+        tabManager.closeFilePicker()
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        for url in urls {
+            if !WindowRegistry.shared.activateExistingDocument(for: url) {
                 tabManager.openDocument(url: url, isSecurityScoped: false)
             }
         }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

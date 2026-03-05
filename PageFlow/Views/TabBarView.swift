@@ -17,7 +17,7 @@ struct TabBarView: View {
     // Drag state
     @State private var draggingTabID: UUID? {
         didSet {
-            logger.debug("📌 draggingTabID changed: \(oldValue?.uuidString ?? "nil") → \(draggingTabID?.uuidString ?? "nil")")
+            logger.debug("draggingTabID changed: \(oldValue?.uuidString ?? "nil") -> \(draggingTabID?.uuidString ?? "nil")")
         }
     }
     @State private var dragOffset: CGFloat = 0
@@ -57,20 +57,19 @@ struct TabBarView: View {
             TabBarGestureView(callbacks: TabBarGestureCallbacks(
                 onDragStarted: { x in
                     // MUST be sync so draggingTabID is set before onDragChanged fires
-                    logger.debug("🔵 DRAG START at x=\(x)")
+                    logger.debug("Drag start at x=\(x)")
                     if let tabID = findTab(at: x) {
                         let isClose = isCloseHit(for: tabID, x: x)
-                        logger.debug("   Found tab: \(tabID), isCloseHit=\(isClose)")
+                        logger.debug("Found tab: \(tabID), isCloseHit=\(isClose)")
                         if !isClose {
-                            // Snapshot current frames BEFORE any drag offset is applied
                             originalTabFrames = tabFrames
                             draggingTabID = tabID
-                            logger.debug("   ✅ Started dragging tab, snapshotted \(originalTabFrames.count) frames")
+                            logger.debug("Started dragging tab, snapshotted \(originalTabFrames.count) frames")
                         } else {
-                            logger.debug("   ❌ Blocked by close button")
+                            logger.debug("Blocked by close button")
                         }
                     } else {
-                        logger.debug("   ❌ No tab found at this position")
+                        logger.debug("No tab found at this position")
                     }
                 },
                 onDragChanged: { _, translation in
@@ -156,9 +155,9 @@ struct TabBarView: View {
             .frame(width: 24, height: 24)
             .background(.ultraThinMaterial)
             .background(DesignTokens.floatingToolbarBase.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
                     .strokeBorder(.white.opacity(0.22))
             )
             .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
@@ -239,13 +238,13 @@ struct TabBarView: View {
     private func commitDrag(for tabID: UUID, translation: CGFloat) {
         guard let sourceIndex = tabManager.tabs.firstIndex(where: { $0.id == tabID }),
               let originalSourceFrame = originalTabFrames[tabID] else {
-            logger.debug("❌ commitDrag: missing sourceIndex or originalSourceFrame")
+            logger.debug("commitDrag: missing sourceIndex or originalSourceFrame")
             return
         }
 
         // Use ORIGINAL frame position + translation for accurate target calculation
         let draggedCenter = originalSourceFrame.midX + translation
-        logger.debug("🎯 commitDrag: sourceIndex=\(sourceIndex), originalMidX=\(originalSourceFrame.midX), translation=\(translation), draggedCenter=\(draggedCenter)")
+        logger.debug("commitDrag: sourceIndex=\(sourceIndex), originalMidX=\(originalSourceFrame.midX), translation=\(translation), draggedCenter=\(draggedCenter)")
 
         var targetIndex = sourceIndex
         for (index, tab) in tabManager.tabs.enumerated() {
@@ -261,19 +260,19 @@ struct TabBarView: View {
             if sourceIndex < index && draggedCenter > originalFrame.midX - threshold {
                 // Dragging RIGHT: take the rightmost tab we've passed (largest index)
                 // Matches shiftOffset condition: draggingCenter > thisCenter - threshold
-                logger.debug("   → Moving RIGHT: draggedCenter(\(draggedCenter)) > midX-threshold(\(originalFrame.midX - threshold))")
+                logger.debug("Moving RIGHT: draggedCenter(\(draggedCenter)) > midX-threshold(\(originalFrame.midX - threshold))")
                 targetIndex = index
             } else if sourceIndex > index && draggedCenter < originalFrame.midX + threshold {
                 // Dragging LEFT: take the leftmost tab we've passed (smallest index)
                 // Matches shiftOffset condition: draggingCenter < thisCenter + threshold
                 if index < targetIndex {
-                    logger.debug("   → Moving LEFT: draggedCenter(\(draggedCenter)) < midX+threshold(\(originalFrame.midX + threshold))")
+                    logger.debug("Moving LEFT: draggedCenter(\(draggedCenter)) < midX+threshold(\(originalFrame.midX + threshold))")
                     targetIndex = index
                 }
             }
         }
 
-        logger.debug("🏁 commitDrag result: sourceIndex=\(sourceIndex) → targetIndex=\(targetIndex)")
+        logger.debug("commitDrag result: sourceIndex=\(sourceIndex) -> targetIndex=\(targetIndex)")
 
         if targetIndex != sourceIndex {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) {

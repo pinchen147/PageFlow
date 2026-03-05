@@ -31,49 +31,49 @@ struct MainView: View {
     @State private var toastWorkItem: DispatchWorkItem?
 
     private var showingGoToPage: Bool {
-        get { tabManager.showingGoToPageState[tabID] ?? false }
+        get { tabManager.tabUIStates[tabID]?.showingGoToPage ?? false }
         nonmutating set { tabManager.setShowingGoToPage(newValue, for: tabID) }
     }
 
     private var showingFileImporter: Bool {
-        get { tabManager.showingFileImporterState[tabID] ?? false }
+        get { tabManager.tabUIStates[tabID]?.showingFileImporter ?? false }
         nonmutating set { tabManager.setShowingFileImporter(newValue, for: tabID) }
     }
 
     private var showingGoToPageBinding: Binding<Bool> {
         Binding(
-            get: { tabManager.showingGoToPageState[tabID] ?? false },
+            get: { tabManager.tabUIStates[tabID]?.showingGoToPage ?? false },
             set: { tabManager.setShowingGoToPage($0, for: tabID) }
         )
     }
 
     private var showingFileImporterBinding: Binding<Bool> {
         Binding(
-            get: { tabManager.showingFileImporterState[tabID] ?? false },
+            get: { tabManager.tabUIStates[tabID]?.showingFileImporter ?? false },
             set: { tabManager.setShowingFileImporter($0, for: tabID) }
         )
     }
 
     private var showingOutline: Bool {
-        get { tabManager.showingOutlineState[tabID] ?? false }
+        get { tabManager.tabUIStates[tabID]?.showingOutline ?? false }
         nonmutating set { tabManager.setShowingOutline(newValue, for: tabID) }
     }
 
     private var showingOutlineBinding: Binding<Bool> {
         Binding(
-            get: { tabManager.showingOutlineState[tabID] ?? false },
+            get: { tabManager.tabUIStates[tabID]?.showingOutline ?? false },
             set: { tabManager.setShowingOutline($0, for: tabID) }
         )
     }
 
     private var showingComments: Bool {
-        get { tabManager.showingCommentsState[tabID] ?? false }
+        get { tabManager.tabUIStates[tabID]?.showingComments ?? false }
         nonmutating set { tabManager.setShowingComments(newValue, for: tabID) }
     }
 
     private var showingCommentsBinding: Binding<Bool> {
         Binding(
-            get: { tabManager.showingCommentsState[tabID] ?? false },
+            get: { tabManager.tabUIStates[tabID]?.showingComments ?? false },
             set: { tabManager.setShowingComments($0, for: tabID) }
         )
     }
@@ -87,6 +87,7 @@ struct MainView: View {
                     annotationManager: annotationManager,
                     commentManager: commentManager,
                     bookmarkManager: bookmarkManager,
+                    tabUndoManager: tabManager.undoManagers[tabID] ?? UndoManager(),
                     isActive: isActive
                 )
             } else {
@@ -200,9 +201,6 @@ struct MainView: View {
         .onDrop(of: [.fileURL], isTargeted: $isDragHovering) { providers in
             handleDrop(providers: providers)
         }
-        .onOpenURL { url in
-            handleOpenURL(url)
-        }
         .animation(.easeInOut(duration: 0.15), value: isDragHovering)
         .animation(.easeInOut(duration: 0.2), value: showingSearch)
         .onChange(of: showingSearch) { _, isShowing in
@@ -228,7 +226,17 @@ struct MainView: View {
         }
         .onAppear {
             if !pdfManager.hasDocument {
-                tabManager.openFilePicker()
+                // On older macOS, pending URLs from application(_:open:) will be
+                // flushed synchronously by TabContainerView.onAppear before this fires.
+                // On macOS 15+, onOpenURL delivers the file asynchronously — delay
+                // the file picker to give it time to arrive.
+                let hasPending = !((NSApp.delegate as? AppDelegate)?.pendingURLs.isEmpty ?? true)
+                if !hasPending {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [pdfManager, tabManager] in
+                        guard !pdfManager.hasDocument else { return }
+                        tabManager.openFilePicker()
+                    }
+                }
             }
         }
         .onChange(of: commentManager.selectedCommentID) { _, newValue in
@@ -410,13 +418,6 @@ struct MainView: View {
         }
 
         return true
-    }
-
-    private func handleOpenURL(_ url: URL) {
-        DispatchQueue.main.async { [tabManager, onOpenFile] in
-            tabManager.closeFilePicker()
-            onOpenFile(url, true, false)
-        }
     }
 
     private func goToPage() {

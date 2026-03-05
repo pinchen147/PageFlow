@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import SwiftUI
 
 class GlassScroller: NSScroller {
     
@@ -42,9 +43,8 @@ class GlassScroller: NSScroller {
         shadow.shadowBlurRadius = 10
         shadow.set()
         
-        // 2. Fill
-        // Matches DesignTokens.floatingToolbarBase (RGB 0.196, 0.196, 0.196)
-        let fillColor = NSColor(red: 0.196, green: 0.196, blue: 0.196, alpha: 0.8)
+        // 2. Fill — sourced from DesignTokens.floatingToolbarBase
+        let fillColor = NSColor(DesignTokens.floatingToolbarBase).withAlphaComponent(0.8)
         fillColor.setFill()
         path.fill()
         

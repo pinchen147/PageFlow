@@ -24,6 +24,8 @@ final class SearchManager {
     var currentResultIndex: Int = 0
     var isSearching: Bool = false
 
+    private var searchTask: Task<Void, Never>?
+
     var hasResults: Bool {
         !searchResults.isEmpty
     }
@@ -42,15 +44,22 @@ final class SearchManager {
             return
         }
 
+        searchTask?.cancel()
         searchQuery = query
         isSearching = true
 
-        searchResults = document.findString(
-            query,
-            withOptions: .caseInsensitive
-        )
-
-        currentResultIndex = 0
+        let doc = document
+        let q = query
+        searchTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let results = doc.findString(q, withOptions: .caseInsensitive)
+            guard let self else { return }
+            await MainActor.run {
+                guard !Task.isCancelled else { return }
+                self.searchResults = results
+                self.currentResultIndex = 0
+                self.isSearching = false
+            }
+        }
     }
 
     func nextResult() {
@@ -66,6 +75,8 @@ final class SearchManager {
     }
 
     func clearSearch() {
+        searchTask?.cancel()
+        searchTask = nil
         searchQuery = ""
         searchResults = []
         currentResultIndex = 0

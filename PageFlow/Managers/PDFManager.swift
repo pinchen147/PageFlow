@@ -65,6 +65,10 @@ final class PDFManager {
 
     var undoManagerProvider: (() -> UndoManager?)?
 
+    func clearUndoHistory() {
+        undoManagerProvider?()?.removeAllActions()
+    }
+
     deinit {
         if let url = securityScopedURL {
             url.stopAccessingSecurityScopedResource()
@@ -713,8 +717,7 @@ final class PDFManager {
         for pageIndex in 0..<document.pageCount {
             guard let page = document.page(at: pageIndex) else { continue }
 
-            // PDFPage.copy() always returns PDFPage, force unwrap is safe
-            let pageCopy = page.copy() as! PDFPage
+            guard let pageCopy = page.copy() as? PDFPage else { continue }
 
             // Remove all annotations
             let annotations = pageCopy.annotations

@@ -78,20 +78,15 @@ struct SidebarView: View {
 
             Spacer()
 
-            // Edit/Done button - only show in thumbnail mode
-            if mode == .thumbnails {
+            // Done button - only show in thumbnail mode when editing
+            if mode == .thumbnails && tabManager.isEditingPages {
                 Button {
                     withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                        tabManager.isEditingPages.toggle()
+                        tabManager.isEditingPages = false
                     }
                 } label: {
-                    if tabManager.isEditingPages {
-                        Text("Done")
-                            .font(.system(size: 12))
-                    } else {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 12))
-                    }
+                    Text("Done")
+                        .font(.system(size: 12))
                 }
                 .foregroundStyle(.primary)
                 .buttonStyle(.plain)
@@ -182,7 +177,7 @@ struct SidebarView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
-        .hideScrollBackgroundIfAvailable()
+        .scrollContentBackground(.hidden)
     }
     
     private func outlineItemRow(_ item: OutlineItem) -> some View {
@@ -255,7 +250,7 @@ struct SidebarView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
-        .hideScrollBackgroundIfAvailable()
+        .scrollContentBackground(.hidden)
     }
 
     private func bookmarkRow(_ bookmark: BookmarkModel) -> some View {
@@ -334,15 +329,3 @@ struct SidebarView: View {
     }
 }
 
-// MARK: - Helpers
-
-private extension View {
-    @ViewBuilder
-    func hideScrollBackgroundIfAvailable() -> some View {
-        if #available(macOS 13.0, *) {
-            self.scrollContentBackground(.hidden)
-        } else {
-            self
-        }
-    }
-}

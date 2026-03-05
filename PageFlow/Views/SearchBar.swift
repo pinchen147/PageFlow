@@ -22,7 +22,7 @@ struct SearchBar: View {
             TextField("Search", text: $searchManager.searchQuery)
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
-                .frame(width: 200)
+                .frame(width: DesignTokens.searchBarWidth)
                 .focused($isSearchFieldFocused)
                 .onSubmit {
                     handleSearchSubmit()

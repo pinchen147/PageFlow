@@ -118,6 +118,14 @@ struct DesignTokens {
     static let pdfMaxScale: CGFloat = 4.0
     static let pdfDefaultScale: CGFloat = 1.0
     static let pdfZoomStep: CGFloat = 0.25
+    static let pdfViewPadding: CGFloat = 20
+    static let pdfFitZoomBump: CGFloat = 0.05
+    static let pdfTwoPageGap: CGFloat = 10
+    static let pdfControlScrollZoomFactor: CGFloat = 1.1
+
+    // MARK: - Search
+
+    static let searchBarWidth: CGFloat = 200
 
     // MARK: - Comments
 
@@ -156,6 +164,8 @@ struct DesignTokens {
     // MARK: - Window
 
     static let windowDragRegionHeight: CGFloat = 6
+    static let defaultWindowWidth: CGFloat = 900
+    static let defaultWindowHeight: CGFloat = 700
 
     // MARK: - Tabs
 
@@ -168,4 +178,15 @@ struct DesignTokens {
     static let tabBarLeftMargin: CGFloat = 80
     static let tabCloseButtonSize: CGFloat = 14
     static let tabDirtyIndicatorSize: CGFloat = 6
+
+    // MARK: - Timing (PDFKit workaround delays)
+
+    /// Brief delay for PDFKit layout to settle after document/scale changes
+    static let pdfLayoutSettleDelay: TimeInterval = 0.05
+    /// Delay for PDFKit to update layout after display mode changes
+    static let pdfDisplayModeSettleDelay: TimeInterval = 0.1
+    /// Interval between retries when waiting for PDFView to become ready
+    static let pdfViewReadyRetryInterval: TimeInterval = 0.1
+    /// Maximum retries when waiting for PDFView/window readiness
+    static let maxReadinessRetries: Int = 10
 }

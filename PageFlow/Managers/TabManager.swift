@@ -10,6 +10,15 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Per-tab UI state (not persisted)
+struct TabUIState: Sendable {
+    var showingOutline = false
+    var showingComments = false
+    var showingGoToPage = false
+    var showingFileImporter = false
+    var isEditingPages = false
+}
+
 @Observable
 @MainActor
 final class TabManager {
@@ -33,13 +42,10 @@ final class TabManager {
     private var annotationManagers: [UUID: AnnotationManager] = [:]
     private var commentManagers: [UUID: CommentManager] = [:]
     private var bookmarkManagers: [UUID: BookmarkManager] = [:]
+    private(set) var undoManagers: [UUID: UndoManager] = [:]
 
     // Per-tab UI state (not persisted) - internal for MainView access
-    var showingOutlineState: [UUID: Bool] = [:]
-    var showingCommentsState: [UUID: Bool] = [:]
-    var showingGoToPageState: [UUID: Bool] = [:]
-    var showingFileImporterState: [UUID: Bool] = [:]
-    var isEditingPagesState: [UUID: Bool] = [:]
+    var tabUIStates: [UUID: TabUIState] = [:]
 
     // Edit mode keyboard shortcut monitor (intercepts Cmd+C/V for page copy/paste)
     @ObservationIgnored private var editModeKeyMonitor: Any?
@@ -94,63 +100,62 @@ final class TabManager {
         return bookmarkManagers[id]
     }
 
-    // MARK: - Sidebar State (Active Tab)
+    // MARK: - UI State (Active Tab)
 
     var showingOutline: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return showingOutlineState[id] ?? false
+            return tabUIStates[id]?.showingOutline ?? false
         }
         set {
             guard let id = activeTabID else { return }
-            showingOutlineState[id] = newValue
+            tabUIStates[id, default: TabUIState()].showingOutline = newValue
         }
     }
 
     var showingComments: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return showingCommentsState[id] ?? false
+            return tabUIStates[id]?.showingComments ?? false
         }
         set {
             guard let id = activeTabID else { return }
-            showingCommentsState[id] = newValue
+            tabUIStates[id, default: TabUIState()].showingComments = newValue
         }
     }
 
     var showingGoToPage: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return showingGoToPageState[id] ?? false
+            return tabUIStates[id]?.showingGoToPage ?? false
         }
         set {
             guard let id = activeTabID else { return }
-            showingGoToPageState[id] = newValue
+            tabUIStates[id, default: TabUIState()].showingGoToPage = newValue
         }
     }
 
     var showingFileImporter: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return showingFileImporterState[id] ?? false
+            return tabUIStates[id]?.showingFileImporter ?? false
         }
         set {
             guard let id = activeTabID else { return }
-            showingFileImporterState[id] = newValue
+            tabUIStates[id, default: TabUIState()].showingFileImporter = newValue
         }
     }
 
     var isEditingPages: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return isEditingPagesState[id] ?? false
+            return tabUIStates[id]?.isEditingPages ?? false
         }
         set {
             guard let id = activeTabID else { return }
-            let wasEditing = isEditingPagesState[id] ?? false
-            isEditingPagesState[id] = newValue
+            let wasEditing = tabUIStates[id]?.isEditingPages ?? false
+            tabUIStates[id, default: TabUIState()].isEditingPages = newValue
 
-            // Start/stop keyboard monitor when edit mode changes
             if newValue && !wasEditing {
                 startEditModeKeyMonitor()
             } else if !newValue && wasEditing {
@@ -160,38 +165,30 @@ final class TabManager {
     }
 
     func sidebarState(for tabID: UUID) -> (showingOutline: Bool, showingComments: Bool) {
-        (showingOutlineState[tabID] ?? false, showingCommentsState[tabID] ?? false)
+        let state = tabUIStates[tabID] ?? TabUIState()
+        return (state.showingOutline, state.showingComments)
     }
 
     func setShowingOutline(_ value: Bool, for tabID: UUID) {
-        showingOutlineState[tabID] = value
+        tabUIStates[tabID, default: TabUIState()].showingOutline = value
     }
 
     func setShowingComments(_ value: Bool, for tabID: UUID) {
-        showingCommentsState[tabID] = value
+        tabUIStates[tabID, default: TabUIState()].showingComments = value
     }
 
     func setShowingGoToPage(_ value: Bool, for tabID: UUID) {
-        showingGoToPageState[tabID] = value
+        tabUIStates[tabID, default: TabUIState()].showingGoToPage = value
     }
 
     func setShowingFileImporter(_ value: Bool, for tabID: UUID) {
-        showingFileImporterState[tabID] = value
+        tabUIStates[tabID, default: TabUIState()].showingFileImporter = value
     }
 
-    /// Opens NSOpenPanel directly - waits for window readiness
-    func openFilePicker(retryCount: Int = 0) {
-        // NSOpenPanel.begin() requires a key window - wait if not ready
-        guard NSApp.keyWindow != nil else {
-            guard retryCount < 10 else { return }  // Max 1 second total
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                self?.openFilePicker(retryCount: retryCount + 1)
-            }
-            return
-        }
-
-        // Close any existing panel first
-        openPanel?.close()
+    /// Opens NSOpenPanel as a sheet on the key window — waits for window readiness.
+    func openFilePicker() {
+        // Prevent duplicate panels (concurrent onAppear calls, retry chains, etc.)
+        guard openPanel == nil else { return }
 
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf]
@@ -200,9 +197,27 @@ final class TabManager {
         panel.canChooseFiles = true
         panel.message = "Select a PDF file to open"
 
-        openPanel = panel
+        openPanel = panel  // Set immediately to block concurrent calls
+        presentOpenPanel(panel, retryCount: 0)
+    }
 
-        panel.begin { [weak self] response in
+    private func presentOpenPanel(_ panel: NSOpenPanel, retryCount: Int) {
+        // Bail out if closeFilePicker() was called during retry loop
+        guard openPanel === panel else { return }
+
+        guard let window = NSApp.keyWindow else {
+            guard retryCount < DesignTokens.maxReadinessRetries else {
+                openPanel = nil  // Give up — clean up sentinel
+                return
+            }
+            // Delay: window may not be ready yet during app launch or new window creation
+            DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) { [weak self] in
+                self?.presentOpenPanel(panel, retryCount: retryCount + 1)
+            }
+            return
+        }
+
+        panel.beginSheetModal(for: window) { [weak self] response in
             self?.openPanel = nil
             guard response == .OK, let url = panel.url else { return }
             DispatchQueue.main.async {
@@ -240,6 +255,12 @@ final class TabManager {
         createManagersForTab(initialTab)
     }
 
+    /// Returns the tab ID if this TabManager has a tab with the given URL open.
+    func tabID(for url: URL) -> UUID? {
+        let standardized = url.standardizedFileURL
+        return tabs.first { $0.documentURL?.standardizedFileURL == standardized }?.id
+    }
+
     // MARK: - Tab Operations
 
     func createNewTab(with url: URL? = nil, isSecurityScoped: Bool = false) {
@@ -268,7 +289,7 @@ final class TabManager {
         }
 
         // Stop keyboard monitor if closing tab was in edit mode
-        if activeTabID == tabID && (isEditingPagesState[tabID] ?? false) {
+        if activeTabID == tabID && (tabUIStates[tabID]?.isEditingPages ?? false) {
             stopEditModeKeyMonitor()
         }
 
@@ -301,7 +322,6 @@ final class TabManager {
         }
 
         saveCurrentTabState()
-        clearUndoStack()
         activeTabID = tabID
         restoreTabState(tabID)
     }
@@ -349,6 +369,9 @@ final class TabManager {
     // MARK: - Document Operations
 
     func openDocument(url: URL, isSecurityScoped: Bool, replaceCurrent: Bool = false) {
+        // Activate existing tab if this document is already open (any window)
+        if WindowRegistry.shared.activateExistingDocument(for: url) { return }
+
         // If current tab is empty or replace is requested, load into current tab; otherwise create new tab
         if let activeTab = activeTab,
            let activeID = activeTabID,
@@ -356,7 +379,7 @@ final class TabManager {
            let pdfManager = pdfManagers[activeID] {
             // Clear undo stack when replacing document to prevent dangling references
             if activeTab.hasDocument {
-                NSApp.keyWindow?.undoManager?.removeAllActions()
+                pdfManager.clearUndoHistory()
             }
             let result = pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped)
             handleLoadResult(result, for: activeID, url: url, isSecurityScoped: isSecurityScoped)
@@ -441,6 +464,7 @@ final class TabManager {
         annotationManagers[tab.id] = AnnotationManager()
         commentManagers[tab.id] = CommentManager()
         bookmarkManagers[tab.id] = bookmarkManager
+        undoManagers[tab.id] = UndoManager()
     }
 
     private func saveCurrentTabState() {
@@ -577,29 +601,22 @@ final class TabManager {
         }
     }
 
-    // MARK: - Undo Stack Management
-
-    private func clearUndoStack() {
-        NSApp.keyWindow?.undoManager?.removeAllActions()
-    }
+    // MARK: - Cleanup
 
     private func cleanupManagers(for tabID: UUID) {
         pdfManagers[tabID]?.closeDocument()
         commentManagers[tabID]?.clearComments()
         bookmarkManagers[tabID]?.clearBookmarks()
 
+        undoManagers[tabID]?.removeAllActions()
         pdfManagers.removeValue(forKey: tabID)
         searchManagers.removeValue(forKey: tabID)
         annotationManagers.removeValue(forKey: tabID)
         commentManagers.removeValue(forKey: tabID)
         bookmarkManagers.removeValue(forKey: tabID)
+        undoManagers.removeValue(forKey: tabID)
 
-        // Clean up UI state dictionaries to prevent memory leak
-        showingOutlineState.removeValue(forKey: tabID)
-        showingCommentsState.removeValue(forKey: tabID)
-        showingGoToPageState.removeValue(forKey: tabID)
-        showingFileImporterState.removeValue(forKey: tabID)
-        isEditingPagesState.removeValue(forKey: tabID)
+        tabUIStates.removeValue(forKey: tabID)
 
         // Clear pending password dialog if it was for this tab
         if pendingPasswordRequest?.tabID == tabID {

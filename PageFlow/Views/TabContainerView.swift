@@ -53,6 +53,21 @@ struct TabContainerView: View {
         .focusedSceneValue(\.tabManager, tabManager)
         .focusedSceneValue(\.showingSearch, $showingSearch)
         .focusedSceneValue(\.showingToolbar, $showingToolbar)
+        .onAppear {
+            // Flush any Finder-opened URLs immediately on cold launch
+            // (faster than waiting for WindowRegistrarView to mount + async dispatch)
+            if let appDelegate = NSApp.delegate as? AppDelegate {
+                appDelegate.flushPendingURLs(to: tabManager)
+            }
+        }
+        .onOpenURL { url in
+            guard url.pathExtension.lowercased() == "pdf" else { return }
+            tabManager.closeFilePicker()
+            if !WindowRegistry.shared.activateExistingDocument(for: url) {
+                tabManager.openDocument(url: url, isSecurityScoped: false)
+            }
+            recentFilesManager.addRecentFile(url)
+        }
         .onDisappear {
             WindowRegistry.shared.unregister(tabManager)
         }
@@ -92,9 +107,9 @@ private final class WindowRegistrarView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
 
-        guard window != nil, let tabManager = tabManager, !isRegistered else { return }
+        guard let window = window, let tabManager = tabManager, !isRegistered else { return }
 
-        WindowRegistry.shared.register(tabManager)
+        WindowRegistry.shared.register(tabManager, window: window)
         isRegistered = true
     }
 }

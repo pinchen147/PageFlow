@@ -108,7 +108,7 @@ final class TabBarGestureNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        gestureLogger.debug("⬇️ mouseDown: point=(\(point.x), \(point.y)), bounds=\(self.bounds.width)x\(self.bounds.height)")
+        gestureLogger.debug("mouseDown: point=(\(point.x), \(point.y)), bounds=\(self.bounds.width)x\(self.bounds.height)")
         mouseDownLocation = point
         isDragging = false
         callbacks.onHoverChanged(point.x)
@@ -122,7 +122,7 @@ final class TabBarGestureNSView: NSView {
 
         if !isDragging && abs(translationX) > dragThreshold {
             isDragging = true
-            gestureLogger.debug("🟢 DRAG THRESHOLD MET: startX=\(startPoint.x), translation=\(translationX)")
+            gestureLogger.debug("Drag threshold met: startX=\(startPoint.x), translation=\(translationX)")
             NSCursor.closedHand.push()
             callbacks.onDragStarted(startPoint.x)
         }

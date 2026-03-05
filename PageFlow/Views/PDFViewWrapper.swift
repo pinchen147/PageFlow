@@ -15,11 +15,23 @@ struct PDFViewWrapper: NSViewRepresentable {
     @Bindable var annotationManager: AnnotationManager
     @Bindable var commentManager: CommentManager
     @Bindable var bookmarkManager: BookmarkManager
+    var tabUndoManager: UndoManager
     var isActive: Bool
 
     func makeNSView(context: Context) -> StablePDFView {
         let pdfView = StablePDFView()
+        configureInitialState(pdfView, context: context)
+        configureAnnotationCallbacks(pdfView, context: context)
+        configureZoomCallbacks(pdfView, context: context)
+        configureContextMenuCallbacks(pdfView)
+        configureManagers(pdfView, context: context)
+        configureNotificationObservers(pdfView, context: context)
+        return pdfView
+    }
 
+    // MARK: - makeNSView Helpers
+
+    private func configureInitialState(_ pdfView: StablePDFView, context: Context) {
         pdfView.wantsLayer = true
         pdfView.layer?.isOpaque = true
         pdfView.layer?.backgroundColor = DesignTokens.viewerBackground.cgColor
@@ -35,40 +47,72 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.enableDataDetectors = true
         }
         pdfView.delegate = context.coordinator
-        
-        // Link to manager for Thumbnail support
         pdfManager.activePDFView = pdfView
+    }
 
-        // Setup click callbacks for annotation selection
+    private func configureAnnotationCallbacks(_ pdfView: StablePDFView, context: Context) {
         pdfView.onAnnotationClick = { [weak commentManager, weak annotationManager] annotation in
             guard let commentManager = commentManager,
                   let annotationManager = annotationManager else { return }
-            
+
             if !commentManager.selectAnnotation(annotation) {
                 annotationManager.selectedAnnotation = annotation
             }
         }
-        
+
         pdfView.onAnnotationDeselect = { [weak annotationManager] in
             annotationManager?.selectedAnnotation = nil
         }
 
-        // Setup right-click event monitor for annotation removal
         pdfView.setupRightClickMonitor()
 
-        // Setup control + scroll zoom handling
+        pdfView.onAnnotationRemove = { [weak pdfView, weak annotationManager, weak commentManager] annotation in
+            // Route through the appropriate manager's undo system
+            if let commentManager = commentManager,
+               let uuid = commentManager.commentID(for: annotation) {
+                commentManager.deleteComment(uuid)
+            } else {
+                annotationManager?.removeAnnotation(annotation)
+            }
+
+            pdfView?.needsDisplay = true
+            pdfView?.layoutDocumentView()
+        }
+
+        pdfView.onAnnotationColorChange = { [weak pdfView, weak annotationManager] annotation, color in
+            let previousSelection = annotationManager?.selectedAnnotation
+            annotationManager?.selectedAnnotation = annotation
+            annotationManager?.updateSelectedAnnotationColor(color)
+            annotationManager?.selectedAnnotation = previousSelection
+
+            pdfView?.needsDisplay = true
+            pdfView?.layoutDocumentView()
+        }
+
+        pdfView.onCommentColorChange = { [weak pdfView, weak commentManager] annotation, color in
+            if let commentManager = commentManager,
+               let uuid = commentManager.commentID(for: annotation) {
+                commentManager.updateCommentColor(uuid, color: color)
+            }
+
+            pdfView?.needsDisplay = true
+            pdfView?.layoutDocumentView()
+        }
+    }
+
+    private func configureZoomCallbacks(_ pdfView: StablePDFView, context: Context) {
         pdfView.onControlScroll = { [weak pdfView, weak coordinator = context.coordinator] event in
             guard let pdfView = pdfView,
                   let coordinator = coordinator else { return false }
             return coordinator.processControlScroll(event: event, pdfView: pdfView)
         }
 
-        // Setup link navigation callback for back/forward history
         pdfView.onLinkNavigation = { [weak pdfManager] in
             pdfManager?.pushNavigationState()
         }
+    }
 
-        // Setup markdown export callbacks for page context menu
+    private func configureContextMenuCallbacks(_ pdfView: StablePDFView) {
         pdfView.onCopyPageAsMarkdown = { [weak pdfManager, weak commentManager] in
             guard let pdfManager = pdfManager,
                   let document = pdfManager.document else { return }
@@ -95,104 +139,20 @@ struct PDFViewWrapper: NSViewRepresentable {
             MarkdownExporter.copyToClipboard(markdown)
         }
 
-        // Setup bookmark toggle callback for page context menu
         pdfView.onToggleBookmark = { [weak pdfManager, weak bookmarkManager] in
             guard let pdfManager = pdfManager,
                   let bookmarkManager = bookmarkManager else { return }
             bookmarkManager.toggleBookmark(at: pdfManager.currentPageIndex)
         }
+    }
 
-        pdfView.onAnnotationRemove = { [weak pdfView, weak annotationManager, weak pdfManager] annotation in
-            guard let page = annotation.page else { return }
-
-            // Remove annotation from page - this is the core operation
-            page.removeAnnotation(annotation)
-
-            // Mark document as dirty and trigger thumbnail refresh
-            pdfManager?.isDirty = true
-            pdfManager?.pageVersion += 1
-
-            // Clear selection if this annotation was selected
-            if annotationManager?.selectedAnnotation === annotation {
-                annotationManager?.selectedAnnotation = nil
-            }
-
-            // Force PDFView to redraw (if still available)
-            if let pdfView = pdfView {
-                pdfView.needsDisplay = true
-                pdfView.layoutDocumentView()
-            }
-
-            // Register undo
-            if let undoManager = pdfView?.undoManager {
-                undoManager.registerUndo(withTarget: page) { [weak pdfView, weak pdfManager] targetPage in
-                    targetPage.addAnnotation(annotation)
-                    pdfManager?.isDirty = true
-                    pdfManager?.pageVersion += 1
-                    pdfView?.needsDisplay = true
-                    pdfView?.layoutDocumentView()
-                }
-                undoManager.setActionName("Remove Annotation")
-            }
-        }
-
-        pdfView.onAnnotationColorChange = { [weak pdfView, weak pdfManager] annotation, color in
-            let previousColor = annotation.color
-
-            // Change the annotation color
-            annotation.color = color
-
-            // Mark document as dirty and trigger thumbnail refresh
-            pdfManager?.isDirty = true
-            pdfManager?.pageVersion += 1
-
-            // Force PDFView to redraw
-            pdfView?.needsDisplay = true
-            pdfView?.layoutDocumentView()
-
-            // Register undo
-            if let undoManager = pdfView?.undoManager {
-                undoManager.registerUndo(withTarget: annotation) { [weak pdfView, weak pdfManager] targetAnnotation in
-                    targetAnnotation.color = previousColor
-                    pdfManager?.isDirty = true
-                    pdfManager?.pageVersion += 1
-                    pdfView?.needsDisplay = true
-                    pdfView?.layoutDocumentView()
-                }
-                undoManager.setActionName("Change Color")
-            }
-        }
-
-        pdfView.onCommentColorChange = { [weak pdfView, weak pdfManager] annotation, color in
-            let previousColor = annotation.color
-
-            // Change the comment annotation color (alpha is baked into preset)
-            annotation.color = color
-
-            // Mark document as dirty and trigger thumbnail refresh
-            pdfManager?.isDirty = true
-            pdfManager?.pageVersion += 1
-
-            // Force PDFView to redraw
-            pdfView?.needsDisplay = true
-            pdfView?.layoutDocumentView()
-
-            // Register undo
-            if let undoManager = pdfView?.undoManager {
-                undoManager.registerUndo(withTarget: annotation) { [weak pdfView, weak pdfManager] targetAnnotation in
-                    targetAnnotation.color = previousColor
-                    pdfManager?.isDirty = true
-                    pdfManager?.pageVersion += 1
-                    pdfView?.needsDisplay = true
-                    pdfView?.layoutDocumentView()
-                }
-                undoManager.setActionName("Change Comment Color")
-            }
-        }
-
-        // Create the undoManagerProvider closure for all managers
-        let undoManagerProvider: () -> UndoManager? = { [weak pdfView] in
-            pdfView?.undoManager
+    private func configureManagers(_ pdfView: StablePDFView, context: Context) {
+        let tabUndoManager = self.tabUndoManager
+        #if DEBUG
+        Swift.print("[PDFViewWrapper] configureManagers with tabUndoManager=\(ObjectIdentifier(tabUndoManager))")
+        #endif
+        let undoManagerProvider: () -> UndoManager? = {
+            tabUndoManager
         }
 
         pdfManager.undoManagerProvider = undoManagerProvider
@@ -202,7 +162,6 @@ struct PDFViewWrapper: NSViewRepresentable {
             selectionProvider: { [weak pdfView] in
                 guard let pdfView = pdfView,
                       let selection = pdfView.currentSelection else { return (nil, nil) }
-                // Get page from selection itself, not currentPage (fixes two-page continuous mode)
                 let page = selection.pages.first ?? pdfView.currentPage
                 return (selection, page)
             },
@@ -213,7 +172,6 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfManager: pdfManager,
             selectionProvider: { [weak pdfView] in
                 guard let pdfView = pdfView else { return (nil, nil) }
-                // If there's a selection, get page from it; otherwise use currentPage for default comment
                 if let selection = pdfView.currentSelection {
                     let page = selection.pages.first ?? pdfView.currentPage
                     return (selection, page)
@@ -229,7 +187,9 @@ struct PDFViewWrapper: NSViewRepresentable {
         )
 
         context.coordinator.setPDFView(pdfView)
+    }
 
+    private func configureNotificationObservers(_ pdfView: StablePDFView, context: Context) {
         NotificationCenter.default.addObserver(
             context.coordinator,
             selector: #selector(Coordinator.pageChanged(_:)),
@@ -250,10 +210,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
 
-        // Setup scroll event monitor for Ctrl+Scroll zoom
         context.coordinator.setupScrollMonitor(for: pdfView)
-
-        return pdfView
     }
 
     func updateNSView(_ pdfView: StablePDFView, context: Context) {
@@ -281,8 +238,8 @@ struct PDFViewWrapper: NSViewRepresentable {
                 performOneTimeFit(on: pdfView, scrollToTop: true)
             } else {
                 pdfView.scaleFactor = pdfManager.scaleFactor
-                // Scroll to top after scale is set
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                // Delay: PDFKit needs a layout pass before scroll position is meaningful
+                DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) {
                     self.centerContent(in: pdfView, scrollToTop: true)
                 }
             }
@@ -391,8 +348,9 @@ struct PDFViewWrapper: NSViewRepresentable {
             guard self.pdfManager.fitOnceRequested else { return }
 
             // Check if view is ready
-            if (pdfView.bounds.isEmpty || pdfView.document == nil) && retryCount < 10 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if (pdfView.bounds.isEmpty || pdfView.document == nil) && retryCount < DesignTokens.maxReadinessRetries {
+                // Delay: wait for PDFView to finish initial layout before calculating fit scale
+                DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) {
                     self.performFit(on: pdfView, retryCount: retryCount + 1, scrollToTop: scrollToTop)
                 }
                 return
@@ -404,9 +362,8 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
 
             // Calculate fit scale + zoom bump for comfortable reading
-            let baseScale = self.calculateFitScale(for: pdfView, page: currentPage)
-            let zoomBump: CGFloat = 0.05
-            let fitScale = baseScale + zoomBump
+            let baseScale = Self.calculateFitScale(for: pdfView, page: currentPage)
+            let fitScale = baseScale + DesignTokens.pdfFitZoomBump
 
             if fitScale > 0 {
                 let clampedScale = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
@@ -417,8 +374,8 @@ struct PDFViewWrapper: NSViewRepresentable {
             self.pdfManager.fitOnceRequested = false
             self.pdfManager.scaleNeedsUpdate = false
 
-            // Center content after layout updates (and scroll to top for new documents)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            // Delay: PDFKit needs a layout pass before scroll/center position is meaningful
+            DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) {
                 self.centerContent(in: pdfView, scrollToTop: scrollToTop)
             }
         }
@@ -454,7 +411,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
-    private func calculateFitScale(for pdfView: StablePDFView, page: PDFPage) -> CGFloat {
+    private static func calculateFitScale(for pdfView: PDFView, page: PDFPage) -> CGFloat {
         let viewBounds = pdfView.bounds
         guard viewBounds.width > 0, viewBounds.height > 0 else { return 1.0 }
 
@@ -463,33 +420,26 @@ struct PDFViewWrapper: NSViewRepresentable {
         let pageHeight = pageBounds.height
         guard pageWidth > 0, pageHeight > 0 else { return 1.0 }
 
-        // Account for page margins/padding in PDFView
-        let horizontalPadding: CGFloat = 20
-        let verticalPadding: CGFloat = 20
-        let availableWidth = viewBounds.width - horizontalPadding
-        let availableHeight = viewBounds.height - verticalPadding
+        let availableWidth = viewBounds.width - DesignTokens.pdfViewPadding
+        let availableHeight = viewBounds.height - DesignTokens.pdfViewPadding
 
         switch pdfView.displayMode {
         case .singlePage:
-            // Fit entire page in view
             let widthScale = availableWidth / pageWidth
             let heightScale = availableHeight / pageHeight
             return min(widthScale, heightScale)
 
         case .singlePageContinuous:
-            // Fit page width, allow vertical scroll
             return availableWidth / pageWidth
 
         case .twoUp:
-            // Fit two pages side by side
-            let twoPageWidth = pageWidth * 2 + 10 // 10pt gap between pages
+            let twoPageWidth = pageWidth * 2 + DesignTokens.pdfTwoPageGap
             let widthScale = availableWidth / twoPageWidth
             let heightScale = availableHeight / pageHeight
             return min(widthScale, heightScale)
 
         case .twoUpContinuous:
-            // Fit two pages width, allow vertical scroll
-            let twoPageWidth = pageWidth * 2 + 10
+            let twoPageWidth = pageWidth * 2 + DesignTokens.pdfTwoPageGap
             return availableWidth / twoPageWidth
 
         @unknown default:
@@ -522,7 +472,9 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self, weak pdfView] event in
                 guard let self = self,
-                      let pdfView = pdfView else {
+                      let pdfView = pdfView,
+                      let eventWindow = event.window,
+                      eventWindow === pdfView.window else {
                     return event
                 }
 
@@ -572,7 +524,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             guard delta != 0 else { return true }
 
             let oldScale = pdfView.scaleFactor
-            let zoomFactor: CGFloat = 1.1  // 10% per scroll
+            let zoomFactor = DesignTokens.pdfControlScrollZoomFactor
             var newScale: CGFloat = delta > 0 ? oldScale * zoomFactor : oldScale / zoomFactor
 
             newScale = max(DesignTokens.pdfMinScale, min(newScale, DesignTokens.pdfMaxScale))
@@ -686,18 +638,16 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         private func performFitForDisplayModeChange(on pdfView: StablePDFView) {
-            // Delay to allow PDFKit to update its layout for the new display mode
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak pdfView] in
+            // Delay: PDFKit needs time to update its internal layout for the new display mode
+            DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfDisplayModeSettleDelay) { [weak self, weak pdfView] in
                 guard let self = self,
                       let pdfView = pdfView,
                       let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage else {
                     return
                 }
 
-                // Calculate fit scale for the new display mode
                 let baseScale = self.calculateFitScaleForMode(pdfView: pdfView, page: currentPage)
-                let zoomBump: CGFloat = 0.05
-                let fitScale = baseScale + zoomBump
+                let fitScale = baseScale + DesignTokens.pdfFitZoomBump
 
                 guard fitScale > 0 else { return }
 
@@ -705,13 +655,12 @@ struct PDFViewWrapper: NSViewRepresentable {
                 pdfView.scaleFactor = clampedScale
                 self.pdfManager.scaleFactor = clampedScale
 
-                // Navigate to top of current page
                 let pageBounds = currentPage.bounds(for: .mediaBox)
                 let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
                 pdfView.go(to: PDFDestination(page: currentPage, at: topLeft))
 
-                // Center content after layout updates
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak pdfView] in
+                // Delay: PDFKit needs a layout pass before scroll/center position is meaningful
+                DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak self, weak pdfView] in
                     guard let self = self, let pdfView = pdfView else { return }
                     self.centerContentAfterFit(in: pdfView)
                 }
@@ -719,41 +668,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         private func calculateFitScaleForMode(pdfView: StablePDFView, page: PDFPage) -> CGFloat {
-            let viewBounds = pdfView.bounds
-            guard viewBounds.width > 0, viewBounds.height > 0 else { return 1.0 }
-
-            let pageBounds = page.bounds(for: .mediaBox)
-            let pageWidth = pageBounds.width
-            let pageHeight = pageBounds.height
-            guard pageWidth > 0, pageHeight > 0 else { return 1.0 }
-
-            let horizontalPadding: CGFloat = 20
-            let verticalPadding: CGFloat = 20
-            let availableWidth = viewBounds.width - horizontalPadding
-            let availableHeight = viewBounds.height - verticalPadding
-
-            switch pdfView.displayMode {
-            case .singlePage:
-                let widthScale = availableWidth / pageWidth
-                let heightScale = availableHeight / pageHeight
-                return min(widthScale, heightScale)
-
-            case .singlePageContinuous:
-                return availableWidth / pageWidth
-
-            case .twoUp:
-                let twoPageWidth = pageWidth * 2 + 10
-                let widthScale = availableWidth / twoPageWidth
-                let heightScale = availableHeight / pageHeight
-                return min(widthScale, heightScale)
-
-            case .twoUpContinuous:
-                let twoPageWidth = pageWidth * 2 + 10
-                return availableWidth / twoPageWidth
-
-            @unknown default:
-                return availableWidth / pageWidth
-            }
+            PDFViewWrapper.calculateFitScale(for: pdfView, page: page)
         }
 
         private func centerContentAfterFit(in pdfView: StablePDFView) {

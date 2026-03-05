@@ -13,6 +13,9 @@ import PDFKit
 @Observable
 @MainActor
 final class CommentManager {
+    private static let pageFlowTypeKey = PDFAnnotationKey(rawValue: "PageFlowType")
+    private static let pageFlowCommentValue = "pageflow-comment"
+
     deinit {
         #if DEBUG
         Swift.print("[deinit] CommentManager")
@@ -70,6 +73,7 @@ final class CommentManager {
 
         let commentID = UUID()
         highlight.userName = commentID.uuidString
+        highlight.setValue(Self.pageFlowCommentValue, forAnnotationKey: Self.pageFlowTypeKey)
         highlight.modificationDate = Date()
 
         page.addAnnotation(highlight)
@@ -158,6 +162,29 @@ final class CommentManager {
         editingCommentID = nil
     }
 
+    func commentID(for annotation: PDFAnnotation) -> UUID? {
+        annotation.userName.flatMap { UUID(uuidString: $0) }
+    }
+
+    func updateCommentColor(_ id: UUID, color: NSColor) {
+        guard let highlight = highlights[id] else { return }
+        let previousColor = highlight.color
+        guard previousColor != color else { return }
+
+        highlight.color = color
+        pdfManager?.isDirty = true
+        pdfManager?.pageVersion += 1
+
+        if let undoManager = getUndoManager(for: "Change Comment Color") {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.updateCommentColor(id, color: previousColor)
+                }
+            }
+            undoManager.setActionName("Change Comment Color")
+        }
+    }
+
     // MARK: - Document Loading
 
     func loadComments(from document: PDFDocument) {
@@ -230,40 +257,43 @@ final class CommentManager {
         let highlight = PDFAnnotation(bounds: union, forType: .highlight, withProperties: nil)
         highlight.markupType = .highlight
         highlight.color = SettingsManager.shared.commentPresets.first?.color ?? DesignTokens.commentHighlightColor
-        highlight.quadrilateralPoints = buildQuadPoints(from: rects, relativeTo: union)
+        highlight.quadrilateralPoints = buildQuadrilateralPoints(from: rects, relativeTo: union)
         return highlight
-    }
-
-    private func buildQuadPoints(from rects: [CGRect], relativeTo union: CGRect) -> [NSValue] {
-        rects.flatMap { rect -> [NSValue] in
-            let tl = CGPoint(x: rect.minX - union.minX, y: rect.maxY - union.minY)
-            let tr = CGPoint(x: rect.maxX - union.minX, y: rect.maxY - union.minY)
-            let bl = CGPoint(x: rect.minX - union.minX, y: rect.minY - union.minY)
-            let br = CGPoint(x: rect.maxX - union.minX, y: rect.minY - union.minY)
-            return [tl, tr, bl, br].map(NSValue.init(point:))
-        }
     }
 
     private func isCommentHighlight(_ annotation: PDFAnnotation) -> Bool {
         guard annotation.type == PDFAnnotationSubtype.highlight.rawValue else { return false }
-        guard let color = annotation.color.usingColorSpace(.deviceRGB) else { return false }
+
+        // Primary: userName is a valid UUID (created by PageFlow)
+        if let userName = annotation.userName, UUID(uuidString: userName) != nil {
+            return true
+        }
+
+        // Secondary: annotation has PageFlowType key
+        if let flowType = annotation.value(forAnnotationKey: Self.pageFlowTypeKey) as? String,
+           flowType == Self.pageFlowCommentValue {
+            return true
+        }
+
+        // Legacy fallback: color match for pre-fix saved files (only if userName is nil/empty)
+        let hasUserName = annotation.userName.map { !$0.isEmpty } ?? false
+        guard !hasUserName else { return false }
+
+        guard let color = annotation.color.usingColorSpace(.deviceRGB),
+              let target = DesignTokens.commentHighlightColor.usingColorSpace(.deviceRGB) else {
+            return false
+        }
 
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         color.getRed(&r, green: &g, blue: &b, alpha: &a)
-
-        guard let target = DesignTokens.commentHighlightColor.usingColorSpace(.deviceRGB) else {
-            return false
-        }
         var tr: CGFloat = 0, tg: CGFloat = 0, tb: CGFloat = 0, ta: CGFloat = 0
         target.getRed(&tr, green: &tg, blue: &tb, alpha: &ta)
 
         let tolerance: CGFloat = 0.1
-        let matches =
-            abs(r - tr) < tolerance &&
+        return abs(r - tr) < tolerance &&
             abs(g - tg) < tolerance &&
             abs(b - tb) < tolerance &&
             abs(a - ta) < 0.15
-        return matches
     }
 
     // MARK: - Undo/Redo

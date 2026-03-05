@@ -58,6 +58,9 @@ final class AnnotationManager {
             assertionFailure("UndoManager unavailable for: \(action)")
             return nil
         }
+        #if DEBUG
+        Swift.print("[AnnotationManager] getUndoManager for '\(action)': \(ObjectIdentifier(undoManager)), canUndo=\(undoManager.canUndo)")
+        #endif
         return undoManager
     }
 
@@ -203,26 +206,6 @@ final class AnnotationManager {
 
     // MARK: - Helpers
 
-    private func buildQuadrilateralPoints(from rects: [CGRect], relativeTo union: CGRect) -> [NSValue] {
-        var quadPoints: [NSValue] = []
-
-        for rect in rects {
-            let tl = CGPoint(x: rect.minX - union.minX, y: rect.maxY - union.minY)
-            let tr = CGPoint(x: rect.maxX - union.minX, y: rect.maxY - union.minY)
-            let bl = CGPoint(x: rect.minX - union.minX, y: rect.minY - union.minY)
-            let br = CGPoint(x: rect.maxX - union.minX, y: rect.minY - union.minY)
-
-            quadPoints.append(contentsOf: [
-                NSValue(point: tl),
-                NSValue(point: tr),
-                NSValue(point: bl),
-                NSValue(point: br)
-            ])
-        }
-
-        return quadPoints
-    }
-
     private func registerUndoAdd(_ annotation: PDFAnnotation, on page: PDFPage, actionName: String) {
         guard let undoManager = getUndoManager(for: actionName) else { return }
 
@@ -233,6 +216,9 @@ final class AnnotationManager {
             }
         }
         undoManager.setActionName(actionName)
+        #if DEBUG
+        Swift.print("[AnnotationManager] Registered undo '\(actionName)' on \(ObjectIdentifier(undoManager)), canUndo=\(undoManager.canUndo)")
+        #endif
     }
 
     private func remove(_ annotation: PDFAnnotation, from page: PDFPage, registerRedo: Bool) {
