@@ -22,6 +22,12 @@ enum DocumentLoadResult {
     case needsPassword
 }
 
+enum PageMutation {
+    case inserted(at: Int)
+    case deleted(at: Int)
+    case moved(from: Int, to: Int)
+}
+
 @Observable
 @MainActor
 final class PDFManager {
@@ -64,9 +70,12 @@ final class PDFManager {
     @ObservationIgnored private var securityScopedURL: URL?
 
     var undoManagerProvider: (() -> UndoManager?)?
+    var pageMutationHandler: ((PageMutation) -> Void)?
 
     func clearUndoHistory() {
-        undoManagerProvider?()?.removeAllActions()
+        guard let undoManager = undoManagerProvider?() else { return }
+        undoManager.removeAllActions()
+        NotificationCenter.default.post(name: .NSUndoManagerCheckpoint, object: undoManager)
     }
 
     deinit {
@@ -80,7 +89,7 @@ final class PDFManager {
 
     private func getUndoManager(for action: String) -> UndoManager? {
         guard let undoManager = undoManagerProvider?() else {
-            assertionFailure("UndoManager unavailable for: \(action)")
+            logger.error("UndoManager unavailable for action: \(action)")
             return nil
         }
         return undoManager
@@ -181,15 +190,22 @@ final class PDFManager {
             return .failed
         }
 
-        stopAccessingCurrentResource()
-        clearPendingLockedDocument()
+        discardPendingLockedDocument()
 
-        guard startAccessingResourceIfNeeded(url, isSecurityScoped: isSecurityScoped) else {
-            return .failed
+        let startedSecurityScopedAccess: Bool
+        if isSecurityScoped {
+            guard url.startAccessingSecurityScopedResource() else {
+                return .failed
+            }
+            startedSecurityScopedAccess = true
+        } else {
+            startedSecurityScopedAccess = false
         }
 
         guard let pdfDocument = PDFDocument(url: url) else {
-            stopAccessingResourceOnFailure(url, wasSecurityScoped: isSecurityScoped)
+            if startedSecurityScopedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
             return .failed
         }
 
@@ -197,11 +213,15 @@ final class PDFManager {
         if pdfDocument.isLocked {
             pendingLockedDocument = pdfDocument
             pendingLockedURL = url
-            pendingIsSecurityScoped = isSecurityScoped
+            pendingIsSecurityScoped = startedSecurityScopedAccess
             return .needsPassword
         }
 
-        finalizeDocumentLoad(pdfDocument, url: url)
+        finalizeDocumentLoad(
+            pdfDocument,
+            url: url,
+            securityScopedURL: startedSecurityScopedAccess ? url : nil
+        )
         return .success
     }
 
@@ -215,27 +235,43 @@ final class PDFManager {
             return false
         }
 
-        finalizeDocumentLoad(pdfDocument, url: url)
-        clearPendingLockedDocument()
+        finalizeDocumentLoad(
+            pdfDocument,
+            url: url,
+            securityScopedURL: pendingIsSecurityScoped ? url : nil
+        )
+        resetPendingLockedDocument()
         return true
     }
 
     func cancelPendingUnlock() {
-        if pendingIsSecurityScoped, let url = pendingLockedURL {
-            url.stopAccessingSecurityScopedResource()
-        }
-        clearPendingLockedDocument()
+        discardPendingLockedDocument()
     }
 
-    private func clearPendingLockedDocument() {
+    private func resetPendingLockedDocument() {
         pendingLockedDocument = nil
         pendingLockedURL = nil
         pendingIsSecurityScoped = false
     }
 
-    private func finalizeDocumentLoad(_ pdfDocument: PDFDocument, url: URL) {
+    private func discardPendingLockedDocument() {
+        if pendingIsSecurityScoped, let url = pendingLockedURL {
+            url.stopAccessingSecurityScopedResource()
+
+            if securityScopedURL == url {
+                isAccessingSecurityScopedResource = false
+                securityScopedURL = nil
+            }
+        }
+
+        resetPendingLockedDocument()
+    }
+
+    private func finalizeDocumentLoad(_ pdfDocument: PDFDocument, url: URL, securityScopedURL: URL?) {
         // Clear previous document's undo actions to prevent stale references
-        undoManagerProvider?()?.removeAllActions()
+        clearUndoHistory()
+        clearNavigationHistory()
+        stopAccessingCurrentResource()
 
         document = pdfDocument
         documentURL = url
@@ -247,6 +283,8 @@ final class PDFManager {
         scaleFactor = DesignTokens.pdfDefaultScale
         isDirty = false
         copiedPage = nil  // Clear to prevent cross-document paste corruption
+        isAccessingSecurityScopedResource = securityScopedURL != nil
+        self.securityScopedURL = securityScopedURL
     }
 
     private func stopAccessingCurrentResource() {
@@ -257,28 +295,10 @@ final class PDFManager {
         }
     }
 
-    private func startAccessingResourceIfNeeded(_ url: URL, isSecurityScoped: Bool) -> Bool {
-        guard isSecurityScoped else { return true }
-
-        guard url.startAccessingSecurityScopedResource() else {
-            return false
-        }
-
-        isAccessingSecurityScopedResource = true
-        securityScopedURL = url
-        return true
-    }
-
-    private func stopAccessingResourceOnFailure(_ url: URL, wasSecurityScoped: Bool) {
-        if wasSecurityScoped {
-            url.stopAccessingSecurityScopedResource()
-            isAccessingSecurityScopedResource = false
-            securityScopedURL = nil
-        }
-    }
-
     func closeDocument() {
-        undoManagerProvider?()?.removeAllActions()
+        clearUndoHistory()
+        discardPendingLockedDocument()
+        clearNavigationHistory()
 
         if isAccessingSecurityScopedResource, let url = documentURL {
             url.stopAccessingSecurityScopedResource()
@@ -437,9 +457,10 @@ final class PDFManager {
         copiedPage = newCopy
 
         isDirty = true
-        pageVersion += 1
         currentPageIndex = insertIndex
         currentPage = document.page(at: insertIndex)
+        pageVersion += 1
+        pageMutationHandler?(.inserted(at: insertIndex))
 
         if let undoManager = getUndoManager(for: "Paste Page") {
             undoManager.registerUndo(withTarget: self) { target in
@@ -455,22 +476,23 @@ final class PDFManager {
         guard let document = document,
               document.pageCount > 1,
               index >= 0, index < document.pageCount,
-              let page = document.page(at: index),
-              let pageCopy = page.copy() as? PDFPage else { return }
+              let page = document.page(at: index) else { return }
 
         document.removePage(at: index)
         isDirty = true
-        pageVersion += 1
 
-        // Adjust current page if needed
-        if currentPageIndex >= document.pageCount {
+        if currentPageIndex > index {
+            currentPageIndex -= 1
+        } else if currentPageIndex >= document.pageCount {
             currentPageIndex = document.pageCount - 1
         }
         currentPage = document.page(at: currentPageIndex)
+        pageVersion += 1
+        pageMutationHandler?(.deleted(at: index))
 
         if let undoManager = getUndoManager(for: "Delete Page") {
             undoManager.registerUndo(withTarget: self) { target in
-                target.insertPageForUndo(pageCopy, at: index)
+                target.insertPageForUndo(page, at: index)
             }
             undoManager.setActionName("Delete Page")
         }
@@ -484,7 +506,13 @@ final class PDFManager {
         let insertIndex = index + 1
         document.insert(pageCopy, at: insertIndex)
         isDirty = true
+
+        if currentPageIndex >= insertIndex {
+            currentPageIndex += 1
+        }
+        currentPage = document.page(at: currentPageIndex)
         pageVersion += 1
+        pageMutationHandler?(.inserted(at: insertIndex))
 
         if let undoManager = getUndoManager(for: "Duplicate Page") {
             undoManager.registerUndo(withTarget: self) { target in
@@ -515,6 +543,7 @@ final class PDFManager {
             currentPageIndex += 1
         }
         currentPage = document.page(at: currentPageIndex)
+        pageMutationHandler?(.moved(from: sourceIndex, to: destinationIndex))
 
         if let undoManager = getUndoManager(for: "Reorder Page") {
             undoManager.registerUndo(withTarget: self) { target in
@@ -535,6 +564,7 @@ final class PDFManager {
         pageVersion += 1
         currentPageIndex = index
         currentPage = document.page(at: index)
+        pageMutationHandler?(.inserted(at: index))
 
         if let undoManager = getUndoManager(for: "Delete Page") {
             undoManager.registerUndo(withTarget: self) { target in
@@ -547,20 +577,22 @@ final class PDFManager {
     private func removePageForUndo(at index: Int) {
         guard let document = document,
               document.pageCount > 1,
-              let page = document.page(at: index),
-              let pageCopy = page.copy() as? PDFPage else { return }
+              let page = document.page(at: index) else { return }
 
         document.removePage(at: index)
         isDirty = true
-        pageVersion += 1
-        if currentPageIndex >= document.pageCount {
+        if currentPageIndex > index {
+            currentPageIndex -= 1
+        } else if currentPageIndex >= document.pageCount {
             currentPageIndex = document.pageCount - 1
         }
         currentPage = document.page(at: currentPageIndex)
+        pageVersion += 1
+        pageMutationHandler?(.deleted(at: index))
 
         if let undoManager = getUndoManager(for: "Duplicate Page") {
             undoManager.registerUndo(withTarget: self) { target in
-                target.insertPageForUndo(pageCopy, at: index)
+                target.insertPageForUndo(page, at: index)
             }
             undoManager.setActionName("Duplicate Page")
         }
@@ -587,22 +619,15 @@ final class PDFManager {
 
     /// Async save - use for normal save operations to prevent UI freeze
     func save() async -> Bool {
-        guard let document = document,
-              let url = documentURL else {
+        guard let targetURL = documentURL,
+              let data = document?.dataRepresentation() else {
             return false
         }
 
-        // Capture references for background work
-        let docRef = document
-        let targetURL = url
         let log = logger
 
-        // Perform heavy work on background thread
+        // File I/O on background thread. Serialization stays on MainActor to avoid PDFKit races.
         let result = await Task.detached(priority: .userInitiated) {
-            guard let data = docRef.dataRepresentation() else {
-                return false
-            }
-
             do {
                 try data.write(to: targetURL, options: .atomic)
                 return true
@@ -643,21 +668,15 @@ final class PDFManager {
 
     /// Async save as - use for Save As operations
     func saveAs(to url: URL) async -> Bool {
-        guard let document = document else {
+        guard let data = document?.dataRepresentation() else {
             return false
         }
 
-        // Capture references for background work
-        let docRef = document
         let targetURL = url
         let log = logger
 
-        // Perform heavy work on background thread
+        // File I/O on background thread. Serialization stays on MainActor to avoid PDFKit races.
         let result = await Task.detached(priority: .userInitiated) {
-            guard let data = docRef.dataRepresentation() else {
-                return false
-            }
-
             do {
                 try data.write(to: targetURL, options: .atomic)
                 return true

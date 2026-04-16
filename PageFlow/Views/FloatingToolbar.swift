@@ -13,22 +13,19 @@ struct FloatingToolbar: View {
     @Bindable var commentManager: CommentManager
     @Bindable var bookmarkManager: BookmarkManager
     var onOpenFilePicker: () -> Void
-    @Binding var isTopBarHovered: Bool
     @Binding var showingOutline: Bool
     @Binding var showingComments: Bool
-    var toolbarPinned: Bool
     @State private var lastFitTapTime: Date?
+    @State private var settingsManager = SettingsManager.shared
     private let doubleTapWindow: TimeInterval = 0.3
 
-    var body: some View {
-        let isVisible = toolbarPinned || isTopBarHovered
+    private var toolbarMetrics: SettingsManager.ToolbarMetrics {
+        SettingsManager.toolbarMetrics(for: settingsManager.toolbarScale)
+    }
 
+    var body: some View {
         expandedContainer
-        .frame(height: DesignTokens.collapsedToolbarSize)
-        .animation(.easeInOut(duration: DesignTokens.animationFast), value: isTopBarHovered)
-        .opacity(isVisible ? 1 : 0)
-        .allowsHitTesting(isVisible)
-        .animation(.easeInOut(duration: DesignTokens.animationFast), value: isVisible)
+            .frame(height: toolbarMetrics.containerHeight)
     }
 
     private var expandedContainer: some View {
@@ -66,7 +63,7 @@ struct FloatingToolbar: View {
                 disabled: !pdfManager.hasDocument
             )
             toolbarButton(
-                icon: showingOutline ? "sidebar.leading" : "sidebar.leading",
+                icon: "sidebar.leading",
                 action: { withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { showingOutline.toggle() } },
                 disabled: !pdfManager.hasDocument
             )
@@ -105,14 +102,14 @@ struct FloatingToolbar: View {
             toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
             toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
         }
-        .padding(.horizontal, DesignTokens.spacingSM)
-        .padding(.vertical, DesignTokens.spacingXS)
+        .padding(.horizontal, toolbarMetrics.horizontalPadding)
+        .padding(.vertical, toolbarMetrics.verticalPadding)
     }
 
     private var colorMenu: some View {
         Menu {
             Text("Underline").font(.caption)
-            ForEach(SettingsManager.shared.underlinePresets) { preset in
+            ForEach(settingsManager.underlinePresets) { preset in
                 Button {
                     annotationManager.underlineColor = preset.color
                 } label: {
@@ -128,7 +125,7 @@ struct FloatingToolbar: View {
             }
             Divider()
             Text("Highlight").font(.caption)
-            ForEach(SettingsManager.shared.highlightPresets) { preset in
+            ForEach(settingsManager.highlightPresets) { preset in
                 Button {
                     annotationManager.highlightColor = preset.color
                 } label: {
@@ -144,8 +141,8 @@ struct FloatingToolbar: View {
             }
         } label: {
             Image(systemName: "paintpalette")
-                .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
-                .frame(width: DesignTokens.toolbarButtonSize, height: DesignTokens.toolbarButtonSize)
+                .font(.system(size: toolbarMetrics.iconSize, weight: .medium))
+                .frame(width: toolbarMetrics.buttonSize, height: toolbarMetrics.buttonSize)
                 .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
         }
         .buttonStyle(.plain)
@@ -161,8 +158,8 @@ struct FloatingToolbar: View {
     private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: DesignTokens.toolbarIconSize, weight: .medium))
-                .frame(width: DesignTokens.toolbarButtonSize, height: DesignTokens.toolbarButtonSize)
+                .font(.system(size: toolbarMetrics.iconSize, weight: .medium))
+                .frame(width: toolbarMetrics.buttonSize, height: toolbarMetrics.buttonSize)
                 .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
         }
         .buttonStyle(.plain)

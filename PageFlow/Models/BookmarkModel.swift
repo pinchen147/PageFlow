@@ -9,7 +9,7 @@ import Foundation
 
 struct BookmarkModel: Identifiable, Codable, Equatable {
     let id: UUID
-    let pageIndex: Int
+    var pageIndex: Int
     var title: String
     let createdAt: Date
 

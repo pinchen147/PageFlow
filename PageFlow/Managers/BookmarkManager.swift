@@ -49,7 +49,7 @@ final class BookmarkManager {
 
     private func getUndoManager(for action: String) -> UndoManager? {
         guard let undoManager = undoManagerProvider?() else {
-            assertionFailure("UndoManager unavailable for: \(action)")
+            logger.error("UndoManager unavailable for action: \(action)")
             return nil
         }
         return undoManager
@@ -156,6 +156,128 @@ final class BookmarkManager {
         selectedBookmarkID = nil
     }
 
+    func handlePageInsertion(at index: Int) {
+        var didChange = false
+
+        for bookmarkIndex in bookmarks.indices {
+            guard bookmarks[bookmarkIndex].pageIndex >= index else { continue }
+            updateBookmarkPageIndex(at: bookmarkIndex, to: bookmarks[bookmarkIndex].pageIndex + 1)
+            didChange = true
+        }
+
+        persistPageMutationIfNeeded(didChange)
+    }
+
+    func handlePageDeletion(at index: Int) {
+        var removedBookmarks: [BookmarkModel] = []
+        var updatedBookmarks: [BookmarkModel] = []
+        var didChange = false
+
+        for bookmark in bookmarks {
+            switch bookmark.pageIndex {
+            case index:
+                removedBookmarks.append(bookmark)
+                if selectedBookmarkID == bookmark.id {
+                    selectedBookmarkID = nil
+                }
+                didChange = true
+            case let pageIndex where pageIndex > index:
+                var shiftedBookmark = bookmark
+                shiftBookmarkToPreviousPage(&shiftedBookmark)
+                updatedBookmarks.append(shiftedBookmark)
+                didChange = true
+            default:
+                updatedBookmarks.append(bookmark)
+            }
+        }
+
+        guard didChange else { return }
+
+        bookmarks = updatedBookmarks
+        save()
+
+        // Register undo for the removed bookmarks.
+        // Shifts are handled symmetrically by handlePageInsertion on undo.
+        if !removedBookmarks.isEmpty, let undoManager = undoManagerProvider?() {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.restoreBookmarksForUndo(removedBookmarks)
+                }
+            }
+        }
+    }
+
+    private func restoreBookmarksForUndo(_ restored: [BookmarkModel]) {
+        bookmarks.append(contentsOf: restored)
+        save()
+
+        if let undoManager = undoManagerProvider?() {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.removeBookmarksForRedo(restored)
+                }
+            }
+        }
+    }
+
+    private func removeBookmarksForRedo(_ toRemove: [BookmarkModel]) {
+        let idsToRemove = Set(toRemove.map(\.id))
+        bookmarks.removeAll { idsToRemove.contains($0.id) }
+        if let selectedBookmarkID, idsToRemove.contains(selectedBookmarkID) {
+            self.selectedBookmarkID = nil
+        }
+        save()
+
+        if let undoManager = undoManagerProvider?() {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.restoreBookmarksForUndo(toRemove)
+                }
+            }
+        }
+    }
+
+    func handlePageMove(from sourceIndex: Int, to destinationIndex: Int) {
+        var didChange = false
+
+        for bookmarkIndex in bookmarks.indices {
+            let originalPageIndex = bookmarks[bookmarkIndex].pageIndex
+            let updatedPageIndex: Int
+
+            if originalPageIndex == sourceIndex {
+                updatedPageIndex = destinationIndex
+            } else if sourceIndex < destinationIndex,
+                      originalPageIndex > sourceIndex,
+                      originalPageIndex <= destinationIndex {
+                updatedPageIndex = originalPageIndex - 1
+            } else if sourceIndex > destinationIndex,
+                      originalPageIndex >= destinationIndex,
+                      originalPageIndex < sourceIndex {
+                updatedPageIndex = originalPageIndex + 1
+            } else {
+                continue
+            }
+
+            updateBookmarkPageIndex(at: bookmarkIndex, to: updatedPageIndex)
+            didChange = true
+        }
+
+        persistPageMutationIfNeeded(didChange)
+    }
+
+    /// Migrates bookmarks from one document URL to another (e.g. after Save As).
+    func migrateBookmarks(from oldURL: URL, to newURL: URL) {
+        guard let oldKey = storageKey(for: oldURL),
+              let newKey = storageKey(for: newURL),
+              oldKey != newKey else {
+            return
+        }
+
+        guard let data = defaults.data(forKey: oldKey) else { return }
+        defaults.set(data, forKey: newKey)
+        defaults.removeObject(forKey: oldKey)
+    }
+
     // MARK: - Persistence
 
     private func save() {
@@ -173,9 +295,33 @@ final class BookmarkManager {
     }
 
     private func storageKey(for url: URL) -> String? {
-        let path = url.standardizedFileURL.path
+        let path = url.pageFlowCanonicalDocumentURL.path
         guard !path.isEmpty else { return nil }
         return keyPrefix + path
+    }
+
+    private func persistPageMutationIfNeeded(_ didChange: Bool) {
+        guard didChange else { return }
+        save()
+    }
+
+    private func updateBookmarkPageIndex(at bookmarkIndex: Int, to newPageIndex: Int) {
+        let originalPageIndex = bookmarks[bookmarkIndex].pageIndex
+        let originalDefaultTitle = "Page \(originalPageIndex + 1)"
+        bookmarks[bookmarkIndex].pageIndex = newPageIndex
+
+        if bookmarks[bookmarkIndex].title == originalDefaultTitle {
+            bookmarks[bookmarkIndex].title = "Page \(newPageIndex + 1)"
+        }
+    }
+
+    private func shiftBookmarkToPreviousPage(_ bookmark: inout BookmarkModel) {
+        let originalDefaultTitle = "Page \(bookmark.pageIndex + 1)"
+        bookmark.pageIndex -= 1
+
+        if bookmark.title == originalDefaultTitle {
+            bookmark.title = "Page \(bookmark.pageIndex + 1)"
+        }
     }
 
     // MARK: - Undo/Redo

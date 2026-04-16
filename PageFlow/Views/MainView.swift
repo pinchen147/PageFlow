@@ -18,8 +18,8 @@ struct MainView: View {
     @Bindable var bookmarkManager: BookmarkManager
     var isActive: Bool
     @Binding var showingSearch: Bool
-    @Binding var showingToolbar: Bool
-    @Binding var isTopBarHovered: Bool
+    let searchFocusRequest: Int
+    var isAlwaysOnTop: Bool
     @Bindable var tabManager: TabManager
     var onOpenFile: (URL, Bool, Bool) -> Void
 
@@ -29,6 +29,7 @@ struct MainView: View {
     @State private var isBottomBarHovered = false
     @State private var toastMessage: String?
     @State private var toastWorkItem: DispatchWorkItem?
+    @State private var settingsManager = SettingsManager.shared
 
     private var showingGoToPage: Bool {
         get { tabManager.tabUIStates[tabID]?.showingGoToPage ?? false }
@@ -47,23 +48,9 @@ struct MainView: View {
         )
     }
 
-    private var showingFileImporterBinding: Binding<Bool> {
-        Binding(
-            get: { tabManager.tabUIStates[tabID]?.showingFileImporter ?? false },
-            set: { tabManager.setShowingFileImporter($0, for: tabID) }
-        )
-    }
-
     private var showingOutline: Bool {
         get { tabManager.tabUIStates[tabID]?.showingOutline ?? false }
         nonmutating set { tabManager.setShowingOutline(newValue, for: tabID) }
-    }
-
-    private var showingOutlineBinding: Binding<Bool> {
-        Binding(
-            get: { tabManager.tabUIStates[tabID]?.showingOutline ?? false },
-            set: { tabManager.setShowingOutline($0, for: tabID) }
-        )
     }
 
     private var showingComments: Bool {
@@ -71,11 +58,8 @@ struct MainView: View {
         nonmutating set { tabManager.setShowingComments(newValue, for: tabID) }
     }
 
-    private var showingCommentsBinding: Binding<Bool> {
-        Binding(
-            get: { tabManager.tabUIStates[tabID]?.showingComments ?? false },
-            set: { tabManager.setShowingComments($0, for: tabID) }
-        )
+    private var topChromeHeight: CGFloat {
+        TopChromeView.height(toolbarScale: settingsManager.toolbarScale)
     }
 
     var body: some View {
@@ -102,7 +86,7 @@ struct MainView: View {
                     onClose: { showingComments = false }
                 )
                 .onExitCommand { showingComments = false }
-                .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
+                .padding(.top, topChromeHeight + DesignTokens.spacingXS)
                 .padding(.bottom, DesignTokens.spacingMD)
                 .padding(.trailing, DesignTokens.spacingXS)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -122,60 +106,13 @@ struct MainView: View {
                     tabManager.isEditingPages = false
                     showingOutline = false
                 }
-                .padding(.top, DesignTokens.trafficLightHotspotHeight + DesignTokens.spacingXS)
+                .padding(.top, topChromeHeight + DesignTokens.spacingXS)
                 .padding(.bottom, DesignTokens.spacingMD)
                 .padding(.leading, DesignTokens.spacingXS)
                 .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingOutline)
-        .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingComments)
-        .overlay(alignment: .top) {
-            VStack(spacing: 0) {
-                // Window drag region - thin strip at very top
-                WindowDragArea()
-                    .frame(height: DesignTokens.windowDragRegionHeight)
-                    .frame(maxWidth: .infinity)
-
-                // Tab bar area
-                HStack(spacing: 0) {
-                    // Traffic lights
-                    TrafficLightsView(isHovering: $isTopBarHovered)
-                        .padding(DesignTokens.spacingXS)
-
-                    // Tab bar - fills remaining space between traffic lights and toolbar
-                    TabBarView(tabManager: tabManager, isHovering: $isTopBarHovered)
-                        .frame(maxWidth: .infinity)
-
-                    // Floating toolbar (pinned or auto-hide on hover)
-                    FloatingToolbar(
-                        pdfManager: pdfManager,
-                        annotationManager: annotationManager,
-                        commentManager: commentManager,
-                        bookmarkManager: bookmarkManager,
-                        onOpenFilePicker: { tabManager.openFilePicker() },
-                        isTopBarHovered: $isTopBarHovered,
-                        showingOutline: showingOutlineBinding,
-                        showingComments: showingCommentsBinding,
-                        toolbarPinned: showingToolbar
-                    )
-                    .padding(.top, DesignTokens.spacingXS)
-                    .padding(.trailing, DesignTokens.floatingToolbarPadding)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: DesignTokens.trafficLightHotspotHeight - DesignTokens.windowDragRegionHeight)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: DesignTokens.trafficLightHotspotHeight)
-            .onContinuousHover { phase in
-                switch phase {
-                case .active:
-                    isTopBarHovered = true
-                case .ended:
-                    isTopBarHovered = false
-                }
-            }
-        }
         .overlay(alignment: .bottom) {
             if pdfManager.hasDocument {
                 bottomHoverBar
@@ -183,7 +120,12 @@ struct MainView: View {
         }
         .overlay(alignment: .bottom) {
             if showingSearch {
-                SearchBar(searchManager: searchManager, pdfManager: pdfManager, isVisible: $showingSearch)
+                SearchBar(
+                    searchManager: searchManager,
+                    pdfManager: pdfManager,
+                    isVisible: $showingSearch,
+                    focusRequest: searchFocusRequest
+                )
                     .padding(.bottom, DesignTokens.spacingXS)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -203,13 +145,8 @@ struct MainView: View {
         }
         .animation(.easeInOut(duration: 0.15), value: isDragHovering)
         .animation(.easeInOut(duration: 0.2), value: showingSearch)
-        .onChange(of: showingSearch) { _, isShowing in
-            if !isShowing {
-                searchManager.clearSearch()
-            }
-        }
         .toolbar(.hidden)
-        .background(WindowConfigurator())
+        .background(WindowConfigurator(isAlwaysOnTop: isAlwaysOnTop))
         .background(WindowTitleUpdater(title: pdfManager.documentTitle))
         .ignoresSafeArea(.all, edges: .all)
         .onChange(of: pdfManager.hasDocument) { _, hasDoc in
@@ -231,9 +168,13 @@ struct MainView: View {
                 // On macOS 15+, onOpenURL delivers the file asynchronously — delay
                 // the file picker to give it time to arrive.
                 let hasPending = !((NSApp.delegate as? AppDelegate)?.pendingURLs.isEmpty ?? true)
-                if !hasPending {
+                if !hasPending && !tabManager.isAwaitingPassword(for: tabID) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [pdfManager, tabManager] in
-                        guard !pdfManager.hasDocument else { return }
+                        guard !pdfManager.hasDocument,
+                              !tabManager.isAwaitingPassword(for: tabID),
+                              !tabManager.consumeAutomaticFilePickerSuppression() else {
+                            return
+                        }
                         tabManager.openFilePicker()
                     }
                 }
@@ -521,8 +462,8 @@ struct WindowTitleUpdater: NSViewRepresentable {
         bookmarkManager: BookmarkManager(),
         isActive: true,
         showingSearch: .constant(false),
-        showingToolbar: .constant(true),
-        isTopBarHovered: .constant(false),
+        searchFocusRequest: 0,
+        isAlwaysOnTop: false,
         tabManager: TabManager(),
         onOpenFile: { _, _, _ in }
     )

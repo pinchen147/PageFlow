@@ -272,21 +272,29 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfManager.scaleNeedsUpdate = false
         }
 
-        updateSearchHighlights(pdfView)
+        updateSearchHighlights(pdfView, context: context)
     }
 
-    private func updateSearchHighlights(_ pdfView: StablePDFView) {
+    private func updateSearchHighlights(_ pdfView: StablePDFView, context: Context) {
         if searchManager.hasResults {
             pdfView.highlightedSelections = searchManager.highlightedSelections(
                 currentColor: DesignTokens.searchCurrentResult,
                 othersColor: DesignTokens.searchOtherResults
             )
 
-            if let currentSelection = searchManager.currentSelection() {
+            let resultIndex = searchManager.currentResultIndex
+            let resultCount = searchManager.searchResults.count
+            let coord = context.coordinator
+            if let currentSelection = searchManager.currentSelection(),
+               resultIndex != coord.lastNavigatedSearchIndex || resultCount != coord.lastSearchResultCount {
+                coord.lastNavigatedSearchIndex = resultIndex
+                coord.lastSearchResultCount = resultCount
                 pdfView.go(to: currentSelection)
                 pdfView.setCurrentSelection(currentSelection, animate: true)
             }
         } else {
+            context.coordinator.lastNavigatedSearchIndex = -1
+            context.coordinator.lastSearchResultCount = 0
             pdfView.highlightedSelections = nil
             pdfView.setCurrentSelection(nil, animate: false)
         }
@@ -458,6 +466,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         private weak var pdfView: StablePDFView?
         private var lastKnownScale: CGFloat?
         private var wasActive: Bool = true
+        var lastNavigatedSearchIndex: Int = -1
+        var lastSearchResultCount: Int = 0
 
         init(pdfManager: PDFManager, annotationManager: AnnotationManager, commentManager: CommentManager, isActive: Bool) {
             self.pdfManager = pdfManager

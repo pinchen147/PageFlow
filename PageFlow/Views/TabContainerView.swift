@@ -13,8 +13,15 @@ struct TabContainerView: View {
 
     @State private var tabManager = TabManager()
     @State private var showingSearch = false
-    @State private var showingToolbar = false
+    @State private var searchFocusRequest = 0
     @State private var isTopBarHovered = false
+
+    private var alwaysOnTopBinding: Binding<Bool> {
+        Binding(
+            get: { tabManager.isAlwaysOnTop },
+            set: { tabManager.isAlwaysOnTop = $0 }
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -34,12 +41,11 @@ struct TabContainerView: View {
                         bookmarkManager: bookmarkManager,
                         isActive: isActive,
                         showingSearch: $showingSearch,
-                        showingToolbar: $showingToolbar,
-                        isTopBarHovered: $isTopBarHovered,
+                        searchFocusRequest: searchFocusRequest,
+                        isAlwaysOnTop: tabManager.isAlwaysOnTop,
                         tabManager: tabManager,
                         onOpenFile: { url, isSecurityScoped, replaceCurrent in
                             tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
-                            recentFilesManager.addRecentFile(url)
                         }
                     )
                     .opacity(isActive ? 1 : 0)
@@ -49,11 +55,26 @@ struct TabContainerView: View {
                 }
             }
         }
+        .ignoresSafeArea(.all, edges: .all)
+        .overlay(alignment: .top) {
+            TopChromeView(tabManager: tabManager, isTopBarHovered: $isTopBarHovered)
+                .ignoresSafeArea(.all, edges: .top)
+        }
         .background(WindowRegistrar(tabManager: tabManager))
         .focusedSceneValue(\.tabManager, tabManager)
         .focusedSceneValue(\.showingSearch, $showingSearch)
-        .focusedSceneValue(\.showingToolbar, $showingToolbar)
+        .focusedSceneValue(\.searchFocusRequest, $searchFocusRequest)
+        .focusedSceneValue(\.alwaysOnTop, alwaysOnTopBinding)
+        .onChange(of: showingSearch) { _, isShowing in
+            if !isShowing {
+                tabManager.clearAllSearchState()
+            }
+        }
         .onAppear {
+            tabManager.documentOpenedHandler = { [recentFilesManager] url, isSecurityScoped in
+                recentFilesManager.addRecentFile(url, isSecurityScoped: isSecurityScoped)
+            }
+
             // Flush any Finder-opened URLs immediately on cold launch
             // (faster than waiting for WindowRegistrarView to mount + async dispatch)
             if let appDelegate = NSApp.delegate as? AppDelegate {
@@ -63,10 +84,7 @@ struct TabContainerView: View {
         .onOpenURL { url in
             guard url.pathExtension.lowercased() == "pdf" else { return }
             tabManager.closeFilePicker()
-            if !WindowRegistry.shared.activateExistingDocument(for: url) {
-                tabManager.openDocument(url: url, isSecurityScoped: false)
-            }
-            recentFilesManager.addRecentFile(url)
+            tabManager.openDocument(url: url, isSecurityScoped: false)
         }
         .onDisappear {
             WindowRegistry.shared.unregister(tabManager)

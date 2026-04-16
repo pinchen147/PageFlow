@@ -12,7 +12,6 @@ private let logger = Logger(subsystem: "com.pageflow", category: "TabBarView")
 
 struct TabBarView: View {
     @Bindable var tabManager: TabManager
-    @Binding var isHovering: Bool
 
     // Drag state
     @State private var draggingTabID: UUID? {
@@ -111,8 +110,6 @@ struct TabBarView: View {
             .allowsHitTesting(true)
         }
         .coordinateSpace(name: "tabBar")
-        .opacity(isHovering ? 1 : 0)
-        .animation(.easeInOut(duration: DesignTokens.animationFast), value: isHovering)
     }
 
     // MARK: - Tab View

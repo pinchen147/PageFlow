@@ -8,8 +8,6 @@
 import SwiftUI
 
 struct TrafficLightsView: View {
-    @Binding var isHovering: Bool
-
     var body: some View {
         HStack(spacing: DesignTokens.trafficLightSpacing) {
             trafficLight(color: .red, action: closeWindow)
@@ -30,8 +28,6 @@ struct TrafficLightsView: View {
                 .allowsHitTesting(false)
         )
         .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
-        .opacity(isHovering ? 1 : 0)
-        .animation(.easeInOut(duration: DesignTokens.animationFast), value: isHovering)
     }
 
     private func trafficLight(color: Color, action: @escaping () -> Void) -> some View {

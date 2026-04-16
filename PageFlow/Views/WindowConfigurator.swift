@@ -9,6 +9,8 @@ import SwiftUI
 import AppKit
 
 struct WindowConfigurator: NSViewRepresentable {
+    let isAlwaysOnTop: Bool
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
@@ -37,6 +39,7 @@ struct WindowConfigurator: NSViewRepresentable {
         // Set window background to match PDF viewer
         window.backgroundColor = DesignTokens.viewerBackground
         window.hasShadow = true
+        window.level = isAlwaysOnTop ? .floating : .normal
 
         window.standardWindowButton(.closeButton)?.isHidden = true
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true

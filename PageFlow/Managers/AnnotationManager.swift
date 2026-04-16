@@ -9,10 +9,13 @@ import Foundation
 import PDFKit
 import AppKit
 import Observation
+import os.log
 
 @Observable
 @MainActor
 final class AnnotationManager {
+    private let logger = Logger(subsystem: "com.pageflow", category: "AnnotationManager")
+
     deinit {
         #if DEBUG
         Swift.print("[deinit] AnnotationManager")
@@ -55,7 +58,7 @@ final class AnnotationManager {
 
     private func getUndoManager(for action: String) -> UndoManager? {
         guard let undoManager = undoManagerProvider?() else {
-            assertionFailure("UndoManager unavailable for: \(action)")
+            logger.error("UndoManager unavailable for action: \(action)")
             return nil
         }
         #if DEBUG

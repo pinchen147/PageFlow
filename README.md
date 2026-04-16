@@ -20,12 +20,25 @@
 
 - **Pure SwiftUI + PDFKit** — Fast, native performance
 - **Annotations** — Highlight, underline, and comment on PDFs
-- **Bookmarks** — Mark and navigate to important pages
-- **Tabs** — Open multiple PDFs in one window
+- **Bookmarks** — Mark, navigate, and preserve across undo
+- **Tabs & Windows** — Multi-tab, multi-window, per-window undo isolation
 - **Search** — Find text across your documents
 - **View Modes** — Single page, continuous, or two-up display
-- **Auto-Updates** — Built-in update checking via Sparkle
+- **Always on Top** — Per-window floating, toggled from Settings
+- **Customizable Toolbar** — Resize, pin, and tune to taste
+- **Auto-Updates** — Built-in update checking via Sparkle (direct-download builds)
 - **Privacy First** — Fully offline, no telemetry
+
+## What's New in 1.3
+
+- **Always on Top** — new per-window toggle in Settings (⌘,). Float one document above everything without pinning every window.
+- **Toolbar customization** — resize the toolbar with a slider, or pin it so it never auto-hides.
+- **No more duplicate windows** — opening a PDF that's already open just brings the existing window to the front.
+- **Safer undo** — deleting pages no longer loses the bookmarks and comments attached to them; undo brings them back.
+- **Reliable Open Recent** — recent files keep working across launches, even for documents in sandboxed locations.
+- **Save As preserves your work** — bookmarks and annotations carry over cleanly when saving to a new file.
+- **Password prompt fixes** — cancelling a password-protected PDF tidies up the empty tab instead of leaving it behind.
+- **Quit protection** — if a save fails on quit, PageFlow warns you first instead of silently closing.
 
 ## Installation
 

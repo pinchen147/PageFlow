@@ -17,11 +17,11 @@ private struct FocusedShowingSearchKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
-private struct FocusedShowingToolbarKey: FocusedValueKey {
-    typealias Value = Binding<Bool>
+private struct FocusedSearchFocusRequestKey: FocusedValueKey {
+    typealias Value = Binding<Int>
 }
 
-private struct FocusedShowingOutlineKey: FocusedValueKey {
+private struct FocusedAlwaysOnTopKey: FocusedValueKey {
     typealias Value = Binding<Bool>
 }
 
@@ -38,13 +38,13 @@ extension FocusedValues {
         set { self[FocusedShowingSearchKey.self] = newValue }
     }
 
-    var showingToolbar: Binding<Bool>? {
-        get { self[FocusedShowingToolbarKey.self] }
-        set { self[FocusedShowingToolbarKey.self] = newValue }
+    var searchFocusRequest: Binding<Int>? {
+        get { self[FocusedSearchFocusRequestKey.self] }
+        set { self[FocusedSearchFocusRequestKey.self] = newValue }
     }
 
-    var showingOutline: Binding<Bool>? {
-        get { self[FocusedShowingOutlineKey.self] }
-        set { self[FocusedShowingOutlineKey.self] = newValue }
+    var alwaysOnTop: Binding<Bool>? {
+        get { self[FocusedAlwaysOnTopKey.self] }
+        set { self[FocusedAlwaysOnTopKey.self] = newValue }
     }
 }

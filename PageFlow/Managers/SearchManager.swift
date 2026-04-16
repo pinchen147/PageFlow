@@ -39,6 +39,14 @@ final class SearchManager {
     }
 
     func search(_ query: String, in document: PDFDocument) {
+        performSearch(query, in: document, initialResultIndex: 0)
+    }
+
+    func restoreSearch(_ query: String, resultIndex: Int, in document: PDFDocument) {
+        performSearch(query, in: document, initialResultIndex: resultIndex)
+    }
+
+    private func performSearch(_ query: String, in document: PDFDocument, initialResultIndex: Int) {
         guard !query.isEmpty else {
             clearSearch()
             return
@@ -55,8 +63,9 @@ final class SearchManager {
             guard let self else { return }
             await MainActor.run {
                 guard !Task.isCancelled else { return }
+                guard self.searchQuery == q else { return }
                 self.searchResults = results
-                self.currentResultIndex = 0
+                self.currentResultIndex = min(max(0, initialResultIndex), max(0, results.count - 1))
                 self.isSearching = false
             }
         }

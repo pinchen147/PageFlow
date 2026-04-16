@@ -8,12 +8,35 @@
 import AppKit
 import SwiftUI
 
+enum PageFlowWindowIdentifiers {
+    static let userCreated = NSUserInterfaceItemIdentifier("PageFlowUserCreatedWindow")
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    struct PendingDocumentOpen {
+        let url: URL
+        let isSecurityScoped: Bool
+    }
+
     private let firstLaunchManager = FirstLaunchManager()
     private var windowControllers: [NSWindowController] = []
+    private var windowCloseObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
 
     /// URLs received before any TabManager registered (cold launch from Finder)
-    private(set) var pendingURLs: [URL] = []
+    private(set) var pendingDocumentOpens: [PendingDocumentOpen] = []
+
+    var pendingURLs: [URL] {
+        pendingDocumentOpens.map(\.url)
+    }
+
+    func enqueuePendingURLs(_ urls: [URL], isSecurityScoped: Bool = false) {
+        let pdfURLs = urls
+            .filter { $0.pathExtension.lowercased() == "pdf" }
+            .map(\.pageFlowCanonicalDocumentURL)
+        pendingDocumentOpens.append(contentsOf: pdfURLs.map {
+            PendingDocumentOpen(url: $0, isSecurityScoped: isSecurityScoped)
+        })
+    }
 
     func createNewWindow(with contentView: some View) {
         let hostingController = NSHostingController(rootView: contentView)
@@ -23,20 +46,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        window.identifier = PageFlowWindowIdentifiers.userCreated
         window.center()
 
         let windowController = NSWindowController(window: window)
         windowControllers.append(windowController)
+        let controllerID = ObjectIdentifier(windowController)
 
         // Clean up when window closes
-        NotificationCenter.default.addObserver(
+        let observer = NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
         ) { [weak self, weak windowController] _ in
-            guard let self = self, let wc = windowController else { return }
-            self.windowControllers.removeAll { $0 === wc }
+            guard let self = self else { return }
+            if let wc = windowController {
+                self.windowControllers.removeAll { $0 === wc }
+            }
+            if let token = self.windowCloseObservers.removeValue(forKey: controllerID) {
+                NotificationCenter.default.removeObserver(token)
+            }
         }
+        windowCloseObservers[controllerID] = observer
 
         windowController.showWindow(nil)
     }
@@ -46,32 +77,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        let pdfURLs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+        let pdfURLs = urls
+            .filter { $0.pathExtension.lowercased() == "pdf" }
+            .map(\.pageFlowCanonicalDocumentURL)
         guard !pdfURLs.isEmpty else { return }
 
-        // Activate existing tab if already open, otherwise open in existing/new window
-        if let tabManager = WindowRegistry.shared.anyTabManager() {
-            tabManager.closeFilePicker()
-            for url in pdfURLs {
-                if !WindowRegistry.shared.activateExistingDocument(for: url) {
-                    tabManager.openDocument(url: url, isSecurityScoped: false)
-                }
+        var reroutedIntoExistingWindow = false
+
+        // Activate existing tabs first so Finder/open-file events reuse the live document window
+        // instead of leaving behind a transient empty SwiftUI placeholder window.
+        for url in pdfURLs {
+            if WindowRegistry.shared.activateExistingDocument(for: url) {
+                reroutedIntoExistingWindow = true
+                continue
             }
-        } else {
-            pendingURLs.append(contentsOf: pdfURLs)
+
+            if let tabManager = WindowRegistry.shared.anyTabManager() {
+                if !tabManager.isPlaceholderWindow {
+                    reroutedIntoExistingWindow = true
+                }
+                tabManager.closeFilePicker()
+                tabManager.openDocument(url: url, isSecurityScoped: false)
+            } else {
+                pendingDocumentOpens.append(
+                    PendingDocumentOpen(url: url, isSecurityScoped: false)
+                )
+            }
+        }
+
+        if reroutedIntoExistingWindow {
+            WindowRegistry.shared.dismissTransientPlaceholderWindowForExternalOpen()
         }
     }
 
     /// Delivers any URLs buffered during cold launch to the given TabManager.
     func flushPendingURLs(to tabManager: TabManager) {
-        guard !pendingURLs.isEmpty else { return }
+        guard !pendingDocumentOpens.isEmpty else { return }
         tabManager.closeFilePicker()
-        let urls = pendingURLs
-        pendingURLs.removeAll()
-        for url in urls {
-            if !WindowRegistry.shared.activateExistingDocument(for: url) {
-                tabManager.openDocument(url: url, isSecurityScoped: false)
-            }
+        let pendingOpens = pendingDocumentOpens
+        pendingDocumentOpens.removeAll()
+        for pendingOpen in pendingOpens {
+            tabManager.openDocument(url: pendingOpen.url, isSecurityScoped: pendingOpen.isSecurityScoped)
         }
     }
 
@@ -89,7 +135,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.icon = NSApp.applicationIconImage
         alert.messageText = "Do you want to save changes before quitting?"
-        alert.informativeText = "Your changes to \"\(firstDirty.1.documentTitle)\" will be lost if you don't save."
+        if dirtyEntries.count == 1 {
+            alert.informativeText = "Your changes to \"\(firstDirty.1.documentTitle)\" will be lost if you don't save."
+        } else {
+            let moreCount = dirtyEntries.count - 1
+            alert.informativeText = "Your changes to \"\(firstDirty.1.documentTitle)\" and \(moreCount) other document(s) will be lost if you don't save."
+        }
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
@@ -97,8 +148,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            for (_, manager) in dirtyEntries {
-                _ = manager.saveSync()  // Use sync for quit-time saves
+            let failedManagers = dirtyEntries.compactMap { _, manager in
+                manager.saveSync() ? nil : manager
+            }
+
+            guard failedManagers.isEmpty else {
+                showSaveFailureAlert(for: failedManagers)
+                return .terminateCancel
             }
             return .terminateNow
         case .alertSecondButtonReturn:
@@ -106,5 +162,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             return .terminateNow
         }
+    }
+
+    private func showSaveFailureAlert(for managers: [PDFManager]) {
+        let alert = NSAlert()
+        alert.icon = NSApp.applicationIconImage
+        alert.messageText = "PageFlow couldn't save all documents."
+        alert.informativeText = managers.map(\.documentTitle).joined(separator: "\n")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }

@@ -73,6 +73,41 @@ final class SettingsManager {
         }
     }
 
+    struct ToolbarMetrics {
+        let buttonSize: CGFloat
+        let iconSize: CGFloat
+        let horizontalPadding: CGFloat
+        let verticalPadding: CGFloat
+        let containerHeight: CGFloat
+    }
+
+    static let defaultToolbarScale = 1.0
+    static let toolbarScaleRange: ClosedRange<Double> = 0.8...1.6
+
+    static func clampedToolbarScale(_ scale: Double) -> Double {
+        min(max(scale, toolbarScaleRange.lowerBound), toolbarScaleRange.upperBound)
+    }
+
+    static func toolbarMetrics(for scale: Double) -> ToolbarMetrics {
+        let clampedScale = CGFloat(clampedToolbarScale(scale))
+        let buttonSize = DesignTokens.toolbarButtonSize * clampedScale
+        let iconSize = DesignTokens.toolbarIconSize * clampedScale
+        let horizontalPadding = max(DesignTokens.spacingXS, DesignTokens.spacingSM * clampedScale)
+        let verticalPadding = max(2, DesignTokens.spacingXS * clampedScale)
+        let containerHeight = max(
+            buttonSize + (verticalPadding * 2),
+            DesignTokens.collapsedToolbarSize * clampedScale
+        )
+
+        return ToolbarMetrics(
+            buttonSize: buttonSize,
+            iconSize: iconSize,
+            horizontalPadding: horizontalPadding,
+            verticalPadding: verticalPadding,
+            containerHeight: containerHeight
+        )
+    }
+
     // MARK: - Keys
 
     private enum Keys {
@@ -80,6 +115,8 @@ final class SettingsManager {
         static let underlinePresets = "settings.underlinePresets"
         static let commentPresets = "settings.commentPresets"
         static let customShortcuts = "settings.customShortcuts"
+        static let toolbarScale = "settings.toolbarScale"
+        static let toolbarPinned = "settings.toolbarPinned"
     }
 
     // MARK: - Default Presets
@@ -105,7 +142,7 @@ final class SettingsManager {
 
     // MARK: - Properties
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private var isLoading = false
 
     var highlightPresets: [ColorPreset] = defaultHighlightPresets {
@@ -124,9 +161,31 @@ final class SettingsManager {
         didSet { if !isLoading { saveShortcuts() } }
     }
 
+    var toolbarScale = SettingsManager.defaultToolbarScale {
+        didSet {
+            let clampedScale = Self.clampedToolbarScale(toolbarScale)
+            if toolbarScale != clampedScale {
+                toolbarScale = clampedScale
+                return
+            }
+            if !isLoading {
+                defaults.set(toolbarScale, forKey: Keys.toolbarScale)
+            }
+        }
+    }
+
+    var isToolbarPinned = false {
+        didSet {
+            if !isLoading {
+                defaults.set(isToolbarPinned, forKey: Keys.toolbarPinned)
+            }
+        }
+    }
+
     // MARK: - Init
 
-    private init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         isLoading = true
         loadSettings()
         isLoading = false
@@ -173,6 +232,10 @@ final class SettingsManager {
         customShortcuts = [:]
     }
 
+    func resetToolbarScale() {
+        toolbarScale = Self.defaultToolbarScale
+    }
+
     // MARK: - Persistence
 
     private func loadSettings() {
@@ -207,6 +270,12 @@ final class SettingsManager {
                 logger.error("Failed to decode custom shortcuts: \(error.localizedDescription)")
             }
         }
+
+        if defaults.object(forKey: Keys.toolbarScale) != nil {
+            toolbarScale = Self.clampedToolbarScale(defaults.double(forKey: Keys.toolbarScale))
+        }
+
+        isToolbarPinned = defaults.bool(forKey: Keys.toolbarPinned)
     }
 
     private func savePresets(_ presets: [ColorPreset], forKey key: String) {

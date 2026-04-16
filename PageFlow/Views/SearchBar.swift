@@ -10,8 +10,9 @@ import SwiftUI
 struct SearchBar: View {
     @Bindable var searchManager: SearchManager
     var pdfManager: PDFManager
-    @FocusState private var isSearchFieldFocused: Bool
     @Binding var isVisible: Bool
+    let focusRequest: Int
+    @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
         HStack(spacing: DesignTokens.spacingSM) {
@@ -95,7 +96,10 @@ struct SearchBar: View {
         )
         .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
         .onAppear {
-            isSearchFieldFocused = true
+            focusSearchField()
+        }
+        .onChange(of: focusRequest) { _, _ in
+            focusSearchField()
         }
     }
 
@@ -116,5 +120,11 @@ struct SearchBar: View {
     private func closeSearch() {
         searchManager.clearSearch()
         isVisible = false
+    }
+
+    private func focusSearchField() {
+        DispatchQueue.main.async {
+            isSearchFieldFocused = true
+        }
     }
 }

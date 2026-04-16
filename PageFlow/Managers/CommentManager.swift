@@ -9,12 +9,14 @@ import AppKit
 import Foundation
 import Observation
 import PDFKit
+import os.log
 
 @Observable
 @MainActor
 final class CommentManager {
     private static let pageFlowTypeKey = PDFAnnotationKey(rawValue: "PageFlowType")
     private static let pageFlowCommentValue = "pageflow-comment"
+    private let logger = Logger(subsystem: "com.pageflow", category: "CommentManager")
 
     deinit {
         #if DEBUG
@@ -47,7 +49,7 @@ final class CommentManager {
 
     private func getUndoManager(for action: String) -> UndoManager? {
         guard let undoManager = undoManagerProvider?() else {
-            assertionFailure("UndoManager unavailable for: \(action)")
+            logger.error("UndoManager unavailable for action: \(action)")
             return nil
         }
         return undoManager
@@ -100,12 +102,15 @@ final class CommentManager {
         guard let index = comments.firstIndex(where: { $0.id == id }) else {
             return
         }
-        comments[index].text = text
-        if let highlight = highlights[id] {
-            highlight.contents = text
-        } else {
-            assertionFailure("Orphaned comment: highlight missing for ID \(id)")
+
+        guard let highlight = highlights[id] else {
+            logger.error("Orphaned comment missing highlight for ID \(id.uuidString, privacy: .public)")
+            removeOrphanedComment(at: index, id: id)
+            return
         }
+
+        comments[index].text = text
+        highlight.contents = text
         pdfManager?.isDirty = true
     }
 
@@ -227,6 +232,98 @@ final class CommentManager {
         editingCommentID = nil
     }
 
+    func reconcilePageIndices() {
+        guard let document = pdfManager?.document else { return }
+
+        var updatedComments: [CommentModel] = []
+        var updatedHighlights: [UUID: PDFAnnotation] = [:]
+        var orphanedPairs: [(CommentModel, PDFAnnotation)] = []
+
+        for comment in comments {
+            guard let highlight = highlights[comment.id] else { continue }
+
+            if let page = highlight.page {
+                let pageIndex = document.index(for: page)
+                if pageIndex != NSNotFound {
+                    var updatedComment = comment
+                    updatedComment.pageIndex = pageIndex
+                    updatedComment.bounds = highlight.bounds
+                    updatedComments.append(updatedComment)
+                    updatedHighlights[comment.id] = highlight
+                    continue
+                }
+            }
+
+            orphanedPairs.append((comment, highlight))
+        }
+
+        if let selectedCommentID, updatedHighlights[selectedCommentID] == nil {
+            self.selectedCommentID = nil
+        }
+
+        if let editingCommentID, updatedHighlights[editingCommentID] == nil {
+            self.editingCommentID = nil
+        }
+
+        comments = updatedComments
+        highlights = updatedHighlights
+
+        // Register undo for orphaned comments so they restore when the page returns.
+        if !orphanedPairs.isEmpty, let undoManager = undoManagerProvider?() {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.restoreCommentsForUndo(orphanedPairs)
+                }
+            }
+        }
+    }
+
+    private func restoreCommentsForUndo(_ pairs: [(CommentModel, PDFAnnotation)]) {
+        let document = pdfManager?.document
+
+        for (comment, highlight) in pairs {
+            var restored = comment
+            if let document, let page = highlight.page {
+                let pageIndex = document.index(for: page)
+                if pageIndex != NSNotFound {
+                    restored.pageIndex = pageIndex
+                    restored.bounds = highlight.bounds
+                }
+            }
+            comments.append(restored)
+            highlights[comment.id] = highlight
+        }
+
+        if let undoManager = undoManagerProvider?() {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.removeCommentsForRedo(pairs)
+                }
+            }
+        }
+    }
+
+    private func removeCommentsForRedo(_ pairs: [(CommentModel, PDFAnnotation)]) {
+        let idsToRemove = Set(pairs.map { $0.0.id })
+        comments.removeAll { idsToRemove.contains($0.id) }
+        highlights = highlights.filter { !idsToRemove.contains($0.key) }
+
+        if let selectedCommentID, idsToRemove.contains(selectedCommentID) {
+            self.selectedCommentID = nil
+        }
+        if let editingCommentID, idsToRemove.contains(editingCommentID) {
+            self.editingCommentID = nil
+        }
+
+        if let undoManager = undoManagerProvider?() {
+            undoManager.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    target.restoreCommentsForUndo(pairs)
+                }
+            }
+        }
+    }
+
     // MARK: - Private Helpers
 
     private func selectionLineRects(_ selection: PDFSelection?, on page: PDFPage) -> ([CGRect], CGRect?) {
@@ -294,6 +391,18 @@ final class CommentManager {
             abs(g - tg) < tolerance &&
             abs(b - tb) < tolerance &&
             abs(a - ta) < 0.15
+    }
+
+    private func removeOrphanedComment(at index: Int, id: UUID) {
+        comments.remove(at: index)
+        highlights.removeValue(forKey: id)
+
+        if selectedCommentID == id {
+            selectedCommentID = nil
+        }
+        if editingCommentID == id {
+            editingCommentID = nil
+        }
     }
 
     // MARK: - Undo/Redo

@@ -13,19 +13,20 @@ import UniformTypeIdentifiers
 struct PageFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var recentFilesManager = RecentFilesManager()
+    @State private var settingsManager = SettingsManager.shared
 
     // MARK: - Focused Values
 
     @FocusedValue(\.tabManager) private var focusedTabManager
     @FocusedValue(\.showingSearch) private var focusedShowingSearch
-    @FocusedValue(\.showingToolbar) private var focusedShowingToolbar
-    @FocusedValue(\.showingOutline) private var focusedShowingOutline
+    @FocusedValue(\.searchFocusRequest) private var focusedSearchFocusRequest
+    @FocusedValue(\.alwaysOnTop) private var focusedAlwaysOnTop
 
     #if ENABLE_SPARKLE
     @State private var updateManager = UpdateManager()
     #endif
 
-    @State private var defaultPDFManager = FirstLaunchManager()
+    @State private var firstLaunchManager = FirstLaunchManager()
 
     // MARK: - Computed Properties
 
@@ -51,10 +52,6 @@ struct PageFlowApp: App {
 
     private var showingCommentsLabel: String {
         (focusedTabManager?.showingComments == true) ? "Hide Comments" : "Show Comments"
-    }
-
-    private var showingToolbarLabel: String {
-        (focusedShowingToolbar?.wrappedValue == true) ? "Hide Toolbar" : "Show Toolbar"
     }
 
     // MARK: - Body
@@ -87,10 +84,10 @@ struct PageFlowApp: App {
 
     @ViewBuilder
     private var appMenuContent: some View {
-        Button(defaultPDFManager.isDefaultPDFReader ? "✓ Default PDF Reader" : "Set as Default PDF Reader…") {
-            defaultPDFManager.setAsDefaultPDFReader()
+        Button(firstLaunchManager.isDefaultPDFReader ? "✓ Default PDF Reader" : "Set as Default PDF Reader…") {
+            firstLaunchManager.setAsDefaultPDFReader()
         }
-        .disabled(defaultPDFManager.isDefaultPDFReader)
+        .disabled(firstLaunchManager.isDefaultPDFReader)
 
         #if ENABLE_SPARKLE
         Divider()
@@ -125,9 +122,9 @@ struct PageFlowApp: App {
         .disabled(focusedTabManager == nil)
 
         Menu("Open Recent") {
-            ForEach(recentFilesManager.recentFiles, id: \.self) { url in
-                Button(url.deletingPathExtension().lastPathComponent) {
-                    openRecentFile(url)
+            ForEach(recentFilesManager.recentFiles) { recentFile in
+                Button(recentFile.displayName) {
+                    openRecentFile(recentFile)
                 }
             }
 
@@ -180,6 +177,14 @@ struct PageFlowApp: App {
         return tabManager.undoManagers[tabID]
     }
 
+    private var canUndo: Bool {
+        focusedTabManager?.activeCanUndo ?? false
+    }
+
+    private var canRedo: Bool {
+        focusedTabManager?.activeCanRedo ?? false
+    }
+
     @ViewBuilder
     private var editUndoMenuContent: some View {
         Button("Undo") {
@@ -190,6 +195,7 @@ struct PageFlowApp: App {
             um?.undo()
         }
         .keyboardShortcut("z", modifiers: .command)
+        .disabled(!canUndo)
 
         Button("Redo") {
             let um = activeUndoManager
@@ -199,6 +205,7 @@ struct PageFlowApp: App {
             um?.redo()
         }
         .keyboardShortcut("z", modifiers: [.command, .shift])
+        .disabled(!canRedo)
     }
 
     @ViewBuilder
@@ -207,7 +214,8 @@ struct PageFlowApp: App {
 
         Button("Find…") {
             if hasDocument {
-                focusedShowingSearch?.wrappedValue.toggle()
+                focusedShowingSearch?.wrappedValue = true
+                focusedSearchFocusRequest?.wrappedValue += 1
             }
         }
         .keyboardShortcut("f", modifiers: .command)
@@ -252,6 +260,15 @@ struct PageFlowApp: App {
 
     @ViewBuilder
     private var viewMenuContent: some View {
+        let toolbarScaleBinding = Binding(
+            get: { settingsManager.toolbarScale },
+            set: { settingsManager.toolbarScale = SettingsManager.clampedToolbarScale($0) }
+        )
+        let pinToolbarBinding = Binding(
+            get: { settingsManager.isToolbarPinned },
+            set: { settingsManager.isToolbarPinned = $0 }
+        )
+
         Button("Zoom In") {
             pdfManager?.zoomIn()
         }
@@ -320,11 +337,31 @@ struct PageFlowApp: App {
         .keyboardShortcut("e", modifiers: [.command, .option])
         .disabled(!hasDocument)
 
-        Button(showingToolbarLabel) {
-            focusedShowingToolbar?.wrappedValue.toggle()
-        }
+        Toggle("Pin Toolbar", isOn: pinToolbarBinding)
         .keyboardShortcut("t", modifiers: [.command, .shift])
         .disabled(focusedTabManager == nil)
+
+        Divider()
+
+        VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
+            Text("Toolbar Size")
+            Slider(value: toolbarScaleBinding, in: SettingsManager.toolbarScaleRange)
+                .frame(width: 160)
+            Text("\(Int(round(settingsManager.toolbarScale * 100)))%")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Button("Reset Toolbar Size") {
+            settingsManager.resetToolbarScale()
+        }
+        .disabled(abs(settingsManager.toolbarScale - SettingsManager.defaultToolbarScale) < 0.001)
+
+        Toggle("Always on Top", isOn: Binding(
+            get: { focusedAlwaysOnTop?.wrappedValue ?? false },
+            set: { focusedAlwaysOnTop?.wrappedValue = $0 }
+        ))
+        .disabled(focusedAlwaysOnTop == nil)
 
         Divider()
 
@@ -502,9 +539,15 @@ struct PageFlowApp: App {
 
     // MARK: - Helper Methods
 
-    private func openRecentFile(_ url: URL) {
-        focusedTabManager?.openDocument(url: url, isSecurityScoped: false)
-        recentFilesManager.addRecentFile(url)
+    private func openRecentFile(_ recentFile: RecentFile) {
+        guard let resolved = recentFilesManager.resolveRecentFile(recentFile) else { return }
+
+        if let tabManager = focusedTabManager ?? WindowRegistry.shared.anyTabManager() {
+            tabManager.openDocument(url: resolved.url, isSecurityScoped: resolved.isSecurityScoped)
+        } else {
+            appDelegate.enqueuePendingURLs([resolved.url], isSecurityScoped: resolved.isSecurityScoped)
+            openNewWindow()
+        }
     }
 
     private func handleSave() async {

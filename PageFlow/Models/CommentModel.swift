@@ -10,8 +10,8 @@ import Foundation
 struct CommentModel: Identifiable, Equatable {
     let id: UUID
     var text: String
-    let pageIndex: Int
-    let bounds: CGRect
+    var pageIndex: Int
+    var bounds: CGRect
     let createdAt: Date
 
     init(id: UUID = UUID(), text: String = "", pageIndex: Int, bounds: CGRect, createdAt: Date = Date()) {

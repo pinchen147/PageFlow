@@ -19,12 +19,20 @@ struct TabUIState: Sendable {
     var isEditingPages = false
 }
 
+private struct UndoAvailability: Equatable, Sendable {
+    var canUndo = false
+    var canRedo = false
+}
+
 @Observable
 @MainActor
 final class TabManager {
     deinit {
         if let monitor = editModeKeyMonitor {
             NSEvent.removeMonitor(monitor)
+        }
+        for observer in undoCheckpointObservers.values {
+            NotificationCenter.default.removeObserver(observer)
         }
         #if DEBUG
         Swift.print("[deinit] TabManager")
@@ -36,6 +44,9 @@ final class TabManager {
     var tabs: [TabModel] = []
     var activeTabID: UUID?
 
+    /// Whether this window floats above other apps. Scoped per-window, not persisted.
+    var isAlwaysOnTop: Bool = false
+
     // Per-tab runtime state (not persisted)
     private var pdfManagers: [UUID: PDFManager] = [:]
     private var searchManagers: [UUID: SearchManager] = [:]
@@ -43,24 +54,31 @@ final class TabManager {
     private var commentManagers: [UUID: CommentManager] = [:]
     private var bookmarkManagers: [UUID: BookmarkManager] = [:]
     private(set) var undoManagers: [UUID: UndoManager] = [:]
+    private var undoAvailabilityByTab: [UUID: UndoAvailability] = [:]
+    @ObservationIgnored var documentOpenedHandler: ((URL, Bool) -> Void)?
 
     // Per-tab UI state (not persisted) - internal for MainView access
     var tabUIStates: [UUID: TabUIState] = [:]
 
     // Edit mode keyboard shortcut monitor (intercepts Cmd+C/V for page copy/paste)
     @ObservationIgnored private var editModeKeyMonitor: Any?
+    @ObservationIgnored private var undoCheckpointObservers: [UUID: NSObjectProtocol] = [:]
 
     // Track open file picker panel for closing on drag-drop
     private weak var openPanel: NSOpenPanel?
+    private var suppressAutomaticFilePicker = false
 
     // Password dialog state
     var pendingPasswordRequest: PasswordRequest?
+    private var queuedPasswordRequests: [PasswordRequest] = []
 
     struct PasswordRequest: Identifiable {
         let id = UUID()
         let tabID: UUID
         let url: URL
         let isSecurityScoped: Bool
+        let closeTabOnCancel: Bool
+        let restoreTabIDOnCancel: UUID?
     }
 
     // MARK: - Computed Properties
@@ -98,6 +116,16 @@ final class TabManager {
     var activeBookmarkManager: BookmarkManager? {
         guard let id = activeTabID else { return nil }
         return bookmarkManagers[id]
+    }
+
+    var activeCanUndo: Bool {
+        guard let id = activeTabID else { return false }
+        return undoAvailabilityByTab[id]?.canUndo ?? false
+    }
+
+    var activeCanRedo: Bool {
+        guard let id = activeTabID else { return false }
+        return undoAvailabilityByTab[id]?.canRedo ?? false
     }
 
     // MARK: - UI State (Active Tab)
@@ -257,17 +285,24 @@ final class TabManager {
 
     /// Returns the tab ID if this TabManager has a tab with the given URL open.
     func tabID(for url: URL) -> UUID? {
-        let standardized = url.standardizedFileURL
-        return tabs.first { $0.documentURL?.standardizedFileURL == standardized }?.id
+        let canonicalURL = url.pageFlowCanonicalDocumentURL
+
+        if let passwordRequest = passwordRequest(for: canonicalURL) {
+            return passwordRequest.tabID
+        }
+
+        return tabs.first { $0.documentURL?.pageFlowCanonicalDocumentURL == canonicalURL }?.id
     }
 
     // MARK: - Tab Operations
 
     func createNewTab(with url: URL? = nil, isSecurityScoped: Bool = false) {
+        let previousActiveTabID = activeTabID
+
         // Preserve state of current tab before switching away
         saveCurrentTabState()
 
-        let newTab = TabModel(documentURL: url, isSecurityScoped: isSecurityScoped)
+        let newTab = TabModel()
 
         tabs.append(newTab)
         createManagersForTab(newTab)
@@ -275,7 +310,14 @@ final class TabManager {
 
         if let url = url {
             let result = pdfManagers[newTab.id]?.loadDocument(from: url, isSecurityScoped: isSecurityScoped) ?? .failed
-            handleLoadResult(result, for: newTab.id, url: url, isSecurityScoped: isSecurityScoped)
+            handleLoadResult(
+                result,
+                for: newTab.id,
+                url: url,
+                isSecurityScoped: isSecurityScoped,
+                closeTabOnCancel: true,
+                restoreTabIDOnCancel: previousActiveTabID
+            )
         }
     }
 
@@ -369,47 +411,155 @@ final class TabManager {
     // MARK: - Document Operations
 
     func openDocument(url: URL, isSecurityScoped: Bool, replaceCurrent: Bool = false) {
+        if let existingTabID = tabID(for: url) {
+            selectTab(existingTabID)
+            WindowRegistry.shared.bringToFront(for: self)
+            dismissPlaceholderWindowIfNeeded()
+            return
+        }
+
         // Activate existing tab if this document is already open (any window)
-        if WindowRegistry.shared.activateExistingDocument(for: url) { return }
+        if WindowRegistry.shared.activateExistingDocument(for: url) {
+            dismissPlaceholderWindowIfNeeded()
+            return
+        }
 
         // If current tab is empty or replace is requested, load into current tab; otherwise create new tab
         if let activeTab = activeTab,
            let activeID = activeTabID,
-           (replaceCurrent || !activeTab.hasDocument),
+           (replaceCurrent || (!activeTab.hasDocument && !isAwaitingPassword(for: activeID))),
            let pdfManager = pdfManagers[activeID] {
-            // Clear undo stack when replacing document to prevent dangling references
-            if activeTab.hasDocument {
-                pdfManager.clearUndoHistory()
-            }
             let result = pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped)
             handleLoadResult(result, for: activeID, url: url, isSecurityScoped: isSecurityScoped)
         } else {
             // Current tab has a document, create new tab
-            saveCurrentTabState()
             createNewTab(with: url, isSecurityScoped: isSecurityScoped)
         }
+
+        WindowRegistry.shared.bringToFront(for: self)
     }
 
-    private func handleLoadResult(_ result: DocumentLoadResult, for tabID: UUID, url: URL, isSecurityScoped: Bool) {
+    private func handleLoadResult(
+        _ result: DocumentLoadResult,
+        for tabID: UUID,
+        url: URL,
+        isSecurityScoped: Bool,
+        closeTabOnCancel: Bool = false,
+        restoreTabIDOnCancel: UUID? = nil
+    ) {
         switch result {
         case .success:
+            clearPendingPasswordRequest(for: tabID)
+            clearSearchState(for: tabID)
             if let index = tabs.firstIndex(where: { $0.id == tabID }) {
                 tabs[index].documentURL = url
                 tabs[index].isSecurityScoped = isSecurityScoped
             }
+            documentOpenedHandler?(url, isSecurityScoped)
         case .needsPassword:
-            promptForPassword(tabID: tabID, url: url, isSecurityScoped: isSecurityScoped)
+            promptForPassword(
+                tabID: tabID,
+                url: url,
+                isSecurityScoped: isSecurityScoped,
+                closeTabOnCancel: closeTabOnCancel,
+                restoreTabIDOnCancel: restoreTabIDOnCancel
+            )
         case .failed:
+            clearPendingPasswordRequest(for: tabID)
             break
         }
     }
 
-    private func promptForPassword(tabID: UUID, url: URL, isSecurityScoped: Bool) {
-        pendingPasswordRequest = PasswordRequest(
+    func consumeAutomaticFilePickerSuppression() -> Bool {
+        let wasSuppressed = suppressAutomaticFilePicker
+        suppressAutomaticFilePicker = false
+        return wasSuppressed
+    }
+
+    func isAwaitingPassword(for tabID: UUID) -> Bool {
+        pendingPasswordRequest?.tabID == tabID ||
+            queuedPasswordRequests.contains { $0.tabID == tabID }
+    }
+
+    var isPlaceholderWindow: Bool {
+        hasOnlyPlaceholderTab
+    }
+
+    private var hasOnlyPlaceholderTab: Bool {
+        guard tabs.count == 1,
+              let activeTabID,
+              let activeTab = activeTab else {
+            return false
+        }
+
+        return !activeTab.hasDocument &&
+            !(pdfManagers[activeTabID]?.hasDocument ?? false) &&
+            !isAwaitingPassword(for: activeTabID)
+    }
+
+    @discardableResult
+    func dismissPlaceholderWindowIfNeeded() -> Bool {
+        closeFilePicker()
+
+        guard hasOnlyPlaceholderTab else { return false }
+
+        suppressAutomaticFilePicker = true
+        WindowRegistry.shared.closeWindow(for: self)
+        return true
+    }
+
+    private func promptForPassword(
+        tabID: UUID,
+        url: URL,
+        isSecurityScoped: Bool,
+        closeTabOnCancel: Bool,
+        restoreTabIDOnCancel: UUID?
+    ) {
+        clearPendingPasswordRequest(for: tabID)
+
+        let request = PasswordRequest(
             tabID: tabID,
             url: url,
-            isSecurityScoped: isSecurityScoped
+            isSecurityScoped: isSecurityScoped,
+            closeTabOnCancel: closeTabOnCancel,
+            restoreTabIDOnCancel: restoreTabIDOnCancel
         )
+
+        if pendingPasswordRequest == nil {
+            pendingPasswordRequest = request
+        } else {
+            queuedPasswordRequests.append(request)
+        }
+    }
+
+    private func clearPendingPasswordRequest(for tabID: UUID) {
+        if pendingPasswordRequest?.tabID == tabID {
+            pendingPasswordRequest = nil
+            advancePasswordRequestQueue()
+            return
+        }
+
+        queuedPasswordRequests.removeAll { $0.tabID == tabID }
+    }
+
+    private func passwordRequest(for url: URL) -> PasswordRequest? {
+        if let pendingPasswordRequest,
+           pendingPasswordRequest.url.pageFlowCanonicalDocumentURL == url {
+            return pendingPasswordRequest
+        }
+
+        return queuedPasswordRequests.first {
+            $0.url.pageFlowCanonicalDocumentURL == url
+        }
+    }
+
+    private func advancePasswordRequestQueue() {
+        guard pendingPasswordRequest == nil,
+              !queuedPasswordRequests.isEmpty else {
+            return
+        }
+
+        pendingPasswordRequest = queuedPasswordRequests.removeFirst()
     }
 
     func submitPassword(_ password: String) -> Bool {
@@ -419,11 +569,14 @@ final class TabManager {
         }
 
         if pdfManager.unlockDocument(password: password) {
+            clearSearchState(for: request.tabID)
             if let index = tabs.firstIndex(where: { $0.id == request.tabID }) {
                 tabs[index].documentURL = request.url
                 tabs[index].isSecurityScoped = request.isSecurityScoped
             }
+            documentOpenedHandler?(request.url, request.isSecurityScoped)
             pendingPasswordRequest = nil
+            advancePasswordRequestQueue()
             return true
         }
         return false
@@ -433,11 +586,35 @@ final class TabManager {
         guard let request = pendingPasswordRequest else { return }
         pdfManagers[request.tabID]?.cancelPendingUnlock()
         pendingPasswordRequest = nil
+        advancePasswordRequestQueue()
+
+        guard request.closeTabOnCancel,
+              tabs.contains(where: { $0.id == request.tabID }) else {
+            return
+        }
+
+        closeTab(request.tabID)
+
+        if let restoreTabID = request.restoreTabIDOnCancel,
+           tabs.contains(where: { $0.id == restoreTabID }) {
+            selectTab(restoreTabID)
+        }
     }
 
     func updateTabDocument(_ tabID: UUID, url: URL) {
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         tabs[index].documentURL = url
+    }
+
+    func clearAllSearchState() {
+        for searchManager in searchManagers.values {
+            searchManager.clearSearch()
+        }
+
+        for index in tabs.indices {
+            tabs[index].savedSearchQuery = ""
+            tabs[index].savedSearchResultIndex = 0
+        }
     }
 
     func managers(for tabID: UUID) -> (PDFManager, SearchManager, AnnotationManager, CommentManager, BookmarkManager)? {
@@ -455,16 +632,85 @@ final class TabManager {
 
     private func createManagersForTab(_ tab: TabModel) {
         let pdfManager = PDFManager()
+        let searchManager = SearchManager()
+        let annotationManager = AnnotationManager()
+        let commentManager = CommentManager()
         let bookmarkManager = BookmarkManager()
         // Note: bookmarkManager.configure() is called in PDFViewWrapper.makeNSView()
         // when the undoManagerProvider is available
 
         pdfManagers[tab.id] = pdfManager
-        searchManagers[tab.id] = SearchManager()
-        annotationManagers[tab.id] = AnnotationManager()
-        commentManagers[tab.id] = CommentManager()
+        searchManagers[tab.id] = searchManager
+        annotationManagers[tab.id] = annotationManager
+        commentManagers[tab.id] = commentManager
         bookmarkManagers[tab.id] = bookmarkManager
-        undoManagers[tab.id] = UndoManager()
+        configureUndoManager(for: tab.id)
+
+        pdfManager.pageMutationHandler = { [weak bookmarkManager, weak commentManager] mutation in
+            switch mutation {
+            case .inserted(let index):
+                bookmarkManager?.handlePageInsertion(at: index)
+                commentManager?.reconcilePageIndices()
+            case .deleted(let index):
+                bookmarkManager?.handlePageDeletion(at: index)
+                commentManager?.reconcilePageIndices()
+            case .moved(let sourceIndex, let destinationIndex):
+                bookmarkManager?.handlePageMove(from: sourceIndex, to: destinationIndex)
+                commentManager?.reconcilePageIndices()
+            }
+        }
+    }
+
+    private func configureUndoManager(for tabID: UUID) {
+        removeUndoObserver(for: tabID)
+
+        let undoManager = UndoManager()
+        undoManagers[tabID] = undoManager
+        refreshUndoAvailability(for: tabID)
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: .NSUndoManagerCheckpoint,
+            object: undoManager,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refreshUndoAvailability(for: tabID)
+            }
+        }
+        undoCheckpointObservers[tabID] = observer
+    }
+
+    private func removeUndoObserver(for tabID: UUID) {
+        guard let observer = undoCheckpointObservers.removeValue(forKey: tabID) else { return }
+        NotificationCenter.default.removeObserver(observer)
+    }
+
+    private func refreshUndoAvailability(for tabID: UUID) {
+        updateUndoAvailability(for: tabID, undoManager: undoManagers[tabID])
+    }
+
+    private func updateUndoAvailability(for tabID: UUID, undoManager: UndoManager?) {
+        let availability: UndoAvailability
+        if let undoManager {
+            availability = UndoAvailability(
+                canUndo: undoManager.canUndo,
+                canRedo: undoManager.canRedo
+            )
+        } else {
+            availability = UndoAvailability()
+        }
+
+        if undoAvailabilityByTab[tabID] != availability {
+            undoAvailabilityByTab[tabID] = availability
+        }
+    }
+
+    private func clearSearchState(for tabID: UUID) {
+        searchManagers[tabID]?.clearSearch()
+
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        tabs[index].savedSearchQuery = ""
+        tabs[index].savedSearchResultIndex = 0
     }
 
     private func saveCurrentTabState() {
@@ -510,12 +756,18 @@ final class TabManager {
 
         if pdfManager.hasDocument {
             pdfManager.goToPage(tab.savedPageIndex)
-            pdfManager.setZoom(tab.savedScaleFactor)
+            if !pdfManager.isAutoScaling {
+                pdfManager.setZoom(tab.savedScaleFactor)
+            }
         }
 
-        if !tab.savedSearchQuery.isEmpty {
-            searchManager.searchQuery = tab.savedSearchQuery
-            searchManager.currentResultIndex = tab.savedSearchResultIndex
+        if let document = pdfManager.document,
+           !tab.savedSearchQuery.isEmpty {
+            searchManager.restoreSearch(
+                tab.savedSearchQuery,
+                resultIndex: tab.savedSearchResultIndex,
+                in: document
+            )
         }
     }
 
@@ -534,6 +786,7 @@ final class TabManager {
 
     enum SaveResult {
         case success(message: String)
+        case cancelled
         case failure(message: String)
     }
 
@@ -574,12 +827,18 @@ final class TabManager {
 
         let response = panel.runModal()
         guard response == .OK, let url = panel.url else {
-            return .failure(message: "Save As cancelled.")
+            return .cancelled
         }
 
+        let oldURL = pdfManager.documentURL
         let saved = await pdfManager.saveAs(to: url)
         if saved, let index = tabs.firstIndex(where: { $0.id == id }) {
+            // Migrate bookmarks from old path to new path
+            if let oldURL = oldURL {
+                bookmarkManagers[id]?.migrateBookmarks(from: oldURL, to: url)
+            }
             tabs[index].documentURL = url
+            tabs[index].isSecurityScoped = false
         }
 
         let result: SaveResult = saved ? .success(message: "Saved As") : .failure(message: "Save As failed.")
@@ -591,12 +850,13 @@ final class TabManager {
     private func postSaveNotification(_ result: SaveResult) {
         switch result {
         case .success(let message):
+            guard !message.isEmpty else { return }
             NotificationCenter.default.post(
                 name: .saveResult,
                 object: nil,
                 userInfo: ["message": message]
             )
-        case .failure:
+        case .cancelled, .failure:
             break
         }
     }
@@ -604,6 +864,7 @@ final class TabManager {
     // MARK: - Cleanup
 
     private func cleanupManagers(for tabID: UUID) {
+        removeUndoObserver(for: tabID)
         pdfManagers[tabID]?.closeDocument()
         commentManagers[tabID]?.clearComments()
         bookmarkManagers[tabID]?.clearBookmarks()
@@ -615,13 +876,12 @@ final class TabManager {
         commentManagers.removeValue(forKey: tabID)
         bookmarkManagers.removeValue(forKey: tabID)
         undoManagers.removeValue(forKey: tabID)
+        undoAvailabilityByTab.removeValue(forKey: tabID)
 
         tabUIStates.removeValue(forKey: tabID)
 
         // Clear pending password dialog if it was for this tab
-        if pendingPasswordRequest?.tabID == tabID {
-            pendingPasswordRequest = nil
-        }
+        clearPendingPasswordRequest(for: tabID)
     }
 
     // MARK: - Edit Mode Keyboard Monitor
