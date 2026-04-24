@@ -2,11 +2,16 @@
 //  WindowRegistry.swift
 //  PageFlow
 //
-//  Tracks all TabManagers across windows for app-level operations (e.g., quit prompts).
+//  Tracks all (TabManager, NSWindow) pairs across the app for app-level
+//  operations: routing Finder/open events, dirty-document quit prompts,
+//  bringing windows to front, and dismissing transient placeholder windows
+//  spawned by external open events.
+//
+//  Drag-and-drop state lives elsewhere — see `TabDragController`.
 //
 
-import Foundation
 import AppKit
+import Foundation
 
 final class WindowRegistry {
     static let shared = WindowRegistry()
@@ -22,11 +27,14 @@ final class WindowRegistry {
     private var mainWindowObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
     private weak var lastActiveTabManager: TabManager?
     private let lock = NSLock()
+
     private var pendingTransientPlaceholderDismissals = 0
     private var transientPlaceholderDismissalLowerBound: Date?
     private var transientPlaceholderDismissalDeadline: Date?
 
     private init() {}
+
+    // MARK: - Registration
 
     func register(_ tabManager: TabManager, window: NSWindow?) {
         lock.withLock {
@@ -59,7 +67,7 @@ final class WindowRegistry {
 
         dismissPendingTransientPlaceholderWindows()
 
-        // Deliver any URLs buffered during cold launch (before this TabManager existed)
+        // Deliver any URLs buffered during cold launch (before this TabManager existed).
         DispatchQueue.main.async {
             guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
             appDelegate.flushPendingURLs(to: tabManager)
@@ -79,6 +87,8 @@ final class WindowRegistry {
         }
     }
 
+    // MARK: - Lookups
+
     func allDirtyPDFManagers() -> [(UUID, PDFManager)] {
         lock.withLock {
             entries.values
@@ -87,9 +97,8 @@ final class WindowRegistry {
         }
     }
 
-    /// Returns the TabManager for the PageFlow window that was most recently
-    /// the main window. Remains correct even after Settings (or another
-    /// utility panel) has taken over `keyWindow`/`mainWindow`.
+    /// TabManager whose window was most recently main. Stays correct even
+    /// after Settings or another panel has stolen `keyWindow`/`mainWindow`.
     func frontmostTabManager() -> TabManager? {
         let (tracked, values) = lock.withLock {
             (lastActiveTabManager, Array(entries.values).filter { $0.window != nil })
@@ -115,16 +124,16 @@ final class WindowRegistry {
             .tabManager
     }
 
-    /// Returns the first available TabManager (for opening files from Finder)
+    /// Any registered TabManager — used by Finder open routing.
     func anyTabManager() -> TabManager? {
         let values = lock.withLock {
             Array(entries.values).filter { $0.window != nil }
         }
-
         return preferredEntry(from: values)?.tabManager
     }
 
-    /// Activates an existing tab for a URL if already open. Returns true if handled.
+    /// Activates an existing tab for the given URL if already open. Returns
+    /// `true` if handled (caller should not create a new tab/window).
     func activateExistingDocument(for url: URL) -> Bool {
         let canonicalURL = url.pageFlowCanonicalDocumentURL
         let match: (TabManager, UUID, NSWindow?)? = lock.withLock {
@@ -143,18 +152,7 @@ final class WindowRegistry {
         return true
     }
 
-    /// Brings the given window to the front, handling minimized state and background app activation.
-    private func bringWindowToFront(_ window: NSWindow?) {
-        NSApp.activate(ignoringOtherApps: true)
-
-        guard let window = window else { return }
-
-        if window.isMiniaturized {
-            window.deminiaturize(nil)
-        }
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
-    }
+    // MARK: - Window Front/Close
 
     func closeWindow(for tabManager: TabManager) {
         DispatchQueue.main.async { [self] in
@@ -165,8 +163,25 @@ final class WindowRegistry {
         }
     }
 
-    /// Closes one transient placeholder window created by an external open event that
-    /// rerouted into an existing PageFlow window.
+    func bringToFront(for tabManager: TabManager) {
+        let window = lock.withLock {
+            entries[ObjectIdentifier(tabManager)]?.window
+        }
+        bringWindowToFront(window)
+    }
+
+    private func bringWindowToFront(_ window: NSWindow?) {
+        NSApp.activate(ignoringOtherApps: true)
+        guard let window else { return }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+    }
+
+    // MARK: - Transient Placeholder Cleanup
+
+    /// Closes one transient placeholder window created by an external open
+    /// event that rerouted into an existing PageFlow window.
     func dismissTransientPlaceholderWindowForExternalOpen(within seconds: TimeInterval = 1.0) {
         let now = Date()
         lock.withLock {
@@ -177,35 +192,13 @@ final class WindowRegistry {
         dismissPendingTransientPlaceholderWindows()
     }
 
-    /// Activates the app and brings the given TabManager's window to the front.
-    func bringToFront(for tabManager: TabManager) {
-        let window = lock.withLock {
-            entries[ObjectIdentifier(tabManager)]?.window
-        }
-        bringWindowToFront(window)
-    }
-
-    private func preferredEntry(from values: [Entry]) -> Entry? {
-        if let keyWindow = NSApp.keyWindow,
-           let keyEntry = values.first(where: { $0.window === keyWindow }) {
-            return keyEntry
-        }
-
-        if let mainWindow = NSApp.mainWindow,
-           let mainEntry = values.first(where: { $0.window === mainWindow }) {
-            return mainEntry
-        }
-
-        return values.first
-    }
-
     private func dismissPendingTransientPlaceholderWindows() {
         let tabManagers: [TabManager] = lock.withLock {
             pruneExpiredTransientPlaceholderDismissals()
 
             guard pendingTransientPlaceholderDismissals > 0,
                   let lowerBound = transientPlaceholderDismissalLowerBound else {
-                return [TabManager]()
+                return []
             }
 
             return entries.values
@@ -239,5 +232,21 @@ final class WindowRegistry {
         pendingTransientPlaceholderDismissals = 0
         transientPlaceholderDismissalLowerBound = nil
         transientPlaceholderDismissalDeadline = nil
+    }
+
+    // MARK: - Helpers
+
+    private func preferredEntry(from values: [Entry]) -> Entry? {
+        if let keyWindow = NSApp.keyWindow,
+           let keyEntry = values.first(where: { $0.window === keyWindow }) {
+            return keyEntry
+        }
+
+        if let mainWindow = NSApp.mainWindow,
+           let mainEntry = values.first(where: { $0.window === mainWindow }) {
+            return mainEntry
+        }
+
+        return values.first
     }
 }

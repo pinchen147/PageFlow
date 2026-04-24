@@ -81,6 +81,19 @@ final class TabManager {
         let restoreTabIDOnCancel: UUID?
     }
 
+    private struct DetachedTabContext {
+        let tab: TabModel
+        let pdfManager: PDFManager
+        let searchManager: SearchManager
+        let annotationManager: AnnotationManager
+        let commentManager: CommentManager
+        let bookmarkManager: BookmarkManager
+        let undoManager: UndoManager
+        let uiState: TabUIState
+        let pendingPasswordRequest: PasswordRequest?
+        let queuedPasswordRequests: [PasswordRequest]
+    }
+
     // MARK: - Computed Properties
 
     var activeTab: TabModel? {
@@ -276,7 +289,12 @@ final class TabManager {
 
     // MARK: - Initialization
 
-    init() {
+    init(createInitialTab: Bool = true) {
+        // `createInitialTab: false` is for tear-off — caller will attach the
+        // detached tab immediately so the new window opens with state already
+        // in place.
+        guard createInitialTab else { return }
+
         let initialTab = TabModel()
         tabs = [initialTab]
         activeTabID = initialTab.id
@@ -342,7 +360,7 @@ final class TabManager {
 
         // Handle tab selection after close
         if tabs.isEmpty {
-            NSApplication.shared.keyWindow?.close()
+            WindowRegistry.shared.closeWindow(for: self)
         } else if activeTabID == tabID {
             let newIndex = min(index, tabs.count - 1)
             activeTabID = tabs[newIndex].id
@@ -408,6 +426,53 @@ final class TabManager {
         tabs.insert(tab, at: adjustedIndex)
     }
 
+    /// In-bar reorder driven by drag commit. Looks up the source index from
+    /// the tab id so callers don't have to track it themselves.
+    func commitTabReorder(_ tabID: UUID, toIndex: Int) {
+        guard let sourceIndex = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let clampedTarget = min(max(toIndex, 0), tabs.count)
+        let adjustedTarget = clampedTarget > sourceIndex ? clampedTarget - 1 : clampedTarget
+        guard adjustedTarget != sourceIndex else { return }
+        moveTab(fromIndex: sourceIndex, toIndex: clampedTarget)
+    }
+
+    @discardableResult
+    func moveTab(
+        _ tabID: UUID,
+        to destination: TabManager,
+        at index: Int,
+        select: Bool = true,
+        closeIfEmpty: Bool = true
+    ) -> Bool {
+        guard destination !== self,
+              let detachedTab = detachTab(tabID, closeIfEmpty: closeIfEmpty) else {
+            return false
+        }
+
+        destination.attachDetachedTab(detachedTab, at: index, select: select)
+        if select {
+            WindowRegistry.shared.bringToFront(for: destination)
+        }
+        return true
+    }
+
+    @discardableResult
+    func moveTabToNewWindow(_ tabID: UUID, near screenPoint: CGPoint) -> Bool {
+        // Synchronous: detach the tab → build an empty TabManager pre-loaded
+        // with it → hand to the AppDelegate, which creates and shows a window
+        // hosting that TabManager. No async callback, no placeholder dance —
+        // if the window opens, the tab is already in it.
+        guard let appDelegate = NSApp.delegate as? AppDelegate,
+              let detachedTab = detachTab(tabID) else {
+            return false
+        }
+
+        let newTabManager = TabManager(createInitialTab: false)
+        newTabManager.attachDetachedTab(detachedTab, at: 0)
+        _ = appDelegate.createNewWindow(with: newTabManager, screenPoint: screenPoint)
+        return true
+    }
+
     // MARK: - Document Operations
 
     func openDocument(url: URL, isSecurityScoped: Bool, replaceCurrent: Bool = false) {
@@ -454,6 +519,7 @@ final class TabManager {
             if let index = tabs.firstIndex(where: { $0.id == tabID }) {
                 tabs[index].documentURL = url
                 tabs[index].isSecurityScoped = isSecurityScoped
+                tabs[index].title = pdfManagers[tabID]?.documentTitle ?? url.deletingPathExtension().lastPathComponent
             }
             documentOpenedHandler?(url, isSecurityScoped)
         case .needsPassword:
@@ -662,9 +728,12 @@ final class TabManager {
     }
 
     private func configureUndoManager(for tabID: UUID) {
+        installUndoManager(UndoManager(), for: tabID)
+    }
+
+    private func installUndoManager(_ undoManager: UndoManager, for tabID: UUID) {
         removeUndoObserver(for: tabID)
 
-        let undoManager = UndoManager()
         undoManagers[tabID] = undoManager
         refreshUndoAvailability(for: tabID)
 
@@ -858,6 +927,122 @@ final class TabManager {
             )
         case .cancelled, .failure:
             break
+        }
+    }
+
+    private func detachTab(_ tabID: UUID, closeIfEmpty: Bool = true) -> DetachedTabContext? {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }),
+              let pdfManager = pdfManagers[tabID],
+              let searchManager = searchManagers[tabID],
+              let annotationManager = annotationManagers[tabID],
+              let commentManager = commentManagers[tabID],
+              let bookmarkManager = bookmarkManagers[tabID],
+              let undoManager = undoManagers[tabID] else {
+            return nil
+        }
+
+        if activeTabID == tabID {
+            saveCurrentTabState()
+        }
+
+        if activeTabID == tabID && (tabUIStates[tabID]?.isEditingPages ?? false) {
+            stopEditModeKeyMonitor()
+        }
+
+        let detachedPendingPasswordRequest = pendingPasswordRequest?.tabID == tabID ? pendingPasswordRequest : nil
+        let detachedQueuedPasswordRequests = queuedPasswordRequests.filter { $0.tabID == tabID }
+
+        if detachedPendingPasswordRequest != nil {
+            self.pendingPasswordRequest = nil
+            advancePasswordRequestQueue()
+        }
+        self.queuedPasswordRequests.removeAll { $0.tabID == tabID }
+
+        let detachedTab = DetachedTabContext(
+            tab: tabs[index],
+            pdfManager: pdfManager,
+            searchManager: searchManager,
+            annotationManager: annotationManager,
+            commentManager: commentManager,
+            bookmarkManager: bookmarkManager,
+            undoManager: undoManager,
+            uiState: tabUIStates[tabID] ?? TabUIState(),
+            pendingPasswordRequest: detachedPendingPasswordRequest,
+            queuedPasswordRequests: detachedQueuedPasswordRequests
+        )
+
+        removeUndoObserver(for: tabID)
+        tabs.remove(at: index)
+        pdfManagers.removeValue(forKey: tabID)
+        searchManagers.removeValue(forKey: tabID)
+        annotationManagers.removeValue(forKey: tabID)
+        commentManagers.removeValue(forKey: tabID)
+        bookmarkManagers.removeValue(forKey: tabID)
+        undoManagers.removeValue(forKey: tabID)
+        undoAvailabilityByTab.removeValue(forKey: tabID)
+        tabUIStates.removeValue(forKey: tabID)
+
+        if tabs.isEmpty {
+            activeTabID = nil
+            closeFilePicker()
+            if closeIfEmpty {
+                WindowRegistry.shared.closeWindow(for: self)
+            }
+        } else if activeTabID == tabID {
+            let newIndex = min(index, tabs.count - 1)
+            activeTabID = tabs[newIndex].id
+        }
+
+        return detachedTab
+    }
+
+    private func attachDetachedTab(
+        _ detachedTab: DetachedTabContext,
+        at index: Int,
+        select: Bool = true
+    ) {
+        if select {
+            saveCurrentTabState()
+        }
+
+        let clampedIndex = min(max(index, 0), tabs.count)
+        var attachedTab = detachedTab.tab
+        if let documentURL = attachedTab.documentURL {
+            attachedTab.title = detachedTab.pdfManager.documentTitle.isEmpty
+                ? documentURL.deletingPathExtension().lastPathComponent
+                : detachedTab.pdfManager.documentTitle
+        }
+        tabs.insert(attachedTab, at: clampedIndex)
+        pdfManagers[detachedTab.tab.id] = detachedTab.pdfManager
+        searchManagers[detachedTab.tab.id] = detachedTab.searchManager
+        annotationManagers[detachedTab.tab.id] = detachedTab.annotationManager
+        commentManagers[detachedTab.tab.id] = detachedTab.commentManager
+        bookmarkManagers[detachedTab.tab.id] = detachedTab.bookmarkManager
+        tabUIStates[detachedTab.tab.id] = detachedTab.uiState
+        installUndoManager(detachedTab.undoManager, for: detachedTab.tab.id)
+        restorePasswordRequests(
+            pending: detachedTab.pendingPasswordRequest,
+            queued: detachedTab.queuedPasswordRequests
+        )
+        if select {
+            selectTab(detachedTab.tab.id)
+        }
+    }
+
+    private func restorePasswordRequests(
+        pending: PasswordRequest?,
+        queued: [PasswordRequest]
+    ) {
+        if let pending {
+            if pendingPasswordRequest == nil {
+                pendingPasswordRequest = pending
+            } else {
+                queuedPasswordRequests.append(pending)
+            }
+        }
+
+        if !queued.isEmpty {
+            queuedPasswordRequests.append(contentsOf: queued)
         }
     }
 

@@ -2,15 +2,12 @@
 //  NonDraggableArea.swift
 //  PageFlow
 //
-//  NSView wrapper that prevents mouse events from dragging the window.
-//  Used in title bar areas where we want gestures to work instead of window dragging.
+//  Small AppKit bridge views for title bar interaction behavior.
 //
 
 import SwiftUI
 import AppKit
 
-/// An NSView that explicitly prevents window dragging from its area.
-/// Use this to wrap views in the title bar that should handle their own gestures.
 struct NonDraggableArea: NSViewRepresentable {
     func makeNSView(context: Context) -> NonDraggableNSView {
         NonDraggableNSView()
@@ -19,8 +16,6 @@ struct NonDraggableArea: NSViewRepresentable {
     func updateNSView(_ nsView: NonDraggableNSView, context: Context) {}
 }
 
-/// Custom NSView that returns false for mouseDownCanMoveWindow.
-/// This tells macOS "mouse events in this view should NOT drag the window".
 final class NonDraggableNSView: NSView {
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -30,5 +25,72 @@ final class NonDraggableNSView: NSView {
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+    }
+}
+
+struct HoverTrackingArea: NSViewRepresentable {
+    @Binding var isHovered: Bool
+
+    func makeNSView(context: Context) -> HoverTrackingNSView {
+        let view = HoverTrackingNSView()
+        let isHoveredBinding = _isHovered
+        view.onHoverChanged = { hovering in
+            if isHoveredBinding.wrappedValue != hovering {
+                isHoveredBinding.wrappedValue = hovering
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: HoverTrackingNSView, context: Context) {
+        let isHoveredBinding = _isHovered
+        nsView.onHoverChanged = { hovering in
+            if isHoveredBinding.wrappedValue != hovering {
+                isHoveredBinding.wrappedValue = hovering
+            }
+        }
+    }
+}
+
+final class HoverTrackingNSView: NSView {
+    var onHoverChanged: ((Bool) -> Void)?
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        let options: NSTrackingArea.Options = [
+            .activeAlways,
+            .enabledDuringMouseDrag,
+            .inVisibleRect,
+            .mouseEnteredAndExited
+        ]
+        let trackingArea = NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil)
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged?(false)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+
+        if newWindow == nil {
+            onHoverChanged?(false)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }

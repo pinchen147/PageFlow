@@ -60,6 +60,14 @@ struct PageFlowApp: App {
         WindowGroup {
             TabContainerView()
                 .environment(recentFilesManager)
+                .onAppear {
+                    appDelegate.windowContentBuilder = { tabManager in
+                        AnyView(
+                            TabContainerView(tabManager: tabManager)
+                                .environment(recentFilesManager)
+                        )
+                    }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {

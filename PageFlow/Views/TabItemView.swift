@@ -14,6 +14,8 @@ struct TabItemView: View {
     let isHovering: Bool
 
     var body: some View {
+        let isCloseVisible = isHovering || isActive
+
         HStack(spacing: DesignTokens.spacingXS) {
             HStack(spacing: DesignTokens.spacingXS) {
                 if isDirty {
@@ -29,12 +31,11 @@ struct TabItemView: View {
                     .frame(maxWidth: DesignTokens.tabMaxWidth - DesignTokens.tabCloseButtonSize - DesignTokens.spacingSM)
             }
 
-            if isHovering || isActive {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-            }
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+                .opacity(isCloseVisible ? 1 : 0)
         }
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)

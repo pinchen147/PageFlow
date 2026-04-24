@@ -269,15 +269,7 @@ struct MainView: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: DesignTokens.trafficLightHotspotHeight)
-        .contentShape(Rectangle())
-        .onContinuousHover { phase in
-            switch phase {
-            case .active:
-                isBottomBarHovered = true
-            case .ended:
-                isBottomBarHovered = false
-            }
-        }
+        .overlay(HoverTrackingArea(isHovered: $isBottomBarHovered))
     }
 
     // MARK: - Go To Page Dialog

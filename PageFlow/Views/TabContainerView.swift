@@ -11,10 +11,22 @@ import AppKit
 struct TabContainerView: View {
     @Environment(RecentFilesManager.self) private var recentFilesManager
 
-    @State private var tabManager = TabManager()
+    @State private var tabManager: TabManager
     @State private var showingSearch = false
     @State private var searchFocusRequest = 0
     @State private var isTopBarHovered = false
+
+    /// Default init: each window creates its own empty TabManager.
+    init() {
+        self._tabManager = State(wrappedValue: TabManager())
+    }
+
+    /// Tear-off init: the caller hands us a pre-populated TabManager (e.g.
+    /// one that already contains the dragged-out tab). The window opens with
+    /// that state already in place — no race, no placeholder dance.
+    init(tabManager: TabManager) {
+        self._tabManager = State(wrappedValue: tabManager)
+    }
 
     private var alwaysOnTopBinding: Binding<Bool> {
         Binding(
@@ -105,7 +117,7 @@ struct TabContainerView: View {
 
 // MARK: - Window Registrar
 
-/// Helper view that registers the TabManager with the global registry
+/// Helper view that registers the TabManager with the global registry.
 private struct WindowRegistrar: NSViewRepresentable {
     let tabManager: TabManager
 

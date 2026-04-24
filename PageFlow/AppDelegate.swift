@@ -22,6 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [NSWindowController] = []
     private var windowCloseObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
 
+    /// Builds the SwiftUI root view for a new window, wrapping the passed-in
+    /// (pre-populated) TabManager. Set once by `PageFlowApp` at launch. Nil
+    /// means "a window was requested before PageFlowApp installed the builder"
+    /// — which should never happen, but if it does we fail loud.
+    var windowContentBuilder: ((TabManager) -> AnyView)?
+
     /// URLs received before any TabManager registered (cold launch from Finder)
     private(set) var pendingDocumentOpens: [PendingDocumentOpen] = []
 
@@ -38,16 +44,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     }
 
-    func createNewWindow(with contentView: some View) {
+    @discardableResult
+    func createNewWindow(
+        with contentView: some View,
+        screenPoint: CGPoint? = nil,
+        frame: NSRect? = nil
+    ) -> NSWindow {
         let hostingController = NSHostingController(rootView: contentView)
 
         let window = NSWindow(contentViewController: hostingController)
-        window.setContentSize(NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight))
+        let contentSize = frame?.size
+            ?? NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight)
+        window.setContentSize(contentSize)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.identifier = PageFlowWindowIdentifiers.userCreated
-        window.center()
+        if let frame {
+            window.setFrame(frame, display: false)
+        } else {
+            positionWindow(window, contentSize: contentSize, near: screenPoint)
+        }
 
         let windowController = NSWindowController(window: window)
         windowControllers.append(windowController)
@@ -70,6 +87,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowCloseObservers[controllerID] = observer
 
         windowController.showWindow(nil)
+        return window
+    }
+
+    /// Creates a window hosting the given (pre-populated) TabManager. Used
+    /// by tear-off: caller detaches the tab into a fresh empty TabManager,
+    /// then hands it to us so the window opens with the tab already in place.
+    @discardableResult
+    func createNewWindow(
+        with tabManager: TabManager,
+        screenPoint: CGPoint? = nil,
+        frame: NSRect? = nil
+    ) -> NSWindow? {
+        guard let builder = windowContentBuilder else {
+            assertionFailure("windowContentBuilder not installed — PageFlowApp.onAppear didn't fire")
+            return nil
+        }
+        return createNewWindow(with: builder(tabManager), screenPoint: screenPoint, frame: frame)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -172,5 +206,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func positionWindow(
+        _ window: NSWindow,
+        contentSize: NSSize,
+        near screenPoint: CGPoint?
+    ) {
+        guard let screenPoint,
+              let screen = NSScreen.screens.first(where: { $0.frame.contains(screenPoint) }) ?? NSScreen.main else {
+            window.center()
+            return
+        }
+
+        let visibleFrame = screen.visibleFrame
+        let originX = min(
+            max(screenPoint.x - contentSize.width * 0.35, visibleFrame.minX),
+            visibleFrame.maxX - contentSize.width
+        )
+        let originY = min(
+            max(screenPoint.y - 64, visibleFrame.minY),
+            visibleFrame.maxY - contentSize.height
+        )
+
+        window.setFrameOrigin(NSPoint(x: originX, y: originY))
     }
 }

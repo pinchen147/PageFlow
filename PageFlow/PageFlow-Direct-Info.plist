@@ -45,5 +45,13 @@
 			</array>
 		</dict>
 	</array>
+	<key>SUFeedURL</key>
+	<string>https://pageflow.pinchen.me/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>ksyQsblUuGii2trZD5ux/LwJN8yCtAMGM9yyJkmkxVw=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
 </dict>
 </plist>
