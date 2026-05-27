@@ -65,9 +65,8 @@ final class TabDragController {
     // MARK: - Public Observable State
 
     /// Toggled when a drag starts/ends. Stored separately from `activeDrag`
-    /// so views that only care about the on/off transition (e.g. tab-bar
-    /// reveal in `TopChromeView`) don't re-render on every insertion-index
-    /// update.
+    /// so views that only care about the on/off transition don't re-render on
+    /// every insertion-index update.
     private(set) var isActive: Bool = false
 
     /// Drag specifics. Updated only when meaningful state changes — never
@@ -550,9 +549,7 @@ final class TabDragController {
             eventMonitor = NSEvent.addLocalMonitorForEvents(
                 matching: [.leftMouseDragged, .leftMouseUp, .keyDown]
             ) { [weak self] event in
-                MainActor.assumeIsolated {
-                    self?.handleMonitoredEvent(event) ?? event
-                }
+                self?.handleMonitoredEvent(event) ?? event
             }
         }
         if resignActiveObserver == nil {

@@ -140,6 +140,9 @@ struct ShortcutModel: Codable, Equatable {
         "search": ShortcutModel(key: "f"),
         "save": ShortcutModel(key: "s"),
         "toggleSidebar": ShortcutModel(key: "s", option: true),
+        "toggleTopBar": ShortcutModel(key: "b", shift: true),
+        "toggleToolbar": ShortcutModel(key: "t", shift: true),
+        "togglePageIndicator": ShortcutModel(key: "p", shift: true),
         "copyPageAsMarkdown": ShortcutModel(key: "m", shift: true),
         "copyDocumentAsMarkdown": ShortcutModel(key: "m", shift: true, option: true)
     ]

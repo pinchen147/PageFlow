@@ -20,12 +20,12 @@ struct TabItemView: View {
             HStack(spacing: DesignTokens.spacingXS) {
                 if isDirty {
                     Circle()
-                        .fill(Color.white.opacity(0.9))
+                        .fill(DesignTokens.glassTextPrimary.opacity(0.82))
                         .frame(width: DesignTokens.tabDirtyIndicatorSize, height: DesignTokens.tabDirtyIndicatorSize)
                 }
                 Text(tab.displayTitle)
                     .font(.system(size: 11, weight: isActive ? .medium : .regular))
-                    .foregroundStyle(.white.opacity(isActive ? 0.95 : 0.7))
+                    .foregroundStyle(DesignTokens.glassTextPrimary.opacity(isActive ? 0.92 : 0.74))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: DesignTokens.tabMaxWidth - DesignTokens.tabCloseButtonSize - DesignTokens.spacingSM)
@@ -33,7 +33,7 @@ struct TabItemView: View {
 
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(DesignTokens.glassTextSecondary.opacity(0.62))
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
                 .opacity(isCloseVisible ? 1 : 0)
         }
@@ -41,14 +41,14 @@ struct TabItemView: View {
         .padding(.vertical, DesignTokens.spacingXS)
         .frame(height: DesignTokens.tabHeight)
         .frame(minWidth: DesignTokens.tabMinWidth, maxWidth: DesignTokens.tabMaxWidth)
-        .background(.ultraThinMaterial)
-        .background(DesignTokens.floatingToolbarBase.opacity(isActive ? 0.2 : 0.12))
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
-                .strokeBorder(.white.opacity(isActive ? 0.3 : 0.18))
+        .pageFlowLiquidGlassSurface(
+            cornerRadius: DesignTokens.tabCornerRadius,
+            tint: .light,
+            tintOpacity: isActive ? 0.22 : 0.14,
+            variant: .clear,
+            strokeOpacity: isActive ? 0.3 : 0.18
         )
-        .shadow(color: .black.opacity(0.1), radius: isActive ? 8 : 4, y: isActive ? 4 : 2)
+        .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: isActive ? 8 : 4, y: isActive ? -3 : -2)
         .contentShape(Rectangle())
         // Gesture handling moved to TabBarView for unified tap/drag detection
     }

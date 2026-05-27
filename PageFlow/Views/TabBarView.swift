@@ -12,11 +12,17 @@ import SwiftUI
 
 struct TabBarView: View {
     @Bindable var tabManager: TabManager
+    let isInteractive: Bool
 
     @State private var dragController = TabDragController.shared
     @State private var tabFrames: [UUID: CGRect] = [:]
     @State private var newTabButtonFrame: CGRect = .zero
     @State private var hoveredTabID: UUID?
+
+    init(tabManager: TabManager, isInteractive: Bool = true) {
+        self.tabManager = tabManager
+        self.isInteractive = isInteractive
+    }
 
     var body: some View {
         ZStack {
@@ -30,30 +36,41 @@ struct TabBarView: View {
                 .padding(.horizontal, DesignTokens.spacingXS)
             }
             .onPreferenceChange(TabFramePreferenceKey.self) { frames in
-                DispatchQueue.main.async { tabFrames = frames }
+                guard isInteractive, tabFrames != frames else { return }
+                tabFrames = frames
             }
             .onPreferenceChange(NewTabButtonFramePreferenceKey.self) { frame in
-                DispatchQueue.main.async { newTabButtonFrame = frame ?? .zero }
+                let newFrame = frame ?? .zero
+                guard isInteractive, newTabButtonFrame != newFrame else { return }
+                newTabButtonFrame = newFrame
             }
 
             // Empty bar space falls through to here so dragging the
             // background drags the window — Chrome / Safari behavior.
             WindowDragArea()
 
-            TabBarMouseView(
-                tabManager: tabManager,
-                tabFrames: tabFrames,
-                newTabButtonFrame: newTabButtonFrame,
-                hoveredTabID: hoveredTabID,
-                activeTabID: tabManager.activeTabID,
-                onHover: { hoveredTabID = $0 },
-                onClick: { handleClick(at: $0) }
-            )
-            // Guarantee the AppKit overlay fills the bar — NSViews have
-            // no intrinsic size, and we need it to cover the full ZStack.
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if isInteractive {
+                TabBarMouseView(
+                    tabManager: tabManager,
+                    tabFrames: tabFrames,
+                    newTabButtonFrame: newTabButtonFrame,
+                    hoveredTabID: hoveredTabID,
+                    activeTabID: tabManager.activeTabID,
+                    onHover: { hoveredTabID = $0 },
+                    onClick: handleClick
+                )
+                // Guarantee the AppKit overlay fills the bar — NSViews have
+                // no intrinsic size, and we need it to cover the full ZStack.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .coordinateSpace(name: Self.coordinateSpace)
+        .onChange(of: isInteractive) { _, interactive in
+            guard !interactive else { return }
+            tabFrames = [:]
+            newTabButtonFrame = .zero
+            hoveredTabID = nil
+        }
     }
 
     // MARK: - Tab View
@@ -68,14 +85,7 @@ struct TabBarView: View {
             isDirty: tabManager.isTabDirty(tab.id),
             isHovering: hoveredTabID == tab.id
         )
-        .background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: TabFramePreferenceKey.self,
-                    value: [tab.id: geo.frame(in: .named(Self.coordinateSpace))]
-                )
-            }
-        )
+        .background(tabFrameReporter(for: tab.id))
         .offset(x: shiftOffset(for: tab.id))
         // The source tab stays in its layout slot at opacity 0 while the
         // floating preview owns the visible drag affordance.
@@ -92,24 +102,41 @@ struct TabBarView: View {
     private var newTabButton: some View {
         Image(systemName: "plus")
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.8))
+            .foregroundStyle(DesignTokens.glassTextPrimary.opacity(0.78))
             .frame(width: 24, height: 24)
-            .background(.ultraThinMaterial)
-            .background(DesignTokens.floatingToolbarBase.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
-                    .strokeBorder(.white.opacity(0.22))
+            .pageFlowLiquidGlassSurface(
+                cornerRadius: DesignTokens.tabCornerRadius,
+                tint: .light,
+                tintOpacity: 0.14,
+                variant: .clear,
+                strokeOpacity: 0.22
             )
-            .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(
-                        key: NewTabButtonFramePreferenceKey.self,
-                        value: geo.frame(in: .named(Self.coordinateSpace))
-                    )
-                }
-            )
+            .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 4, y: -2)
+            .background(newTabFrameReporter)
+    }
+
+    @ViewBuilder
+    private func tabFrameReporter(for tabID: UUID) -> some View {
+        if isInteractive {
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: TabFramePreferenceKey.self,
+                    value: [tabID: geo.frame(in: .named(Self.coordinateSpace))]
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var newTabFrameReporter: some View {
+        if isInteractive {
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: NewTabButtonFramePreferenceKey.self,
+                    value: geo.frame(in: .named(Self.coordinateSpace))
+                )
+            }
+        }
     }
 
     // MARK: - Drag State Projections
@@ -165,40 +192,15 @@ struct TabBarView: View {
 
     // MARK: - Click Routing
 
-    private func handleClick(at x: CGFloat) {
-        if isNewTabHit(x) {
+    private func handleClick(_ target: TabBarClickTarget) {
+        switch target {
+        case .newTab:
             tabManager.createNewTab()
-            return
-        }
-
-        guard let tabID = findTab(at: x) else { return }
-
-        if isCloseHit(for: tabID, x: x) {
-            tabManager.closeTab(tabID)
-        } else {
+        case .selectTab(let tabID):
             tabManager.selectTab(tabID)
+        case .closeTab(let tabID):
+            tabManager.closeTab(tabID)
         }
-    }
-
-    private func findTab(at x: CGFloat) -> UUID? {
-        for tab in tabManager.tabs {
-            guard let frame = tabFrames[tab.id] else { continue }
-            if x >= frame.minX && x <= frame.maxX { return tab.id }
-        }
-        return nil
-    }
-
-    private func isCloseHit(for tabID: UUID, x: CGFloat) -> Bool {
-        guard let frame = tabFrames[tabID] else { return false }
-        let isCloseVisible = hoveredTabID == tabID || tabManager.activeTabID == tabID
-        guard isCloseVisible else { return false }
-        let closeMaxX = frame.maxX - DesignTokens.spacingSM
-        let closeMinX = closeMaxX - DesignTokens.tabCloseButtonSize
-        return x >= closeMinX && x <= closeMaxX
-    }
-
-    private func isNewTabHit(_ x: CGFloat) -> Bool {
-        x >= newTabButtonFrame.minX && x <= newTabButtonFrame.maxX
     }
 
     // MARK: - Constants

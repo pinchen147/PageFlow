@@ -25,7 +25,9 @@ struct ColorWellView: NSViewRepresentable {
     }
 
     func updateNSView(_ well: NSColorWell, context: Context) {
-        well.color = color
+        if well.color != color {
+            well.color = color
+        }
     }
 
     func makeCoordinator() -> Coordinator {

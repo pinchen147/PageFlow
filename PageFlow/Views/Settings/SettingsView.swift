@@ -38,21 +38,33 @@ struct SettingsView: View {
                 .tag(Tab.shortcuts)
         }
         .frame(width: DesignTokens.settingsWindowWidth, height: DesignTokens.settingsWindowHeight)
-        .background(WindowAccessor())
+        .background(SettingsWindowAccessor())
     }
 }
 
-struct WindowAccessor: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            if let window = view.window {
-                window.standardWindowButton(.closeButton)?.keyEquivalent = "\u{1b}" // Escape
-                window.standardWindowButton(.closeButton)?.keyEquivalentModifierMask = []
-            }
-        }
-        return view
+private struct SettingsWindowAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> SettingsWindowAccessorView {
+        SettingsWindowAccessorView()
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: SettingsWindowAccessorView, context: Context) {
+        nsView.configureWindowIfNeeded()
+    }
+}
+
+private final class SettingsWindowAccessorView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        configureWindowIfNeeded()
+    }
+
+    func configureWindowIfNeeded() {
+        guard let closeButton = window?.standardWindowButton(.closeButton),
+              closeButton.keyEquivalent != "\u{1b}" else {
+            return
+        }
+
+        closeButton.keyEquivalent = "\u{1b}" // Escape
+        closeButton.keyEquivalentModifierMask = []
+    }
 }

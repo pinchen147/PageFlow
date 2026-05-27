@@ -49,6 +49,14 @@ struct AnnotationsSettingsTab: View {
                     Spacer()
                     Button(action: { SettingsManager.shared.addHighlightPreset() }) {
                         Image(systemName: "plus")
+                            .frame(width: 20, height: 20)
+                            .pageFlowLiquidGlassSurface(
+                                cornerRadius: DesignTokens.spacingSM,
+                                tintOpacity: 0.08,
+                                interactive: true,
+                                variant: .clear,
+                                strokeOpacity: 0.16
+                            )
                     }
                     .buttonStyle(.plain)
                 }
@@ -90,6 +98,14 @@ struct AnnotationsSettingsTab: View {
                     Spacer()
                     Button(action: { SettingsManager.shared.addUnderlinePreset() }) {
                         Image(systemName: "plus")
+                            .frame(width: 20, height: 20)
+                            .pageFlowLiquidGlassSurface(
+                                cornerRadius: DesignTokens.spacingSM,
+                                tintOpacity: 0.08,
+                                interactive: true,
+                                variant: .clear,
+                                strokeOpacity: 0.16
+                            )
                     }
                     .buttonStyle(.plain)
                 }
@@ -131,6 +147,14 @@ struct AnnotationsSettingsTab: View {
                     Spacer()
                     Button(action: { SettingsManager.shared.addCommentPreset() }) {
                         Image(systemName: "plus")
+                            .frame(width: 20, height: 20)
+                            .pageFlowLiquidGlassSurface(
+                                cornerRadius: DesignTokens.spacingSM,
+                                tintOpacity: 0.08,
+                                interactive: true,
+                                variant: .clear,
+                                strokeOpacity: 0.16
+                            )
                     }
                     .buttonStyle(.plain)
                 }
@@ -140,7 +164,16 @@ struct AnnotationsSettingsTab: View {
                 Button("Reset to Defaults") {
                     SettingsManager.shared.resetColors()
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .padding(.horizontal, DesignTokens.spacingMD)
+                .padding(.vertical, DesignTokens.spacingXS)
+                .pageFlowLiquidGlassSurface(
+                    cornerRadius: DesignTokens.spacingSM,
+                    tintOpacity: 0.08,
+                    interactive: true,
+                    variant: .clear,
+                    strokeOpacity: 0.16
+                )
             }
         }
         .formStyle(.grouped)
@@ -168,6 +201,14 @@ struct PresetRow: View {
                 Button(action: onDelete) {
                     Image(systemName: "minus.circle")
                         .foregroundStyle(.red)
+                        .frame(width: 20, height: 20)
+                        .pageFlowLiquidGlassSurface(
+                            cornerRadius: DesignTokens.spacingSM,
+                            tintOpacity: 0.08,
+                            interactive: true,
+                            variant: .clear,
+                            strokeOpacity: 0.12
+                        )
                 }
                 .buttonStyle(.plain)
             }

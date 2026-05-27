@@ -66,6 +66,16 @@ struct GeneralSettingsTab: View {
                             showingNoUpdatesAlert = true
                         }
                     }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, DesignTokens.spacingMD)
+                    .padding(.vertical, DesignTokens.spacingXS)
+                    .pageFlowLiquidGlassSurface(
+                        cornerRadius: DesignTokens.spacingSM,
+                        tintOpacity: 0.08,
+                        interactive: true,
+                        variant: .clear,
+                        strokeOpacity: 0.16
+                    )
                 }
             } header: {
                 Text("Updates")
@@ -96,11 +106,23 @@ struct GeneralSettingsTab: View {
                         Button("Reset Size") {
                             settingsManager.resetToolbarScale()
                         }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, DesignTokens.spacingMD)
+                        .padding(.vertical, DesignTokens.spacingXS)
+                        .pageFlowLiquidGlassSurface(
+                            cornerRadius: DesignTokens.spacingSM,
+                            tintOpacity: abs(settings.toolbarScale - SettingsManager.defaultToolbarScale) < 0.001 ? 0.04 : 0.08,
+                            interactive: abs(settings.toolbarScale - SettingsManager.defaultToolbarScale) >= 0.001,
+                            variant: .clear,
+                            strokeOpacity: abs(settings.toolbarScale - SettingsManager.defaultToolbarScale) < 0.001 ? 0.08 : 0.16
+                        )
                         .disabled(abs(settings.toolbarScale - SettingsManager.defaultToolbarScale) < 0.001)
                     }
                 }
 
-                Toggle("Pin toolbar", isOn: $settings.isToolbarPinned)
+                Toggle("Always show top bar", isOn: $settings.isTopBarAlwaysVisible)
+                Toggle("Always show toolbar", isOn: $settings.isFloatingToolbarAlwaysVisible)
+                Toggle("Always show page number", isOn: $settings.isPageIndicatorAlwaysVisible)
 
                 if let frontmostTab {
                     @Bindable var tab = frontmostTab

@@ -9,10 +9,8 @@ import Foundation
 
 struct NavigationEntry {
     let pageIndex: Int
-    let scrollPosition: CGPoint?
 
-    init(pageIndex: Int, scrollPosition: CGPoint? = nil) {
+    init(pageIndex: Int) {
         self.pageIndex = pageIndex
-        self.scrollPosition = scrollPosition
     }
 }

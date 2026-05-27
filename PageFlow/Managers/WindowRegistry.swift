@@ -13,6 +13,7 @@
 import AppKit
 import Foundation
 
+@MainActor
 final class WindowRegistry {
     static let shared = WindowRegistry()
 
@@ -26,7 +27,6 @@ final class WindowRegistry {
     private var entries: [ObjectIdentifier: Entry] = [:]
     private var mainWindowObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
     private weak var lastActiveTabManager: TabManager?
-    private let lock = NSLock()
 
     private var pendingTransientPlaceholderDismissals = 0
     private var transientPlaceholderDismissalLowerBound: Date?
@@ -37,16 +37,14 @@ final class WindowRegistry {
     // MARK: - Registration
 
     func register(_ tabManager: TabManager, window: NSWindow?) {
-        lock.withLock {
-            entries[ObjectIdentifier(tabManager)] = Entry(
-                tabManager: tabManager,
-                window: window,
-                isUserCreated: window?.identifier == PageFlowWindowIdentifiers.userCreated,
-                registeredAt: Date()
-            )
-            if window?.isMainWindow == true {
-                lastActiveTabManager = tabManager
-            }
+        entries[ObjectIdentifier(tabManager)] = Entry(
+            tabManager: tabManager,
+            window: window,
+            isUserCreated: window?.identifier == PageFlowWindowIdentifiers.userCreated,
+            registeredAt: Date()
+        )
+        if window?.isMainWindow == true {
+            lastActiveTabManager = tabManager
         }
 
         if let window {
@@ -55,33 +53,29 @@ final class WindowRegistry {
                 object: window,
                 queue: .main
             ) { [weak self, weak tabManager] _ in
-                guard let self, let tabManager else { return }
-                self.lock.withLock {
+                MainActor.assumeIsolated {
+                    guard let self, let tabManager else { return }
                     self.lastActiveTabManager = tabManager
                 }
             }
-            lock.withLock {
-                mainWindowObservers[ObjectIdentifier(tabManager)] = token
-            }
+            mainWindowObservers[ObjectIdentifier(tabManager)] = token
         }
 
         dismissPendingTransientPlaceholderWindows()
 
         // Deliver any URLs buffered during cold launch (before this TabManager existed).
-        DispatchQueue.main.async {
+        Task { @MainActor in
             guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
             appDelegate.flushPendingURLs(to: tabManager)
         }
     }
 
     func unregister(_ tabManager: TabManager) {
-        let token: NSObjectProtocol? = lock.withLock {
-            entries.removeValue(forKey: ObjectIdentifier(tabManager))
-            if lastActiveTabManager === tabManager {
-                lastActiveTabManager = nil
-            }
-            return mainWindowObservers.removeValue(forKey: ObjectIdentifier(tabManager))
+        entries.removeValue(forKey: ObjectIdentifier(tabManager))
+        if lastActiveTabManager === tabManager {
+            lastActiveTabManager = nil
         }
+        let token = mainWindowObservers.removeValue(forKey: ObjectIdentifier(tabManager))
         if let token {
             NotificationCenter.default.removeObserver(token)
         }
@@ -90,19 +84,16 @@ final class WindowRegistry {
     // MARK: - Lookups
 
     func allDirtyPDFManagers() -> [(UUID, PDFManager)] {
-        lock.withLock {
-            entries.values
-                .filter { $0.window != nil }
-                .flatMap { $0.tabManager.dirtyPDFManagers() }
-        }
+        entries.values
+            .filter { $0.window != nil }
+            .flatMap { $0.tabManager.dirtyPDFManagers() }
     }
 
     /// TabManager whose window was most recently main. Stays correct even
     /// after Settings or another panel has stolen `keyWindow`/`mainWindow`.
     func frontmostTabManager() -> TabManager? {
-        let (tracked, values) = lock.withLock {
-            (lastActiveTabManager, Array(entries.values).filter { $0.window != nil })
-        }
+        let tracked = lastActiveTabManager
+        let values = Array(entries.values).filter { $0.window != nil }
 
         if let tracked, values.contains(where: { $0.tabManager === tracked }) {
             return tracked
@@ -126,9 +117,7 @@ final class WindowRegistry {
 
     /// Any registered TabManager — used by Finder open routing.
     func anyTabManager() -> TabManager? {
-        let values = lock.withLock {
-            Array(entries.values).filter { $0.window != nil }
-        }
+        let values = Array(entries.values).filter { $0.window != nil }
         return preferredEntry(from: values)?.tabManager
     }
 
@@ -136,7 +125,7 @@ final class WindowRegistry {
     /// `true` if handled (caller should not create a new tab/window).
     func activateExistingDocument(for url: URL) -> Bool {
         let canonicalURL = url.pageFlowCanonicalDocumentURL
-        let match: (TabManager, UUID, NSWindow?)? = lock.withLock {
+        let match: (TabManager, UUID, NSWindow?)? = {
             for entry in entries.values {
                 guard let window = entry.window else { continue }
                 if let tabID = entry.tabManager.tabID(for: canonicalURL) {
@@ -144,7 +133,7 @@ final class WindowRegistry {
                 }
             }
             return nil
-        }
+        }()
 
         guard let (tabManager, tabID, window) = match else { return false }
         tabManager.selectTab(tabID)
@@ -155,18 +144,14 @@ final class WindowRegistry {
     // MARK: - Window Front/Close
 
     func closeWindow(for tabManager: TabManager) {
-        DispatchQueue.main.async { [self] in
-            let window = lock.withLock {
-                entries[ObjectIdentifier(tabManager)]?.window
-            }
+        let window = entries[ObjectIdentifier(tabManager)]?.window
+        DispatchQueue.main.async {
             window?.close()
         }
     }
 
     func bringToFront(for tabManager: TabManager) {
-        let window = lock.withLock {
-            entries[ObjectIdentifier(tabManager)]?.window
-        }
+        let window = entries[ObjectIdentifier(tabManager)]?.window
         bringWindowToFront(window)
     }
 
@@ -184,16 +169,14 @@ final class WindowRegistry {
     /// event that rerouted into an existing PageFlow window.
     func dismissTransientPlaceholderWindowForExternalOpen(within seconds: TimeInterval = 1.0) {
         let now = Date()
-        lock.withLock {
-            pendingTransientPlaceholderDismissals = 1
-            transientPlaceholderDismissalLowerBound = now.addingTimeInterval(-seconds)
-            transientPlaceholderDismissalDeadline = now.addingTimeInterval(seconds)
-        }
+        pendingTransientPlaceholderDismissals = 1
+        transientPlaceholderDismissalLowerBound = now.addingTimeInterval(-seconds)
+        transientPlaceholderDismissalDeadline = now.addingTimeInterval(seconds)
         dismissPendingTransientPlaceholderWindows()
     }
 
     private func dismissPendingTransientPlaceholderWindows() {
-        let tabManagers: [TabManager] = lock.withLock {
+        let tabManagers: [TabManager] = {
             pruneExpiredTransientPlaceholderDismissals()
 
             guard pendingTransientPlaceholderDismissals > 0,
@@ -207,16 +190,14 @@ final class WindowRegistry {
                 .filter { $0.registeredAt >= lowerBound }
                 .sorted { $0.registeredAt > $1.registeredAt }
                 .map(\.tabManager)
-        }
+        }()
 
         for tabManager in tabManagers {
             if tabManager.dismissPlaceholderWindowIfNeeded() {
-                lock.withLock {
-                    pendingTransientPlaceholderDismissals = max(0, pendingTransientPlaceholderDismissals - 1)
-                    if pendingTransientPlaceholderDismissals == 0 {
-                        transientPlaceholderDismissalLowerBound = nil
-                        transientPlaceholderDismissalDeadline = nil
-                    }
+                pendingTransientPlaceholderDismissals = max(0, pendingTransientPlaceholderDismissals - 1)
+                if pendingTransientPlaceholderDismissals == 0 {
+                    transientPlaceholderDismissalLowerBound = nil
+                    transientPlaceholderDismissalDeadline = nil
                 }
                 break
             }

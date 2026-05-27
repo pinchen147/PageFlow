@@ -9,6 +9,18 @@ import SwiftUI
 import PDFKit
 import AppKit
 
+fileprivate struct SearchHighlightSignature: Equatable {
+    let documentID: ObjectIdentifier?
+    let selectionIDs: [ObjectIdentifier]
+    let currentResultIndex: Int
+
+    init(pdfView: PDFView, searchManager: SearchManager) {
+        documentID = pdfView.document.map { ObjectIdentifier($0) }
+        selectionIDs = searchManager.searchResults.map { ObjectIdentifier($0) }
+        currentResultIndex = searchManager.currentResultIndex
+    }
+}
+
 struct PDFViewWrapper: NSViewRepresentable {
     @Bindable var pdfManager: PDFManager
     var searchManager: SearchManager
@@ -18,7 +30,7 @@ struct PDFViewWrapper: NSViewRepresentable {
     var tabUndoManager: UndoManager
     var isActive: Bool
 
-    func makeNSView(context: Context) -> StablePDFView {
+    func makeNSView(context: Context) -> PDFViewHost {
         let pdfView = StablePDFView()
         configureInitialState(pdfView, context: context)
         configureAnnotationCallbacks(pdfView, context: context)
@@ -26,7 +38,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         configureContextMenuCallbacks(pdfView)
         configureManagers(pdfView, context: context)
         configureNotificationObservers(pdfView, context: context)
-        return pdfView
+        return PDFViewHost(pdfView: pdfView)
     }
 
     // MARK: - makeNSView Helpers
@@ -47,7 +59,6 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfView.enableDataDetectors = true
         }
         pdfView.delegate = context.coordinator
-        pdfManager.activePDFView = pdfView
     }
 
     private func configureAnnotationCallbacks(_ pdfView: StablePDFView, context: Context) {
@@ -185,8 +196,6 @@ struct PDFViewWrapper: NSViewRepresentable {
             pdfManager: pdfManager,
             undoManagerProvider: undoManagerProvider
         )
-
-        context.coordinator.setPDFView(pdfView)
     }
 
     private func configureNotificationObservers(_ pdfView: StablePDFView, context: Context) {
@@ -213,7 +222,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         context.coordinator.setupScrollMonitor(for: pdfView)
     }
 
-    func updateNSView(_ pdfView: StablePDFView, context: Context) {
+    func updateNSView(_ hostView: PDFViewHost, context: Context) {
+        let pdfView = hostView.pdfView
         context.coordinator.isActive = isActive
         context.coordinator.handleActivationChange(isActive: isActive, pdfView: pdfView)
 
@@ -238,10 +248,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 performOneTimeFit(on: pdfView, scrollToTop: true)
             } else {
                 pdfView.scaleFactor = pdfManager.scaleFactor
-                // Delay: PDFKit needs a layout pass before scroll position is meaningful
-                DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) {
-                    self.centerContent(in: pdfView, scrollToTop: true)
-                }
+                scheduleCenterContent(in: pdfView, scrollToTop: true)
             }
         } else if let currentPage = pdfManager.currentPage,
                   pdfView.currentPage !== currentPage {
@@ -250,9 +257,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         // Sync displayMode BEFORE autoScales to prevent PDFKit side effects
-        if pdfView.displayMode != pdfManager.displayMode {
-            pdfView.displayMode = pdfManager.displayMode
-        }
+        context.coordinator.applyManagerDisplayMode(to: pdfView, shouldFit: true)
 
         if pdfView.autoScales != pdfManager.isAutoScaling {
             pdfView.autoScales = pdfManager.isAutoScaling
@@ -276,15 +281,21 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     private func updateSearchHighlights(_ pdfView: StablePDFView, context: Context) {
+        let coord = context.coordinator
+
         if searchManager.hasResults {
-            pdfView.highlightedSelections = searchManager.highlightedSelections(
-                currentColor: DesignTokens.searchCurrentResult,
-                othersColor: DesignTokens.searchOtherResults
-            )
+            let highlightSignature = SearchHighlightSignature(pdfView: pdfView, searchManager: searchManager)
+            if coord.lastAppliedSearchHighlightSignature != highlightSignature {
+                pdfView.highlightedSelections = searchManager.highlightedSelections(
+                    currentColor: DesignTokens.searchCurrentResult,
+                    othersColor: DesignTokens.searchOtherResults
+                )
+                coord.lastAppliedSearchHighlightSignature = highlightSignature
+                coord.searchHighlightsAreClear = false
+            }
 
             let resultIndex = searchManager.currentResultIndex
             let resultCount = searchManager.searchResults.count
-            let coord = context.coordinator
             if let currentSelection = searchManager.currentSelection(),
                resultIndex != coord.lastNavigatedSearchIndex || resultCount != coord.lastSearchResultCount {
                 coord.lastNavigatedSearchIndex = resultIndex
@@ -295,8 +306,13 @@ struct PDFViewWrapper: NSViewRepresentable {
         } else {
             context.coordinator.lastNavigatedSearchIndex = -1
             context.coordinator.lastSearchResultCount = 0
-            pdfView.highlightedSelections = nil
-            pdfView.setCurrentSelection(nil, animate: false)
+            context.coordinator.lastAppliedSearchHighlightSignature = nil
+
+            if !context.coordinator.searchHighlightsAreClear {
+                pdfView.highlightedSelections = nil
+                pdfView.setCurrentSelection(nil, animate: false)
+                context.coordinator.searchHighlightsAreClear = true
+            }
         }
     }
 
@@ -309,7 +325,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         )
     }
 
-    static func dismantleNSView(_ pdfView: StablePDFView, coordinator: Coordinator) {
+    static func dismantleNSView(_ hostView: PDFViewHost, coordinator: Coordinator) {
+        let pdfView = hostView.pdfView
         NotificationCenter.default.removeObserver(
             coordinator,
             name: .PDFViewPageChanged,
@@ -339,10 +356,6 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.onCopyDocumentAsMarkdown = nil
         pdfView.onToggleBookmark = nil
 
-        // Clear the activePDFView reference if it points to this view
-        if coordinator.pdfManager.activePDFView === pdfView {
-            coordinator.pdfManager.activePDFView = nil
-        }
     }
 
     // MARK: - Private
@@ -352,15 +365,13 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     private func performFit(on pdfView: StablePDFView, retryCount: Int, scrollToTop: Bool = false) {
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak pdfView] in
+            guard let pdfView else { return }
             guard self.pdfManager.fitOnceRequested else { return }
 
             // Check if view is ready
             if (pdfView.bounds.isEmpty || pdfView.document == nil) && retryCount < DesignTokens.maxReadinessRetries {
-                // Delay: wait for PDFView to finish initial layout before calculating fit scale
-                DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) {
-                    self.performFit(on: pdfView, retryCount: retryCount + 1, scrollToTop: scrollToTop)
-                }
+                retryFitWhenReady(on: pdfView, retryCount: retryCount, scrollToTop: scrollToTop)
                 return
             }
 
@@ -382,10 +393,23 @@ struct PDFViewWrapper: NSViewRepresentable {
             self.pdfManager.fitOnceRequested = false
             self.pdfManager.scaleNeedsUpdate = false
 
-            // Delay: PDFKit needs a layout pass before scroll/center position is meaningful
-            DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) {
-                self.centerContent(in: pdfView, scrollToTop: scrollToTop)
-            }
+            self.scheduleCenterContent(in: pdfView, scrollToTop: scrollToTop)
+        }
+    }
+
+    private func retryFitWhenReady(on pdfView: StablePDFView, retryCount: Int, scrollToTop: Bool) {
+        // Delay: wait for PDFView to finish initial layout before calculating fit scale.
+        DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) { [weak pdfView] in
+            guard let pdfView else { return }
+            self.performFit(on: pdfView, retryCount: retryCount + 1, scrollToTop: scrollToTop)
+        }
+    }
+
+    private func scheduleCenterContent(in pdfView: StablePDFView, scrollToTop: Bool) {
+        // Delay: PDFKit needs a layout pass before scroll/center position is meaningful.
+        DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak pdfView] in
+            guard let pdfView else { return }
+            self.centerContent(in: pdfView, scrollToTop: scrollToTop)
         }
     }
 
@@ -463,23 +487,24 @@ struct PDFViewWrapper: NSViewRepresentable {
         let commentManager: CommentManager
         var isActive: Bool = true
         private var scrollMonitor: Any?
-        private weak var pdfView: StablePDFView?
         private var lastKnownScale: CGFloat?
+        private var lastKnownDisplayMode: PDFDisplayMode
         private var wasActive: Bool = true
         var lastNavigatedSearchIndex: Int = -1
         var lastSearchResultCount: Int = 0
+        fileprivate var lastAppliedSearchHighlightSignature: SearchHighlightSignature?
+        var searchHighlightsAreClear = true
 
         init(pdfManager: PDFManager, annotationManager: AnnotationManager, commentManager: CommentManager, isActive: Bool) {
             self.pdfManager = pdfManager
             self.annotationManager = annotationManager
             self.commentManager = commentManager
             self.isActive = isActive
+            self.lastKnownDisplayMode = pdfManager.displayMode
             super.init()
         }
 
         func setupScrollMonitor(for pdfView: StablePDFView) {
-            self.pdfView = pdfView
-
             scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self, weak pdfView] event in
                 guard let self = self,
                       let pdfView = pdfView,
@@ -504,9 +529,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             guard isActive else { return }
 
             // When becoming active, sync displayMode FIRST to prevent PDFKit side effects
-            if pdfView.displayMode != pdfManager.displayMode {
-                pdfView.displayMode = pdfManager.displayMode
-            }
+            applyManagerDisplayMode(to: pdfView, shouldFit: false)
 
             // Then sync scale settings
             pdfView.autoScales = pdfManager.isAutoScaling
@@ -602,15 +625,18 @@ struct PDFViewWrapper: NSViewRepresentable {
             return pdfView.convert(windowPoint, from: nil)
         }
 
-        func setPDFView(_ pdfView: StablePDFView) {
-            self.pdfView = pdfView
-        }
-
         func removeScrollMonitor() {
             if let monitor = scrollMonitor {
                 NSEvent.removeMonitor(monitor)
                 scrollMonitor = nil
             }
+        }
+
+        func applyManagerDisplayMode(to pdfView: StablePDFView, shouldFit: Bool) {
+            guard pdfView.displayMode != pdfManager.displayMode else { return }
+
+            pdfView.displayMode = pdfManager.displayMode
+            recordDisplayMode(pdfView.displayMode, on: pdfView, shouldFit: shouldFit)
         }
 
         @objc func pageChanged(_ notification: Notification) {
@@ -621,9 +647,19 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
 
             let pageIndex = document.index(for: currentPage)
-            pdfManager.currentPageIndex = pageIndex
-            pdfManager.currentPage = currentPage
-            pdfManager.scaleFactor = pdfView.scaleFactor
+            if pdfManager.currentPageIndex != pageIndex {
+                pdfManager.currentPageIndex = pageIndex
+            }
+
+            if pdfManager.currentPage !== currentPage {
+                pdfManager.currentPage = currentPage
+            }
+
+            let newScale = pdfView.scaleFactor
+            if pdfManager.scaleFactor != newScale {
+                pdfManager.scaleFactor = newScale
+            }
+            lastKnownScale = newScale
         }
 
         @objc func scaleChanged(_ notification: Notification) {
@@ -638,13 +674,22 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         @objc func displayModeChanged(_ notification: Notification) {
             guard let pdfView = notification.object as? StablePDFView else { return }
+
+            guard pdfView.displayMode != lastKnownDisplayMode else { return }
+
+            recordDisplayMode(pdfView.displayMode, on: pdfView, shouldFit: true)
+
             // Sync manager to match PDFView (user may have changed via context menu)
             if pdfManager.displayMode != pdfView.displayMode {
                 pdfManager.displayMode = pdfView.displayMode
-
-                // Auto zoom-fit when display mode changes
-                performFitForDisplayModeChange(on: pdfView)
             }
+        }
+
+        private func recordDisplayMode(_ displayMode: PDFDisplayMode, on pdfView: StablePDFView, shouldFit: Bool) {
+            lastKnownDisplayMode = displayMode
+
+            guard shouldFit else { return }
+            performFitForDisplayModeChange(on: pdfView)
         }
 
         private func performFitForDisplayModeChange(on pdfView: StablePDFView) {

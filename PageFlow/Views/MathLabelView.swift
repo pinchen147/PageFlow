@@ -15,6 +15,10 @@ struct MathLabelView: NSViewRepresentable {
     let maxWidth: CGFloat
     var onError: ((Bool) -> Void)? = nil
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeNSView(context: Context) -> MTMathUILabel {
         let view = MTMathUILabel()
         view.displayErrorInline = false
@@ -24,14 +28,49 @@ struct MathLabelView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: MTMathUILabel, context: Context) {
-        view.latex = latex
-        view.font = MTFontManager.manager.latinModernFont(withSize: fontSize)
-        view.labelMode = mode
-        view.textColor = DesignTokens.commentTextNSColor.withAlphaComponent(DesignTokens.commentTextOpacity)
-        view.textAlignment = mode == .display ? .center : .left
-        view.invalidateIntrinsicContentSize()
+        var invalidatesIntrinsicSize = false
+
+        if context.coordinator.lastLatex != latex {
+            view.latex = latex
+            context.coordinator.lastLatex = latex
+            invalidatesIntrinsicSize = true
+        }
+
+        if context.coordinator.lastFontSize != fontSize {
+            view.font = MTFontManager.manager.latinModernFont(withSize: fontSize)
+            context.coordinator.lastFontSize = fontSize
+            invalidatesIntrinsicSize = true
+        }
+
+        if context.coordinator.lastMode != mode {
+            view.labelMode = mode
+            context.coordinator.lastMode = mode
+            invalidatesIntrinsicSize = true
+        }
+
+        let textColor = DesignTokens.commentTextNSColor.withAlphaComponent(DesignTokens.commentTextOpacity)
+        if view.textColor != textColor {
+            view.textColor = textColor
+        }
+
+        let isDisplayMode = mode == .display
+        if isDisplayMode, view.textAlignment != .center {
+            view.textAlignment = .center
+        } else if !isDisplayMode, view.textAlignment != .left {
+            view.textAlignment = .left
+        }
+
+        if invalidatesIntrinsicSize {
+            view.invalidateIntrinsicContentSize()
+        }
 
         // Report parse errors to caller
         onError?(view.error != nil)
+    }
+
+    final class Coordinator {
+        var lastLatex: String?
+        var lastFontSize: CGFloat?
+        var lastMode: MTMathUILabelMode?
     }
 }

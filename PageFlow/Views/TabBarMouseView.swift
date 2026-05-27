@@ -14,6 +14,12 @@
 import AppKit
 import SwiftUI
 
+enum TabBarClickTarget: Equatable {
+    case newTab
+    case selectTab(UUID)
+    case closeTab(UUID)
+}
+
 struct TabBarMouseView: NSViewRepresentable {
     let tabManager: TabManager
     let tabFrames: [UUID: CGRect]
@@ -21,7 +27,7 @@ struct TabBarMouseView: NSViewRepresentable {
     let hoveredTabID: UUID?
     let activeTabID: UUID?
     let onHover: (UUID?) -> Void
-    let onClick: (CGFloat) -> Void
+    let onClick: (TabBarClickTarget) -> Void
 
     func makeNSView(context: Context) -> TabBarMouseNSView {
         let view = TabBarMouseNSView()
@@ -60,7 +66,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     private var hoveredTabID: UUID?
     private var activeTabID: UUID?
     private var onHover: (UUID?) -> Void = { _ in }
-    private var onClick: (CGFloat) -> Void = { _ in }
+    private var onClick: (TabBarClickTarget) -> Void = { _ in }
 
     private var pressOrigin: NSPoint?
     private var pressedTabID: UUID?
@@ -86,7 +92,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         hoveredTabID: UUID?,
         activeTabID: UUID?,
         onHover: @escaping (UUID?) -> Void,
-        onClick: @escaping (CGFloat) -> Void
+        onClick: @escaping (TabBarClickTarget) -> Void
     ) {
         self.tabManagerRef = tabManager
         self.tabFrames = tabFrames
@@ -109,6 +115,10 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
         if newWindow == nil {
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+                self.trackingArea = nil
+            }
             // Window torn down mid-drag — abort only if this view's
             // manager is the drag's current host. (Single-tab tear-off
             // closes the original source window; the drag is by then
@@ -134,10 +144,11 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
+        guard trackingArea == nil else { return }
+
         let area = NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            rect: .zero,
+            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
             owner: self,
             userInfo: nil
         )
@@ -151,8 +162,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     /// so dragging the bar background drags the window — Chrome / Safari
     /// behavior. Tab pills and the `+` button still receive clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let local = superview?.convert(point, to: self) ?? point
-        if findTab(at: local.x) != nil || newTabButtonFrame.contains(local) {
+        if findTab(at: point) != nil || newTabButtonFrame.contains(point) {
             return self
         }
         return nil
@@ -175,7 +185,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
 
     private func emitHover(at point: NSPoint) {
         guard !TabDragController.shared.isActive else { return }
-        let next = findTab(at: point.x)
+        let next = findTab(at: point)
         if next != hoveredTabID { onHover(next) }
     }
 
@@ -184,7 +194,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         pressOrigin = point
-        pressedTabID = findTab(at: point.x)
+        pressedTabID = findTab(at: point)
         dragArmed = false
         canDrag = event.clickCount >= 2
     }
@@ -205,7 +215,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         guard hypot(current.x - origin.x, current.y - origin.y) >= Self.dragThreshold else { return }
 
         guard let tabID = pressedTabID,
-              !isCloseHit(for: tabID, x: origin.x),
+              !isCloseHit(for: tabID, at: origin),
               let snapshot = makeDragSnapshot(for: tabID, in: tabManager),
               let screen = screenPoint(for: current) else {
             return
@@ -225,8 +235,12 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         // override only fires for plain clicks (no threshold crossed).
         defer { resetMousePressState() }
         if TabDragController.shared.isActive { return }
-        guard let origin = pressOrigin, !dragArmed else { return }
-        onClick(origin.x)
+        guard let origin = pressOrigin,
+              !dragArmed,
+              let target = clickTarget(at: origin) else {
+            return
+        }
+        onClick(target)
     }
 
     private func resetMousePressState() {
@@ -250,22 +264,38 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
 
     // MARK: - Hit Test Helpers
 
-    private func findTab(at x: CGFloat) -> UUID? {
+    private func clickTarget(at point: NSPoint) -> TabBarClickTarget? {
+        if newTabButtonFrame.contains(point) {
+            return .newTab
+        }
+
+        guard let tabID = findTab(at: point) else { return nil }
+        return isCloseHit(for: tabID, at: point) ? .closeTab(tabID) : .selectTab(tabID)
+    }
+
+    private func findTab(at point: NSPoint) -> UUID? {
         guard let tabManager = tabManagerRef else { return nil }
         for tab in tabManager.tabs {
             guard let frame = tabFrames[tab.id] else { continue }
-            if x >= frame.minX && x <= frame.maxX { return tab.id }
+            if frame.contains(point) { return tab.id }
         }
         return nil
     }
 
-    private func isCloseHit(for tabID: UUID, x: CGFloat) -> Bool {
+    private func isCloseHit(for tabID: UUID, at point: NSPoint) -> Bool {
         guard let frame = tabFrames[tabID] else { return false }
         let isCloseVisible = hoveredTabID == tabID || activeTabID == tabID
         guard isCloseVisible else { return false }
         let closeMaxX = frame.maxX - DesignTokens.spacingSM
         let closeMinX = closeMaxX - DesignTokens.tabCloseButtonSize
-        return x >= closeMinX && x <= closeMaxX
+        let closeY = frame.midY - DesignTokens.tabCloseButtonSize / 2
+        let closeRect = NSRect(
+            x: closeMinX,
+            y: closeY,
+            width: DesignTokens.tabCloseButtonSize,
+            height: DesignTokens.tabCloseButtonSize
+        )
+        return closeRect.contains(point)
     }
 
     private func makeDragSnapshot(for tabID: UUID, in tabManager: TabManager) -> TabDragPreviewSnapshot? {

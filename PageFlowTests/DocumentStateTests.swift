@@ -11,6 +11,48 @@ import Testing
 @MainActor
 struct DocumentStateTests {
     @Test
+    func pdfViewHostFreezesPDFLayoutDuringLiveResize() {
+        let pdfView = StablePDFView()
+        pdfView.document = makeDocument(pageCount: 1)
+
+        let host = PDFViewHost(pdfView: pdfView)
+        #expect(host.preservesContentDuringLiveResize)
+        host.frame = NSRect(x: 0, y: 0, width: 400, height: 500)
+        host.layout()
+        #expect(pdfView.frame.size == host.bounds.size)
+
+        host.viewWillStartLiveResize()
+        #expect(!pdfView.isHidden)
+        host.frame = NSRect(x: 0, y: 0, width: 700, height: 650)
+        host.layout()
+        #expect(pdfView.frame.size == NSSize(width: 400, height: 500))
+
+        host.viewDidEndLiveResize()
+        #expect(pdfView.frame.size == NSSize(width: 700, height: 650))
+    }
+
+    @Test
+    func glassScrollerKnobTracksNativeScrollPosition() throws {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 300))
+        let scroller = GlassScroller(frame: NSRect(x: 0, y: 0, width: 16, height: 300))
+        scrollView.hasVerticalScroller = true
+        scrollView.verticalScroller = scroller
+        scrollView.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 180, height: 1_200))
+
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        scrollView.layoutSubtreeIfNeeded()
+
+        let knob = try #require(scroller.subviews.first)
+        let initialFrame = knob.frame
+
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 600))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+
+        #expect(knob.frame == scroller.rect(for: .knob))
+        #expect(knob.frame != initialFrame)
+    }
+
+    @Test
     func tabManagerMatchesCanonicalURLsAcrossSymlinks() throws {
         let tempDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -194,14 +236,36 @@ struct DocumentStateTests {
 
         let manager = SettingsManager(defaults: defaults)
         #expect(manager.toolbarScale == SettingsManager.defaultToolbarScale)
-        #expect(manager.isToolbarPinned == false)
+        #expect(manager.isTopBarAlwaysVisible == false)
+        #expect(manager.isFloatingToolbarAlwaysVisible == false)
+        #expect(manager.isPageIndicatorAlwaysVisible == false)
 
         manager.toolbarScale = 1.35
-        manager.isToolbarPinned = true
+        manager.isTopBarAlwaysVisible = true
+        manager.isFloatingToolbarAlwaysVisible = true
+        manager.isPageIndicatorAlwaysVisible = true
 
         let reloadedManager = SettingsManager(defaults: defaults)
         #expect(reloadedManager.toolbarScale == 1.35)
-        #expect(reloadedManager.isToolbarPinned)
+        #expect(reloadedManager.isTopBarAlwaysVisible)
+        #expect(reloadedManager.isFloatingToolbarAlwaysVisible)
+        #expect(reloadedManager.isPageIndicatorAlwaysVisible)
+    }
+
+    @Test
+    func settingsManagerInitializesSeparatedVisibilityControlsHidden() throws {
+        let suiteName = "SettingsManagerDefaultVisibilityTests-\(UUID().uuidString)"
+        let defaults = try! #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // The old combined preference must not make either new control visible.
+        defaults.set(true, forKey: "settings.toolbarPinned")
+
+        let manager = SettingsManager(defaults: defaults)
+        #expect(manager.isTopBarAlwaysVisible == false)
+        #expect(manager.isFloatingToolbarAlwaysVisible == false)
+        #expect(manager.isPageIndicatorAlwaysVisible == false)
     }
 
     @Test

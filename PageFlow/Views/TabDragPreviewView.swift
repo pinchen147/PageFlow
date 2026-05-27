@@ -21,32 +21,32 @@ struct TabDragPreviewView: View {
             HStack(spacing: DesignTokens.spacingXS) {
                 if snapshot.isDirty {
                     Circle()
-                        .fill(Color.white.opacity(0.9))
+                        .fill(DesignTokens.glassTextPrimary.opacity(0.82))
                         .frame(width: DesignTokens.tabDirtyIndicatorSize, height: DesignTokens.tabDirtyIndicatorSize)
                 }
 
                 Text(snapshot.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.95))
+                    .foregroundStyle(DesignTokens.glassTextPrimary.opacity(0.92))
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
 
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(DesignTokens.glassTextSecondary.opacity(0.62))
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
                 .opacity(0)
         }
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
         .frame(width: snapshot.width, height: DesignTokens.tabHeight)
-        .background(.ultraThinMaterial)
-        .background(DesignTokens.floatingToolbarBase.opacity(0.22))
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
-                .strokeBorder(.white.opacity(0.32))
+        .pageFlowLiquidGlassSurface(
+            cornerRadius: DesignTokens.tabCornerRadius,
+            tint: .light,
+            tintOpacity: 0.22,
+            variant: .clear,
+            strokeOpacity: 0.32
         )
         .shadow(color: .black.opacity(0.22), radius: 14, y: 7)
         .compositingGroup()

@@ -30,19 +30,15 @@ struct FloatingToolbar: View {
 
     private var expandedContainer: some View {
         expandedToolbar
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius))
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                    .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
-                    .allowsHitTesting(false)
+            .pageFlowLiquidGlassPanel(
+                cornerRadius: DesignTokens.floatingToolbarCornerRadius,
+                tint: .light,
+                tintOpacity: 0.14,
+                variant: .clear,
+                strokeOpacity: 0.22,
+                shadowRadius: 4,
+                shadowY: -2
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                    .strokeBorder(.white.opacity(0.22))
-                    .allowsHitTesting(false)
-            )
-            .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
     }
 
     private var expandedToolbar: some View {
@@ -144,15 +140,13 @@ struct FloatingToolbar: View {
                 .font(.system(size: toolbarMetrics.iconSize, weight: .medium))
                 .frame(width: toolbarMetrics.buttonSize, height: toolbarMetrics.buttonSize)
                 .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
+                .pageFlowGlassControlLabel(
+                    interactive: pdfManager.hasDocument
+                )
         }
         .buttonStyle(.plain)
         .disabled(!pdfManager.hasDocument)
         .opacity(pdfManager.hasDocument ? 1 : 0.3)
-        .onHover { hovering in
-            if pdfManager.hasDocument {
-                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-            }
-        }
     }
 
     private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
@@ -161,15 +155,13 @@ struct FloatingToolbar: View {
                 .font(.system(size: toolbarMetrics.iconSize, weight: .medium))
                 .frame(width: toolbarMetrics.buttonSize, height: toolbarMetrics.buttonSize)
                 .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
+                .pageFlowGlassControlLabel(
+                    interactive: !disabled
+                )
         }
         .buttonStyle(.plain)
         .disabled(disabled)
         .opacity(disabled ? 0.3 : 1.0)
-        .onHover { hovering in
-            if !disabled {
-                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-            }
-        }
     }
 
     private func handleFitButtonTap() {
@@ -178,12 +170,9 @@ struct FloatingToolbar: View {
         if let lastTap = lastFitTapTime,
            now.timeIntervalSince(lastTap) < doubleTapWindow {
             pdfManager.toggleAutoScale()
-            pdfManager.scaleNeedsUpdate = true
             lastFitTapTime = nil
         } else {
-            pdfManager.isAutoScaling = false
             pdfManager.requestFitOnce()
-            pdfManager.scaleNeedsUpdate = true
             lastFitTapTime = now
         }
     }

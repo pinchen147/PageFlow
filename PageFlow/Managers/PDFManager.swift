@@ -28,6 +28,11 @@ enum PageMutation {
     case moved(from: Int, to: Int)
 }
 
+struct PageThumbnailRevision: Equatable {
+    let structureVersion: Int
+    let pageVersion: Int
+}
+
 @Observable
 @MainActor
 final class PDFManager {
@@ -49,13 +54,14 @@ final class PDFManager {
 
     /// Increments whenever pages are added/removed/reordered - triggers UI refresh
     var pageVersion: Int = 0
+    private var thumbnailStructureVersion: Int = 0
+    private var thumbnailPageVersions: [Int: Int] = [:]
+    @ObservationIgnored private var cachedOutlineRoot: PDFOutline?
+    @ObservationIgnored private var cachedOutlineItems: [OutlineItem]?
 
     /// Copied page for paste operation (same-document only)
     private(set) var copiedPage: PDFPage?
     
-    // Weak reference to the active PDFView to support PDFThumbnailView linking
-    weak var activePDFView: PDFView?
-
     // Password-protected PDF state
     var pendingLockedDocument: PDFDocument?
     var pendingLockedURL: URL?
@@ -119,6 +125,36 @@ final class PDFManager {
         return index >= 0 && index < pageCount
     }
 
+    func thumbnailRevision(for pageIndex: Int) -> PageThumbnailRevision {
+        PageThumbnailRevision(
+            structureVersion: thumbnailStructureVersion,
+            pageVersion: thumbnailPageVersions[pageIndex, default: 0]
+        )
+    }
+
+    func markThumbnailDirty(at pageIndex: Int) {
+        guard pageIndex >= 0 else { return }
+        thumbnailPageVersions[pageIndex, default: 0] += 1
+    }
+
+    func markThumbnailDirty(for page: PDFPage) {
+        guard let document else { return }
+        let pageIndex = document.index(for: page)
+        guard pageIndex != NSNotFound else { return }
+        markThumbnailDirty(at: pageIndex)
+    }
+
+    private func markThumbnailStructureDirty() {
+        thumbnailStructureVersion += 1
+        thumbnailPageVersions.removeAll()
+        invalidateOutlineCache()
+    }
+
+    private func invalidateOutlineCache() {
+        cachedOutlineRoot = nil
+        cachedOutlineItems = nil
+    }
+
     var documentTitle: String {
         guard let document = document else {
             return "PageFlow"
@@ -174,8 +210,10 @@ final class PDFManager {
             return
         }
 
+        let page = document.page(at: index)
+        guard currentPageIndex != index || currentPage !== page else { return }
         currentPageIndex = index
-        currentPage = document.page(at: index)
+        currentPage = page
     }
 
     func clearNavigationHistory() {
@@ -285,6 +323,7 @@ final class PDFManager {
         copiedPage = nil  // Clear to prevent cross-document paste corruption
         isAccessingSecurityScopedResource = securityScopedURL != nil
         self.securityScopedURL = securityScopedURL
+        markThumbnailStructureDirty()
     }
 
     private func stopAccessingCurrentResource() {
@@ -313,6 +352,7 @@ final class PDFManager {
         scaleFactor = 1.0
         isDirty = false
         copiedPage = nil
+        markThumbnailStructureDirty()
     }
 
     // MARK: - Navigation
@@ -324,8 +364,10 @@ final class PDFManager {
             return
         }
 
+        let page = document.page(at: index)
+        guard currentPageIndex != index || currentPage !== page else { return }
         currentPageIndex = index
-        currentPage = document.page(at: index)
+        currentPage = page
     }
 
     func nextPage() {
@@ -405,6 +447,7 @@ final class PDFManager {
         page.rotation = newRotation
         isDirty = true
         pageVersion += 1
+        markThumbnailDirty(at: index)
 
         if let undoManager = getUndoManager(for: "Rotate Page") {
             undoManager.registerUndo(withTarget: self) { target in
@@ -460,6 +503,7 @@ final class PDFManager {
         currentPageIndex = insertIndex
         currentPage = document.page(at: insertIndex)
         pageVersion += 1
+        markThumbnailStructureDirty()
         pageMutationHandler?(.inserted(at: insertIndex))
 
         if let undoManager = getUndoManager(for: "Paste Page") {
@@ -488,6 +532,7 @@ final class PDFManager {
         }
         currentPage = document.page(at: currentPageIndex)
         pageVersion += 1
+        markThumbnailStructureDirty()
         pageMutationHandler?(.deleted(at: index))
 
         if let undoManager = getUndoManager(for: "Delete Page") {
@@ -512,6 +557,7 @@ final class PDFManager {
         }
         currentPage = document.page(at: currentPageIndex)
         pageVersion += 1
+        markThumbnailStructureDirty()
         pageMutationHandler?(.inserted(at: insertIndex))
 
         if let undoManager = getUndoManager(for: "Duplicate Page") {
@@ -533,6 +579,7 @@ final class PDFManager {
         document.insert(page, at: destinationIndex)
         isDirty = true
         pageVersion += 1
+        markThumbnailStructureDirty()
 
         // Update current page index if affected
         if currentPageIndex == sourceIndex {
@@ -562,6 +609,7 @@ final class PDFManager {
         document.insert(page, at: index)
         isDirty = true
         pageVersion += 1
+        markThumbnailStructureDirty()
         currentPageIndex = index
         currentPage = document.page(at: index)
         pageMutationHandler?(.inserted(at: index))
@@ -588,6 +636,7 @@ final class PDFManager {
         }
         currentPage = document.page(at: currentPageIndex)
         pageVersion += 1
+        markThumbnailStructureDirty()
         pageMutationHandler?(.deleted(at: index))
 
         if let undoManager = getUndoManager(for: "Duplicate Page") {
@@ -602,6 +651,9 @@ final class PDFManager {
 
     func outlineItems() -> [OutlineItem] {
         guard let root = document?.outlineRoot else { return [] }
+        if cachedOutlineRoot === root, let cachedOutlineItems {
+            return cachedOutlineItems
+        }
 
         var items: [OutlineItem] = []
         let childCount = root.numberOfChildren
@@ -612,6 +664,8 @@ final class PDFManager {
                 items.append(item)
             }
         }
+        cachedOutlineRoot = root
+        cachedOutlineItems = items
         return items
     }
 

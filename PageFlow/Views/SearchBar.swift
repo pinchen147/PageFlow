@@ -50,6 +50,8 @@ struct SearchBar: View {
                 } label: {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 12, weight: .medium))
+                        .frame(width: 20, height: 20)
+                        .pageFlowGlassControlLabel()
                 }
                 .buttonStyle(.plain)
                 .disabled(!searchManager.hasResults)
@@ -60,6 +62,8 @@ struct SearchBar: View {
                 } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 12, weight: .medium))
+                        .frame(width: 20, height: 20)
+                        .pageFlowGlassControlLabel()
                 }
                 .buttonStyle(.plain)
                 .disabled(!searchManager.hasResults)
@@ -76,25 +80,20 @@ struct SearchBar: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
+                    .frame(width: 20, height: 20)
+                    .pageFlowGlassControlLabel()
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
-        .background(.ultraThinMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
-                .allowsHitTesting(false)
+        .pageFlowLiquidGlassPanel(
+            cornerRadius: DesignTokens.floatingToolbarCornerRadius,
+            tint: .light,
+            tintOpacity: DesignTokens.glassPanelTintOpacity,
+            variant: .regular
         )
-        .cornerRadius(DesignTokens.floatingToolbarCornerRadius)
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                .strokeBorder(.white.opacity(0.22))
-                .allowsHitTesting(false)
-        )
-        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
         .onAppear {
             focusSearchField()
         }

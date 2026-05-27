@@ -16,7 +16,6 @@ struct TabModel: Identifiable, Codable {
     // Per-tab state for restoration
     var savedPageIndex: Int
     var savedScaleFactor: CGFloat
-    var savedScrollY: CGFloat?
     var savedSearchQuery: String
     var savedSearchResultIndex: Int
 
@@ -43,7 +42,6 @@ struct TabModel: Identifiable, Codable {
         self.isSecurityScoped = isSecurityScoped
         self.savedPageIndex = 0
         self.savedScaleFactor = 1.0
-        self.savedScrollY = nil
         self.savedSearchQuery = ""
         self.savedSearchResultIndex = 0
     }

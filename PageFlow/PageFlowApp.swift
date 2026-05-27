@@ -180,9 +180,7 @@ struct PageFlowApp: App {
     // MARK: - Edit Menu
 
     private var activeUndoManager: UndoManager? {
-        guard let tabManager = focusedTabManager,
-              let tabID = tabManager.activeTabID else { return nil }
-        return tabManager.undoManagers[tabID]
+        focusedTabManager?.activeUndoManager
     }
 
     private var canUndo: Bool {
@@ -272,9 +270,17 @@ struct PageFlowApp: App {
             get: { settingsManager.toolbarScale },
             set: { settingsManager.toolbarScale = SettingsManager.clampedToolbarScale($0) }
         )
-        let pinToolbarBinding = Binding(
-            get: { settingsManager.isToolbarPinned },
-            set: { settingsManager.isToolbarPinned = $0 }
+        let topBarVisibilityBinding = Binding(
+            get: { settingsManager.isTopBarAlwaysVisible },
+            set: { settingsManager.isTopBarAlwaysVisible = $0 }
+        )
+        let floatingToolbarVisibilityBinding = Binding(
+            get: { settingsManager.isFloatingToolbarAlwaysVisible },
+            set: { settingsManager.isFloatingToolbarAlwaysVisible = $0 }
+        )
+        let pageIndicatorVisibilityBinding = Binding(
+            get: { settingsManager.isPageIndicatorAlwaysVisible },
+            set: { settingsManager.isPageIndicatorAlwaysVisible = $0 }
         )
 
         Button("Zoom In") {
@@ -345,9 +351,16 @@ struct PageFlowApp: App {
         .keyboardShortcut("e", modifiers: [.command, .option])
         .disabled(!hasDocument)
 
-        Toggle("Pin Toolbar", isOn: pinToolbarBinding)
-        .keyboardShortcut("t", modifiers: [.command, .shift])
+        Toggle("Always Show Top Bar", isOn: topBarVisibilityBinding)
+        .keyboardShortcut(for: "toggleTopBar")
         .disabled(focusedTabManager == nil)
+
+        Toggle("Always Show Toolbar", isOn: floatingToolbarVisibilityBinding)
+            .keyboardShortcut(for: "toggleToolbar")
+            .disabled(focusedTabManager == nil)
+
+        Toggle("Always Show Page Number", isOn: pageIndicatorVisibilityBinding)
+            .keyboardShortcut(for: "togglePageIndicator")
 
         Divider()
 

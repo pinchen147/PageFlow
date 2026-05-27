@@ -116,7 +116,9 @@ final class SettingsManager {
         static let commentPresets = "settings.commentPresets"
         static let customShortcuts = "settings.customShortcuts"
         static let toolbarScale = "settings.toolbarScale"
-        static let toolbarPinned = "settings.toolbarPinned"
+        static let topBarAlwaysVisible = "settings.topBarAlwaysVisible"
+        static let floatingToolbarAlwaysVisible = "settings.floatingToolbarAlwaysVisible"
+        static let pageIndicatorAlwaysVisible = "settings.pageIndicatorAlwaysVisible"
     }
 
     // MARK: - Default Presets
@@ -174,10 +176,26 @@ final class SettingsManager {
         }
     }
 
-    var isToolbarPinned = false {
+    var isTopBarAlwaysVisible = false {
         didSet {
             if !isLoading {
-                defaults.set(isToolbarPinned, forKey: Keys.toolbarPinned)
+                defaults.set(isTopBarAlwaysVisible, forKey: Keys.topBarAlwaysVisible)
+            }
+        }
+    }
+
+    var isFloatingToolbarAlwaysVisible = false {
+        didSet {
+            if !isLoading {
+                defaults.set(isFloatingToolbarAlwaysVisible, forKey: Keys.floatingToolbarAlwaysVisible)
+            }
+        }
+    }
+
+    var isPageIndicatorAlwaysVisible = false {
+        didSet {
+            if !isLoading {
+                defaults.set(isPageIndicatorAlwaysVisible, forKey: Keys.pageIndicatorAlwaysVisible)
             }
         }
     }
@@ -275,7 +293,9 @@ final class SettingsManager {
             toolbarScale = Self.clampedToolbarScale(defaults.double(forKey: Keys.toolbarScale))
         }
 
-        isToolbarPinned = defaults.bool(forKey: Keys.toolbarPinned)
+        isTopBarAlwaysVisible = defaults.bool(forKey: Keys.topBarAlwaysVisible)
+        isFloatingToolbarAlwaysVisible = defaults.bool(forKey: Keys.floatingToolbarAlwaysVisible)
+        isPageIndicatorAlwaysVisible = defaults.bool(forKey: Keys.pageIndicatorAlwaysVisible)
     }
 
     private func savePresets(_ presets: [ColorPreset], forKey key: String) {

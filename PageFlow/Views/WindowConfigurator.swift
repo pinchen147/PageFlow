@@ -11,38 +11,61 @@ import AppKit
 struct WindowConfigurator: NSViewRepresentable {
     let isAlwaysOnTop: Bool
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        DispatchQueue.main.async {
-            configure(window: view.window)
-        }
+    func makeNSView(context: Context) -> WindowConfiguratorView {
+        let view = WindowConfiguratorView()
+        view.isAlwaysOnTop = isAlwaysOnTop
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            configure(window: nsView.window)
+    func updateNSView(_ nsView: WindowConfiguratorView, context: Context) {
+        nsView.isAlwaysOnTop = isAlwaysOnTop
+    }
+}
+
+final class WindowConfiguratorView: NSView {
+    var isAlwaysOnTop = false {
+        didSet {
+            configureIfNeeded()
         }
     }
 
-    private func configure(window: NSWindow?) {
+    private weak var configuredWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        configureIfNeeded()
+    }
+
+    private func configureIfNeeded() {
         guard let window else { return }
 
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
+        if configuredWindow !== window {
+            configuredWindow = window
+            configureStaticWindowState(window)
+        }
 
-        // Allow window dragging from views that return mouseDownCanMoveWindow = true
-        // DO NOT set isMovable = false - that breaks everything
-        window.isMovableByWindowBackground = false
+        let targetLevel: NSWindow.Level = isAlwaysOnTop ? .floating : .normal
+        if window.level != targetLevel {
+            window.level = targetLevel
+        }
+    }
 
-        // Set window background to match PDF viewer
+    private func configureStaticWindowState(_ window: NSWindow) {
+        // Allow window dragging from views that return mouseDownCanMoveWindow = true.
+        // DO NOT set isMovable = false - that breaks everything.
+        if window.isMovableByWindowBackground {
+            window.isMovableByWindowBackground = false
+        }
+
         window.backgroundColor = DesignTokens.viewerBackground
-        window.hasShadow = true
-        window.level = isAlwaysOnTop ? .floating : .normal
+        if !window.hasShadow {
+            window.hasShadow = true
+        }
 
-        window.standardWindowButton(.closeButton)?.isHidden = true
-        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        window.standardWindowButton(.zoomButton)?.isHidden = true
+        // Install the NSToolbar + chrome controller (idempotent). The
+        // controller handles titlebar transparency, fullSizeContentView,
+        // hiding the standard window buttons, and re-hiding them on every
+        // window state change (key/main/full-screen/update).
+        _ = WindowChromeController.installIfNeeded(on: window)
     }
 }

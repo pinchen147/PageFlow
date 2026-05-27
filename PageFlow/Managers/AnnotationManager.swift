@@ -142,6 +142,7 @@ final class AnnotationManager {
         selectedAnnotation = annotation
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        pdfManager?.markThumbnailDirty(for: page)
     }
 
     func removeSelectedAnnotation() {
@@ -178,6 +179,9 @@ final class AnnotationManager {
         }
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        if let page = annotation.page {
+            pdfManager?.markThumbnailDirty(for: page)
+        }
 
         if let undoManager = getUndoManager(for: "Change Annotation Color") {
             undoManager.registerUndo(withTarget: self) { [weak annotation] target in
@@ -195,6 +199,9 @@ final class AnnotationManager {
         annotation.color = color
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        if let page = annotation.page {
+            pdfManager?.markThumbnailDirty(for: page)
+        }
 
         if let undoManager = getUndoManager(for: "Change Annotation Color") {
             undoManager.registerUndo(withTarget: self) { [weak annotation] target in
@@ -227,6 +234,7 @@ final class AnnotationManager {
     private func remove(_ annotation: PDFAnnotation, from page: PDFPage, registerRedo: Bool) {
         page.removeAnnotation(annotation)
         pdfManager?.pageVersion += 1
+        pdfManager?.markThumbnailDirty(for: page)
 
         if registerRedo, let undoManager = getUndoManager(for: "Remove Annotation") {
             undoManager.registerUndo(withTarget: self) { [weak page] target in
@@ -243,6 +251,7 @@ final class AnnotationManager {
         page.addAnnotation(annotation)
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        pdfManager?.markThumbnailDirty(for: page)
 
         // Register undo to enable infinite undo/redo cycle
         if let undoManager = getUndoManager(for: "Add Annotation") {

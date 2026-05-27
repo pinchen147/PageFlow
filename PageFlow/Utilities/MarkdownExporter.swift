@@ -20,9 +20,14 @@ struct MarkdownExporter {
         let range = scope.pageIndices(in: document)
         guard !range.isEmpty else { return "" }
 
+        let commentsByPage = Dictionary(
+            grouping: comments.filter { !$0.text.isEmpty },
+            by: \.pageIndex
+        )
+
         let pages = range.compactMap { index -> String? in
             guard let page = document.page(at: index) else { return nil }
-            let pageComments = comments.filter { $0.pageIndex == index && !$0.text.isEmpty }
+            let pageComments = commentsByPage[index] ?? []
             let markdown = convertPageToMarkdown(page, comments: pageComments)
             return markdown.isEmpty ? nil : markdown
         }

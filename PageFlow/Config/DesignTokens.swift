@@ -91,6 +91,23 @@ struct DesignTokens {
     static let toolbarIconSize: CGFloat = 10
     static let floatingToolbarBase = Color(red: 0.196, green: 0.196, blue: 0.196)
 
+    // MARK: - Liquid Glass
+
+    static let glassPanelTintOpacity: CGFloat = 0.12
+    static let glassControlTintOpacity: CGFloat = 0.06
+    static let sidebarGlassTintOpacity: CGFloat = 0.32
+    static let sidebarControlGlassTintOpacity: CGFloat = 0.18
+    static let glassElevationShadowOpacity: Double = 0.055
+    static let glassTextPrimary = Color(red: 0.08, green: 0.08, blue: 0.08)
+    static let glassTextSecondary = Color(red: 0.24, green: 0.24, blue: 0.24)
+    static let glassTextTertiary = Color(red: 0.42, green: 0.42, blue: 0.42)
+    static let glassControlForeground = glassTextPrimary
+    static let glassGlyphHighlight = Color.white.opacity(0.78)
+    static let glassGlyphShadow = Color.black.opacity(0.28)
+    static let sidebarPrimaryText = glassTextPrimary
+    static let sidebarSecondaryText = glassTextSecondary
+    static let sidebarTertiaryText = glassTextTertiary
+
     // MARK: - Traffic Lights
 
     static let trafficLightSize: CGFloat = 12
@@ -144,11 +161,11 @@ struct DesignTokens {
     static let commentNoteOffset: CGFloat = 12
 
     // Comment bubble styling (glassmorphism)
-    static let commentBubbleBackground: Double = 0.12
-    static let commentBubbleBackgroundSelected: Double = 0.18
+    static let commentBubbleBackground: Double = 0.18
+    static let commentBubbleBackgroundSelected: Double = 0.28
     static let commentTextOpacity: Double = 1.0
-    static let commentTextColor = Color.white
-    static let commentTextNSColor = NSColor.white
+    static let commentTextColor = glassTextPrimary
+    static let commentTextNSColor = NSColor(srgbRed: 0.08, green: 0.08, blue: 0.08, alpha: 1)
     static let commentFontSize: CGFloat = 14
     static let commentBubbleShadowRadius: CGFloat = 8
     static let commentBubbleShadowOpacity: Double = 0.15

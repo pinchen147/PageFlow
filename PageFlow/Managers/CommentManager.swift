@@ -93,6 +93,7 @@ final class CommentManager {
         editingCommentID = commentID
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        pdfManager?.markThumbnailDirty(for: page)
 
         registerUndoAdd(model, highlight: highlight, page: page)
         return commentID
@@ -132,6 +133,9 @@ final class CommentManager {
         if editingCommentID == id { editingCommentID = nil }
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        if let page {
+            pdfManager?.markThumbnailDirty(for: page)
+        }
 
         if let page {
             registerUndoDelete(comment, highlight: highlight, page: page)
@@ -179,6 +183,9 @@ final class CommentManager {
         highlight.color = color
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        if let page = highlight.page {
+            pdfManager?.markThumbnailDirty(for: page)
+        }
 
         if let undoManager = getUndoManager(for: "Change Comment Color") {
             undoManager.registerUndo(withTarget: self) { target in
@@ -410,9 +417,8 @@ final class CommentManager {
     private func registerUndoAdd(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
         guard let undoManager = getUndoManager(for: "Add Comment") else { return }
 
-        undoManager.registerUndo(withTarget: self) { [weak highlight, weak page] target in
+        undoManager.registerUndo(withTarget: self) { [highlight, page] target in
             MainActor.assumeIsolated {
-                guard let highlight = highlight, let page = page else { return }
                 target.undoAdd(comment, highlight: highlight, page: page)
             }
         }
@@ -436,11 +442,11 @@ final class CommentManager {
         if editingCommentID == comment.id { editingCommentID = nil }
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        pdfManager?.markThumbnailDirty(for: page)
 
         guard let undoManager = getUndoManager(for: "Add Comment") else { return }
-        undoManager.registerUndo(withTarget: self) { [weak highlight, weak page] target in
+        undoManager.registerUndo(withTarget: self) { [highlight, page] target in
             MainActor.assumeIsolated {
-                guard let highlight = highlight, let page = page else { return }
                 target.redoAdd(updatedComment, highlight: highlight, page: page)
             }
         }
@@ -454,6 +460,7 @@ final class CommentManager {
         highlights[comment.id] = highlight
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        pdfManager?.markThumbnailDirty(for: page)
 
         registerUndoAdd(comment, highlight: highlight, page: page)
     }
@@ -461,9 +468,8 @@ final class CommentManager {
     private func registerUndoDelete(_ comment: CommentModel, highlight: PDFAnnotation, page: PDFPage) {
         guard let undoManager = getUndoManager(for: "Delete Comment") else { return }
 
-        undoManager.registerUndo(withTarget: self) { [weak highlight, weak page] target in
+        undoManager.registerUndo(withTarget: self) { [highlight, page] target in
             MainActor.assumeIsolated {
-                guard let highlight = highlight, let page = page else { return }
                 target.undoDelete(comment, highlight: highlight, page: page)
             }
         }
@@ -477,6 +483,7 @@ final class CommentManager {
         highlights[comment.id] = highlight
         pdfManager?.isDirty = true
         pdfManager?.pageVersion += 1
+        pdfManager?.markThumbnailDirty(for: page)
 
         guard let undoManager = getUndoManager(for: "Delete Comment") else { return }
         undoManager.registerUndo(withTarget: self) { target in

@@ -41,6 +41,9 @@ struct ShortcutsSettingsTab: View {
             ("search", "Find..."),
             ("save", "Save"),
             ("toggleSidebar", "Toggle Sidebar"),
+            ("toggleTopBar", "Toggle Top Bar Visibility"),
+            ("toggleToolbar", "Toggle Toolbar Visibility"),
+            ("togglePageIndicator", "Toggle Page Number Visibility"),
             ("copyPageAsMarkdown", "Copy Page as Markdown"),
             ("copyDocumentAsMarkdown", "Copy Document as Markdown")
         ])
@@ -60,7 +63,16 @@ struct ShortcutsSettingsTab: View {
                 Button("Reset All to Defaults") {
                     SettingsManager.shared.resetShortcuts()
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .padding(.horizontal, DesignTokens.spacingMD)
+                .padding(.vertical, DesignTokens.spacingXS)
+                .pageFlowLiquidGlassSurface(
+                    cornerRadius: DesignTokens.spacingSM,
+                    tintOpacity: 0.08,
+                    interactive: true,
+                    variant: .clear,
+                    strokeOpacity: 0.16
+                )
 
                 Text("Changes require restarting PageFlow.")
                     .font(.caption)
@@ -94,20 +106,46 @@ struct ShortcutRow: View {
                     Button("✓") {
                         confirmShortcut()
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, DesignTokens.spacingSM)
+                    .padding(.vertical, DesignTokens.spacingXS)
+                    .pageFlowLiquidGlassSurface(
+                        cornerRadius: DesignTokens.spacingSM,
+                        tintOpacity: pendingShortcut == nil ? 0.04 : 0.10,
+                        interactive: pendingShortcut != nil,
+                        variant: .clear,
+                        strokeOpacity: pendingShortcut == nil ? 0.08 : 0.16
+                    )
                     .disabled(pendingShortcut == nil)
 
                     Button("✕") {
                         cancelRecording()
                     }
                     .buttonStyle(.plain)
+                    .padding(.horizontal, DesignTokens.spacingSM)
+                    .padding(.vertical, DesignTokens.spacingXS)
+                    .pageFlowLiquidGlassSurface(
+                        cornerRadius: DesignTokens.spacingSM,
+                        tintOpacity: 0.08,
+                        interactive: true,
+                        variant: .clear,
+                        strokeOpacity: 0.14
+                    )
                 }
             } else {
                 Button(currentDisplayString) {
                     startRecording()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
                 .frame(width: DesignTokens.shortcutButtonWidth)
+                .padding(.vertical, DesignTokens.spacingXS)
+                .pageFlowLiquidGlassSurface(
+                    cornerRadius: DesignTokens.spacingSM,
+                    tintOpacity: 0.08,
+                    interactive: true,
+                    variant: .clear,
+                    strokeOpacity: 0.16
+                )
             }
         }
         .onDisappear {

@@ -24,6 +24,16 @@ private struct UndoAvailability: Equatable, Sendable {
     var canRedo = false
 }
 
+struct TabRuntime {
+    let tabID: UUID
+    let pdfManager: PDFManager
+    let searchManager: SearchManager
+    let annotationManager: AnnotationManager
+    let commentManager: CommentManager
+    let bookmarkManager: BookmarkManager
+    let undoManager: UndoManager
+}
+
 @Observable
 @MainActor
 final class TabManager {
@@ -31,8 +41,8 @@ final class TabManager {
         if let monitor = editModeKeyMonitor {
             NSEvent.removeMonitor(monitor)
         }
-        for observer in undoCheckpointObservers.values {
-            NotificationCenter.default.removeObserver(observer)
+        for observers in undoObserversByTab.values {
+            observers.forEach(NotificationCenter.default.removeObserver)
         }
         #if DEBUG
         Swift.print("[deinit] TabManager")
@@ -53,16 +63,16 @@ final class TabManager {
     private var annotationManagers: [UUID: AnnotationManager] = [:]
     private var commentManagers: [UUID: CommentManager] = [:]
     private var bookmarkManagers: [UUID: BookmarkManager] = [:]
-    private(set) var undoManagers: [UUID: UndoManager] = [:]
+    private var undoManagers: [UUID: UndoManager] = [:]
     private var undoAvailabilityByTab: [UUID: UndoAvailability] = [:]
     @ObservationIgnored var documentOpenedHandler: ((URL, Bool) -> Void)?
 
-    // Per-tab UI state (not persisted) - internal for MainView access
-    var tabUIStates: [UUID: TabUIState] = [:]
+    // Per-tab UI state (not persisted)
+    private var tabUIStates: [UUID: TabUIState] = [:]
 
     // Edit mode keyboard shortcut monitor (intercepts Cmd+C/V for page copy/paste)
     @ObservationIgnored private var editModeKeyMonitor: Any?
-    @ObservationIgnored private var undoCheckpointObservers: [UUID: NSObjectProtocol] = [:]
+    @ObservationIgnored private var undoObserversByTab: [UUID: [NSObjectProtocol]] = [:]
 
     // Track open file picker panel for closing on drag-drop
     private weak var openPanel: NSOpenPanel?
@@ -131,6 +141,15 @@ final class TabManager {
         return bookmarkManagers[id]
     }
 
+    var activeRuntime: TabRuntime? {
+        guard let id = activeTabID else { return nil }
+        return runtime(for: id)
+    }
+
+    var activeUndoManager: UndoManager? {
+        activeRuntime?.undoManager
+    }
+
     var activeCanUndo: Bool {
         guard let id = activeTabID else { return false }
         return undoAvailabilityByTab[id]?.canUndo ?? false
@@ -146,68 +165,76 @@ final class TabManager {
     var showingOutline: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return tabUIStates[id]?.showingOutline ?? false
+            return showingOutline(for: id)
         }
         set {
             guard let id = activeTabID else { return }
-            tabUIStates[id, default: TabUIState()].showingOutline = newValue
+            setShowingOutline(newValue, for: id)
         }
     }
 
     var showingComments: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return tabUIStates[id]?.showingComments ?? false
+            return showingComments(for: id)
         }
         set {
             guard let id = activeTabID else { return }
-            tabUIStates[id, default: TabUIState()].showingComments = newValue
+            setShowingComments(newValue, for: id)
         }
     }
 
     var showingGoToPage: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return tabUIStates[id]?.showingGoToPage ?? false
+            return showingGoToPage(for: id)
         }
         set {
             guard let id = activeTabID else { return }
-            tabUIStates[id, default: TabUIState()].showingGoToPage = newValue
+            setShowingGoToPage(newValue, for: id)
         }
     }
 
     var showingFileImporter: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return tabUIStates[id]?.showingFileImporter ?? false
+            return showingFileImporter(for: id)
         }
         set {
             guard let id = activeTabID else { return }
-            tabUIStates[id, default: TabUIState()].showingFileImporter = newValue
+            setShowingFileImporter(newValue, for: id)
         }
     }
 
     var isEditingPages: Bool {
         get {
             guard let id = activeTabID else { return false }
-            return tabUIStates[id]?.isEditingPages ?? false
+            return isEditingPages(for: id)
         }
         set {
             guard let id = activeTabID else { return }
-            let wasEditing = tabUIStates[id]?.isEditingPages ?? false
-            tabUIStates[id, default: TabUIState()].isEditingPages = newValue
-
-            if newValue && !wasEditing {
-                startEditModeKeyMonitor()
-            } else if !newValue && wasEditing {
-                stopEditModeKeyMonitor()
-            }
+            setIsEditingPages(newValue, for: id)
         }
     }
 
-    func sidebarState(for tabID: UUID) -> (showingOutline: Bool, showingComments: Bool) {
-        let state = tabUIStates[tabID] ?? TabUIState()
-        return (state.showingOutline, state.showingComments)
+    func showingOutline(for tabID: UUID) -> Bool {
+        tabUIStates[tabID]?.showingOutline ?? false
+    }
+
+    func showingComments(for tabID: UUID) -> Bool {
+        tabUIStates[tabID]?.showingComments ?? false
+    }
+
+    func showingGoToPage(for tabID: UUID) -> Bool {
+        tabUIStates[tabID]?.showingGoToPage ?? false
+    }
+
+    func showingFileImporter(for tabID: UUID) -> Bool {
+        tabUIStates[tabID]?.showingFileImporter ?? false
+    }
+
+    func isEditingPages(for tabID: UUID) -> Bool {
+        tabUIStates[tabID]?.isEditingPages ?? false
     }
 
     func setShowingOutline(_ value: Bool, for tabID: UUID) {
@@ -224,6 +251,18 @@ final class TabManager {
 
     func setShowingFileImporter(_ value: Bool, for tabID: UUID) {
         tabUIStates[tabID, default: TabUIState()].showingFileImporter = value
+    }
+
+    func setIsEditingPages(_ value: Bool, for tabID: UUID) {
+        let wasEditing = tabUIStates[tabID]?.isEditingPages ?? false
+        tabUIStates[tabID, default: TabUIState()].isEditingPages = value
+
+        guard activeTabID == tabID else { return }
+        if value && !wasEditing {
+            startEditModeKeyMonitor()
+        } else if !value && wasEditing {
+            stopEditModeKeyMonitor()
+        }
     }
 
     /// Opens NSOpenPanel as a sheet on the key window — waits for window readiness.
@@ -683,15 +722,24 @@ final class TabManager {
         }
     }
 
-    func managers(for tabID: UUID) -> (PDFManager, SearchManager, AnnotationManager, CommentManager, BookmarkManager)? {
+    private func runtime(for tabID: UUID) -> TabRuntime? {
         guard let pdfManager = pdfManagers[tabID],
               let searchManager = searchManagers[tabID],
               let annotationManager = annotationManagers[tabID],
               let commentManager = commentManagers[tabID],
-              let bookmarkManager = bookmarkManagers[tabID] else {
+              let bookmarkManager = bookmarkManagers[tabID],
+              let undoManager = undoManagers[tabID] else {
             return nil
         }
-        return (pdfManager, searchManager, annotationManager, commentManager, bookmarkManager)
+        return TabRuntime(
+            tabID: tabID,
+            pdfManager: pdfManager,
+            searchManager: searchManager,
+            annotationManager: annotationManager,
+            commentManager: commentManager,
+            bookmarkManager: bookmarkManager,
+            undoManager: undoManager
+        )
     }
 
     // MARK: - State Management
@@ -737,21 +785,28 @@ final class TabManager {
         undoManagers[tabID] = undoManager
         refreshUndoAvailability(for: tabID)
 
-        let observer = NotificationCenter.default.addObserver(
-            forName: .NSUndoManagerCheckpoint,
-            object: undoManager,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refreshUndoAvailability(for: tabID)
+        let notificationNames: [Notification.Name] = [
+            .NSUndoManagerDidCloseUndoGroup,
+            .NSUndoManagerDidUndoChange,
+            .NSUndoManagerDidRedoChange
+        ]
+
+        undoObserversByTab[tabID] = notificationNames.map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: undoManager,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.refreshUndoAvailability(for: tabID)
+                }
             }
         }
-        undoCheckpointObservers[tabID] = observer
     }
 
     private func removeUndoObserver(for tabID: UUID) {
-        guard let observer = undoCheckpointObservers.removeValue(forKey: tabID) else { return }
-        NotificationCenter.default.removeObserver(observer)
+        guard let observers = undoObserversByTab.removeValue(forKey: tabID) else { return }
+        observers.forEach(NotificationCenter.default.removeObserver)
     }
 
     private func refreshUndoAvailability(for tabID: UUID) {
@@ -838,11 +893,6 @@ final class TabManager {
                 in: document
             )
         }
-    }
-
-    func updateScrollPosition(for tabID: UUID, scrollY: CGFloat) {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
-        tabs[index].savedScrollY = scrollY
     }
 
     // MARK: - Dirty State

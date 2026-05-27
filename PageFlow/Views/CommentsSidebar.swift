@@ -2,7 +2,7 @@
 //  CommentsSidebar.swift
 //  PageFlow
 //
-//  Right sidebar displaying comments as speech bubbles with glassmorphism
+//  Right sidebar displaying comments as speech bubbles.
 //
 
 import SwiftUI
@@ -18,19 +18,15 @@ struct CommentsSidebar: View {
             commentsList
         }
         .frame(width: DesignTokens.commentSidebarWidth)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                .fill(DesignTokens.floatingToolbarBase.opacity(0.12))
-                .allowsHitTesting(false)
+        .pageFlowLiquidGlassPanel(
+            cornerRadius: DesignTokens.floatingToolbarCornerRadius,
+            tint: .light,
+            tintOpacity: DesignTokens.sidebarGlassTintOpacity,
+            variant: .clear,
+            strokeOpacity: 0.22,
+            shadowRadius: 4,
+            shadowY: -2
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.floatingToolbarCornerRadius)
-                .strokeBorder(.white.opacity(0.22))
-                .allowsHitTesting(false)
-        )
-        .shadow(color: .black.opacity(0.1), radius: 10, y: 5)
     }
 
     // MARK: - Header
@@ -39,7 +35,7 @@ struct CommentsSidebar: View {
         HStack {
             Text("Comments")
                 .font(.headline)
-                .foregroundStyle(.white.opacity(0.9))
+                .pageFlowGlassControlLabel()
             Spacer()
             sidebarCloseButton
         }
@@ -52,10 +48,11 @@ struct CommentsSidebar: View {
         Button(action: onClose) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
-        .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
         .contentShape(Rectangle())
         .onHover { hovering in
             (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
@@ -93,13 +90,13 @@ struct CommentsSidebar: View {
         VStack(spacing: DesignTokens.spacingSM) {
             Image(systemName: "text.bubble")
                 .font(.system(size: 24))
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(DesignTokens.sidebarTertiaryText)
             Text("No comments yet")
                 .font(.caption)
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(DesignTokens.sidebarSecondaryText)
             Text("Select text and press ⌘E")
                 .font(.caption2)
-                .foregroundStyle(.white.opacity(0.3))
+                .foregroundStyle(DesignTokens.sidebarTertiaryText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DesignTokens.spacingXL)
@@ -149,8 +146,11 @@ struct CommentBubbleView: View {
         Button(action: onSelect) {
             Text("Page \(comment.pageIndex + 1)")
                 .font(.caption2)
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(DesignTokens.sidebarSecondaryText)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, DesignTokens.spacingXS)
+                .padding(.vertical, 2)
+                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
         .padding(.leading, DesignTokens.commentTailSize + DesignTokens.spacingXS)
@@ -169,7 +169,7 @@ struct CommentBubbleView: View {
 
     private var bubbleTail: some View {
         BubbleTail()
-            .fill(.white.opacity(0.08))
+            .fill(Color.white.opacity(isSelected ? DesignTokens.commentBubbleBackgroundSelected : DesignTokens.commentBubbleBackground))
             .frame(width: DesignTokens.commentTailSize, height: DesignTokens.commentTailSize * 2)
             .padding(.top, DesignTokens.spacingSM)
     }
@@ -215,10 +215,11 @@ struct CommentBubbleView: View {
         Button(action: onDelete) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
-        .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
         .onHover { hovering in
             (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
         }
@@ -229,7 +230,7 @@ struct CommentBubbleView: View {
                 if editText.isEmpty {
                     Text("Add a comment...")
                         .font(.system(size: DesignTokens.commentFontSize))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(DesignTokens.sidebarTertiaryText)
                         .italic()
                         .allowsHitTesting(false)
                 }
@@ -257,7 +258,7 @@ struct CommentBubbleView: View {
                 if comment.text.isEmpty {
                     Text("Add a comment...")
                         .font(.system(size: DesignTokens.commentFontSize))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(DesignTokens.sidebarTertiaryText)
                         .italic()
                 } else {
                     MathTextView(text: comment.text)
@@ -267,17 +268,16 @@ struct CommentBubbleView: View {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 2)
-        }
+            .pageFlowGlassControlLabel()
+    }
 
     private var bubbleBackground: some View {
-        ZStack {
-            // Base blur material for glassmorphism
-            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
-                .fill(.ultraThinMaterial)
-            // White overlay for visibility
-            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius)
-                .fill(.white.opacity(isSelected ? DesignTokens.commentBubbleBackgroundSelected : DesignTokens.commentBubbleBackground))
-        }
+        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
+            .fill(Color.white.opacity(isSelected ? DesignTokens.commentBubbleBackgroundSelected : DesignTokens.commentBubbleBackground))
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(isSelected ? 0.30 : 0.18), lineWidth: 1)
+            )
     }
 
     @ViewBuilder
@@ -286,119 +286,6 @@ struct CommentBubbleView: View {
         Button("Go to Page") { onSelect() }
         Divider()
         Button("Delete", role: .destructive) { onDelete() }
-    }
-}
-
-// MARK: - Custom Text Editor
-
-struct CustomTextEditor: NSViewRepresentable {
-    @Binding var text: String
-    @FocusState var isFocused: Bool
-    @Binding var calculatedHeight: CGFloat
-    var onCommit: () -> Void = {}
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        let textView = CommentTextView()
-
-        textView.delegate = context.coordinator
-        textView.onCommit = onCommit
-        textView.isRichText = false
-        textView.allowsUndo = false
-        textView.font = NSFont.systemFont(ofSize: DesignTokens.commentFontSize)
-        textView.textColor = NSColor.white.withAlphaComponent(0.9)
-        textView.backgroundColor = .clear
-        textView.drawsBackground = false
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainerInset = NSSize(width: 0, height: 2)
-
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.drawsBackground = false
-        scrollView.autohidesScrollers = true
-
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? CommentTextView else { return }
-
-        // Update coordinator's callbacks safely
-        context.coordinator.onTextChange = { [weak scrollView] newText in
-            guard scrollView != nil else { return }
-            self.text = newText
-        }
-        context.coordinator.onHeightChange = { [weak scrollView] newHeight in
-            guard scrollView != nil else { return }
-            self.calculatedHeight = newHeight
-        }
-
-        if textView.string != text {
-            textView.string = text
-        }
-
-        textView.onCommit = onCommit
-
-        if isFocused && scrollView.window?.firstResponder != textView {
-            scrollView.window?.makeFirstResponder(textView)
-        }
-
-        if let textContainer = textView.textContainer,
-           let layoutManager = textView.layoutManager {
-            let usedHeight = layoutManager.usedRect(for: textContainer).height
-            let newHeight = max(usedHeight + 4, 20)
-            if calculatedHeight != newHeight {
-                DispatchQueue.main.async {
-                    self.calculatedHeight = newHeight
-                }
-            }
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    class Coordinator: NSObject, NSTextViewDelegate {
-        var onTextChange: ((String) -> Void)?
-        var onHeightChange: ((CGFloat) -> Void)?
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-
-            onTextChange?(textView.string)
-
-            if let textContainer = textView.textContainer,
-               let layoutManager = textView.layoutManager {
-                let usedHeight = layoutManager.usedRect(for: textContainer).height
-                onHeightChange?(max(usedHeight + 4, 20))
-            }
-        }
-
-    }
-}
-
-// MARK: - Comment Text View
-
-class CommentTextView: NSTextView {
-    var onCommit: () -> Void = {}
-
-    override func keyDown(with event: NSEvent) {
-        let isReturn = event.keyCode == 36
-        let isShiftPressed = event.modifierFlags.contains(.shift)
-
-        if isReturn && !isShiftPressed {
-            onCommit()
-        } else if isReturn && isShiftPressed {
-            insertNewline(nil)
-        } else {
-            super.keyDown(with: event)
-        }
     }
 }
 

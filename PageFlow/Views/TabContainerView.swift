@@ -14,7 +14,6 @@ struct TabContainerView: View {
     @State private var tabManager: TabManager
     @State private var showingSearch = false
     @State private var searchFocusRequest = 0
-    @State private var isTopBarHovered = false
 
     /// Default init: each window creates its own empty TabManager.
     init() {
@@ -35,43 +34,39 @@ struct TabContainerView: View {
         )
     }
 
+    private var activeWindowTitle: String {
+        tabManager.activePDFManager?.documentTitle ?? "PageFlow"
+    }
+
     var body: some View {
         ZStack {
-            // Render all tabs in a stack to preserve state
-            // Use zIndex to ensure active tab is on top for interactions
-            // IMPORTANT: Explicit id: \.id prevents view recreation during state changes
-            ForEach(tabManager.tabs, id: \.id) { tab in
-                if let (pdfManager, searchManager, annotationManager, commentManager, bookmarkManager) = tabManager.managers(for: tab.id) {
-                    let isActive = tab.id == tabManager.activeTabID
-
-                    MainView(
-                        tabID: tab.id,
-                        pdfManager: pdfManager,
-                        searchManager: searchManager,
-                        annotationManager: annotationManager,
-                        commentManager: commentManager,
-                        bookmarkManager: bookmarkManager,
-                        isActive: isActive,
-                        showingSearch: $showingSearch,
-                        searchFocusRequest: searchFocusRequest,
-                        isAlwaysOnTop: tabManager.isAlwaysOnTop,
-                        tabManager: tabManager,
-                        onOpenFile: { url, isSecurityScoped, replaceCurrent in
-                            tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
-                        }
-                    )
-                    .opacity(isActive ? 1 : 0)
-                    .zIndex(isActive ? 1 : 0)
-                    .allowsHitTesting(isActive)
-                    .accessibilityHidden(!isActive)
-                }
+            if let runtime = tabManager.activeRuntime {
+                MainView(
+                    tabID: runtime.tabID,
+                    pdfManager: runtime.pdfManager,
+                    searchManager: runtime.searchManager,
+                    annotationManager: runtime.annotationManager,
+                    commentManager: runtime.commentManager,
+                    bookmarkManager: runtime.bookmarkManager,
+                    tabUndoManager: runtime.undoManager,
+                    isActive: true,
+                    showingSearch: $showingSearch,
+                    searchFocusRequest: searchFocusRequest,
+                    tabManager: tabManager,
+                    onOpenFile: { url, isSecurityScoped, replaceCurrent in
+                        tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
+                    }
+                )
             }
         }
         .ignoresSafeArea(.all, edges: .all)
         .overlay(alignment: .top) {
-            TopChromeView(tabManager: tabManager, isTopBarHovered: $isTopBarHovered)
+            TopChromeView(tabManager: tabManager)
                 .ignoresSafeArea(.all, edges: .top)
         }
+        .toolbar(.hidden)
+        .background(WindowConfigurator(isAlwaysOnTop: tabManager.isAlwaysOnTop))
+        .background(WindowTitleUpdater(title: activeWindowTitle))
         .background(WindowRegistrar(tabManager: tabManager))
         .focusedSceneValue(\.tabManager, tabManager)
         .focusedSceneValue(\.showingSearch, $showingSearch)

@@ -9,8 +9,12 @@ import PDFKit
 import AppKit
 
 final class StablePDFView: PDFView {
-    private var lastWidth: CGFloat = 0
     private let widthChangeTolerance: CGFloat = 0.5
+    private let scrollRestoreTolerance: CGFloat = 0.5
+    private var pendingScrollRestoreY: CGFloat?
+    private var pendingScrollRestore: DispatchWorkItem?
+    private weak var cachedDocumentScrollView: NSScrollView?
+    private weak var configuredScrollView: NSScrollView?
 
     // MARK: - Interaction Mode (Pan vs Select)
 
@@ -48,13 +52,13 @@ final class StablePDFView: PDFView {
     override func layout() {
         super.layout()
 
-        // Remove content insets so scroll bar extends to top edge
         if let scrollView = documentScrollView {
-            scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-            scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-            scrollView.automaticallyAdjustsContentInsets = false
-            
-            configureScrollers(scrollView)
+            if configuredScrollView !== scrollView {
+                configureScrollers(scrollView)
+                configuredScrollView = scrollView
+            } else {
+                syncScrollerVisibility(in: scrollView)
+            }
         }
     }
 
@@ -69,6 +73,7 @@ final class StablePDFView: PDFView {
     private var horizontalTrackingArea: NSTrackingArea?
     private let verticalHoverZoneSize: CGFloat = 120.0 // 3x the original 40.0
     private let horizontalHoverZoneSize: CGFloat = 40.0
+    private var needsTrackingAreaRefreshAfterLiveResize = false
 
     // State tracking to ensure robustness during layout updates
     private var isHoveringVertical = false
@@ -90,6 +95,7 @@ final class StablePDFView: PDFView {
     private var rightClickMonitor: Any?
 
     deinit {
+        pendingScrollRestore?.cancel()
         NotificationCenter.default.removeObserver(self)
         if let monitor = rightClickMonitor {
             NSEvent.removeMonitor(monitor)
@@ -131,11 +137,29 @@ final class StablePDFView: PDFView {
     }
 
     private func configureScrollers(_ scrollView: NSScrollView) {
-        // Enforce overlay style and manual visibility control
-        scrollView.scrollerStyle = .overlay
-        scrollView.scrollerKnobStyle = .default
-        scrollView.autohidesScrollers = false
-        
+        if scrollView.scrollerStyle != .overlay {
+            scrollView.scrollerStyle = .overlay
+        }
+        if scrollView.scrollerKnobStyle != .default {
+            scrollView.scrollerKnobStyle = .default
+        }
+        if scrollView.autohidesScrollers {
+            scrollView.autohidesScrollers = false
+        }
+        if scrollView.automaticallyAdjustsContentInsets {
+            scrollView.automaticallyAdjustsContentInsets = false
+        }
+
+        let contentInsets = scrollView.contentInsets
+        if contentInsets.top != 0 || contentInsets.left != 0 || contentInsets.bottom != 0 || contentInsets.right != 0 {
+            scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        }
+
+        let scrollerInsets = scrollView.scrollerInsets
+        if scrollerInsets.top != 0 || scrollerInsets.left != 0 || scrollerInsets.bottom != 0 || scrollerInsets.right != 0 {
+            scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        }
+
         // Swap vertical scroller with custom GlassScroller if needed
         if !(scrollView.verticalScroller is GlassScroller) {
             let vScroller = GlassScroller()
@@ -149,8 +173,7 @@ final class StablePDFView: PDFView {
         }
 
         // Enforce visibility state
-        scrollView.verticalScroller?.alphaValue = isHoveringVertical ? 1.0 : 0.0
-        scrollView.horizontalScroller?.alphaValue = isHoveringHorizontal ? 1.0 : 0.0
+        syncScrollerVisibility(in: scrollView)
         
         // Observe scrolling to enforce visibility - track contentView to handle document changes
         let contentView = scrollView.contentView
@@ -181,21 +204,28 @@ final class StablePDFView: PDFView {
         // We use animator() proxy to match the active animation state if any, 
         // or just set it directly if we want strict enforcement. 
         // Direct set is safer to fight system "flash" logic.
-        scrollView.verticalScroller?.alphaValue = isHoveringVertical ? 1.0 : 0.0
-        scrollView.horizontalScroller?.alphaValue = isHoveringHorizontal ? 1.0 : 0.0
+        syncScrollerVisibility(in: scrollView)
     }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
 
+        if inLiveResize {
+            needsTrackingAreaRefreshAfterLiveResize = true
+            return
+        }
+
+        needsTrackingAreaRefreshAfterLiveResize = false
+
         if let vArea = verticalTrackingArea { removeTrackingArea(vArea) }
         if let hArea = horizontalTrackingArea { removeTrackingArea(hArea) }
 
         // Right edge (Vertical Scroller)
-        let vRect = NSRect(x: bounds.width - verticalHoverZoneSize, y: 0, width: verticalHoverZoneSize, height: bounds.height)
+        let vWidth = min(verticalHoverZoneSize, bounds.width)
+        let vRect = NSRect(x: bounds.maxX - vWidth, y: bounds.minY, width: vWidth, height: bounds.height)
         let vArea = NSTrackingArea(
             rect: vRect,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .enabledDuringMouseDrag],
             owner: self,
             userInfo: ["type": ScrollerType.vertical.rawValue]
         )
@@ -204,15 +234,18 @@ final class StablePDFView: PDFView {
 
         // Bottom edge (Horizontal Scroller)
         // Note: PDFView is flipped, so y: bounds.height is the bottom
-        let hRect = NSRect(x: 0, y: bounds.height - horizontalHoverZoneSize, width: bounds.width, height: horizontalHoverZoneSize)
+        let hHeight = min(horizontalHoverZoneSize, bounds.height)
+        let hRect = NSRect(x: bounds.minX, y: bounds.maxY - hHeight, width: bounds.width, height: hHeight)
         let hArea = NSTrackingArea(
             rect: hRect,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .assumeInside],
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .enabledDuringMouseDrag],
             owner: self,
             userInfo: ["type": ScrollerType.horizontal.rawValue]
         )
         addTrackingArea(hArea)
         horizontalTrackingArea = hArea
+
+        refreshScrollerHoverState()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -231,56 +264,149 @@ final class StablePDFView: PDFView {
               let typeString = userInfo["type"],
               let type = ScrollerType(rawValue: typeString) else { return }
 
-        let scroller: NSScroller?
-        
         switch type {
         case .vertical:
-            isHoveringVertical = isEntering
+            setScrollerHover(.vertical, hovering: isEntering, in: scrollView, animated: true)
+        case .horizontal:
+            setScrollerHover(.horizontal, hovering: isEntering, in: scrollView, animated: true)
+        }
+    }
+
+    private func refreshScrollerHoverState() {
+        guard let window, let scrollView = documentScrollView else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        let isInside = bounds.contains(point)
+        let hoveringVertical = isInside && point.x >= bounds.width - verticalHoverZoneSize
+        let hoveringHorizontal = isInside && point.y >= bounds.height - horizontalHoverZoneSize
+
+        setScrollerHover(.vertical, hovering: hoveringVertical, in: scrollView, animated: false)
+        setScrollerHover(.horizontal, hovering: hoveringHorizontal, in: scrollView, animated: false)
+    }
+
+    private func setScrollerHover(
+        _ type: ScrollerType,
+        hovering: Bool,
+        in scrollView: NSScrollView,
+        animated: Bool
+    ) {
+        let scroller: NSScroller?
+
+        switch type {
+        case .vertical:
+            guard isHoveringVertical != hovering else { return }
+            isHoveringVertical = hovering
             scroller = scrollView.verticalScroller
         case .horizontal:
-            isHoveringHorizontal = isEntering
+            guard isHoveringHorizontal != hovering else { return }
+            isHoveringHorizontal = hovering
             scroller = scrollView.horizontalScroller
         }
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            scroller?.animator().alphaValue = isEntering ? 1.0 : 0.0
+        guard let scroller else { return }
+        let alpha: CGFloat = hovering ? 1.0 : 0.0
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                scroller.animator().alphaValue = alpha
+            }
+        } else {
+            scroller.alphaValue = alpha
         }
     }
 
-    override func setFrameSize(_ newSize: NSSize) {
-        let savedY = documentScrollView?.contentView.bounds.origin.y
-        let widthChanged = lastWidth > 0 && abs(lastWidth - newSize.width) > widthChangeTolerance
+    private func syncScrollerVisibility(in scrollView: NSScrollView) {
+        setScrollerAlpha(scrollView.verticalScroller, to: isHoveringVertical ? 1.0 : 0.0)
+        setScrollerAlpha(scrollView.horizontalScroller, to: isHoveringHorizontal ? 1.0 : 0.0)
+    }
 
-        lastWidth = newSize.width
+    private func setScrollerAlpha(_ scroller: NSScroller?, to alpha: CGFloat) {
+        guard let scroller, scroller.alphaValue != alpha else { return }
+        scroller.alphaValue = alpha
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let oldWidth = bounds.width
+        let savedY = documentScrollView?.contentView.bounds.origin.y
+        let widthChanged = oldWidth > 0 && abs(oldWidth - newSize.width) > widthChangeTolerance
+
         super.setFrameSize(newSize)
 
         guard widthChanged, let scrollY = savedY else { return }
-        restoreVerticalScroll(scrollY)
+        scheduleVerticalScrollRestore(scrollY)
     }
 
     override func resize(withOldSuperviewSize oldSize: NSSize) {
+        let oldWidth = bounds.width
         let savedY = documentScrollView?.contentView.bounds.origin.y
-        let currentWidth = superview?.bounds.width ?? oldSize.width
-        let widthChanged = abs(oldSize.width - currentWidth) > widthChangeTolerance
 
         super.resize(withOldSuperviewSize: oldSize)
 
+        let widthChanged = abs(oldWidth - bounds.width) > widthChangeTolerance
         guard widthChanged, let scrollY = savedY else { return }
-        restoreVerticalScroll(scrollY)
+        scheduleVerticalScrollRestore(scrollY)
+    }
+
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        pendingScrollRestore?.cancel()
+        pendingScrollRestore = nil
+        pendingScrollRestoreY = documentScrollView?.contentView.bounds.origin.y
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        if needsTrackingAreaRefreshAfterLiveResize {
+            updateTrackingAreas()
+        }
+        flushPendingVerticalScrollRestore()
+    }
+
+    private func scheduleVerticalScrollRestore(_ y: CGFloat) {
+        pendingScrollRestoreY = y
+        guard !inLiveResize else { return }
+        guard pendingScrollRestore == nil else { return }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let y = self.pendingScrollRestoreY else { return }
+            self.pendingScrollRestoreY = nil
+            self.pendingScrollRestore = nil
+            self.restoreVerticalScroll(y)
+        }
+
+        pendingScrollRestore = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    private func flushPendingVerticalScrollRestore() {
+        pendingScrollRestore?.cancel()
+        pendingScrollRestore = nil
+
+        guard let y = pendingScrollRestoreY else { return }
+        pendingScrollRestoreY = nil
+        restoreVerticalScroll(y)
     }
 
     private func restoreVerticalScroll(_ y: CGFloat) {
         guard let scrollView = documentScrollView else { return }
 
         var origin = scrollView.contentView.bounds.origin
+        guard abs(origin.y - y) > scrollRestoreTolerance else { return }
+
         origin.y = y
         scrollView.contentView.scroll(to: origin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     var documentScrollView: NSScrollView? {
-        subviews.first { $0 is NSScrollView } as? NSScrollView
+        if let cachedDocumentScrollView,
+           cachedDocumentScrollView.superview === self {
+            return cachedDocumentScrollView
+        }
+
+        let scrollView = subviews.first { $0 is NSScrollView } as? NSScrollView
+        cachedDocumentScrollView = scrollView
+        return scrollView
     }
 
     // MARK: - Cursor Management

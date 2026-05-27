@@ -42,6 +42,24 @@ private struct VisibilityReporter: View {
     }
 }
 
+private final class ThumbnailImageCache {
+    static let shared = ThumbnailImageCache()
+
+    private let cache = NSCache<NSString, NSImage>()
+
+    private init() {
+        cache.countLimit = 400
+    }
+
+    func image(for key: String) -> NSImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func insert(_ image: NSImage, for key: String) {
+        cache.setObject(image, forKey: key as NSString)
+    }
+}
+
 // MARK: - Autoscroll Manager
 
 /// Manages edge-hover autoscroll during thumbnail drag-and-drop.
@@ -180,8 +198,7 @@ struct ThumbnailGridView: View {
     let isEditing: Bool
 
     // Drag state - visual only, no PDFDocument changes until drop
-    @State private var dragFromIndex: Int?
-    @State private var dragToIndex: Int?
+    @State private var reorderState = ThumbnailReorderState()
 
     // Custom drag preview (system preview is invisible, we draw our own)
     @State private var dragPreviewImage: NSImage?
@@ -196,7 +213,7 @@ struct ThumbnailGridView: View {
                 ScrollView {
                     LazyVStack(spacing: DesignTokens.spacingSM) {
                         ForEach(Array(0..<pdfManager.pageCount), id: \.self) { index in
-                            let displayIndex = visualIndex(for: index)
+                            let displayIndex = reorderState.visualIndex(for: index)
 
                             ThumbnailCellView(
                                 pdfManager: pdfManager,
@@ -204,18 +221,19 @@ struct ThumbnailGridView: View {
                                 pageIndex: displayIndex,
                                 displayNumber: index + 1,
                                 isEditing: isEditing,
-                                isDragging: index == dragToIndex && dragFromIndex != nil
+                                isDragging: reorderState.isDraggingPlaceholder(at: index)
                             )
                             .id("page-\(index)")
-                            .background(
-                                // PreferenceKey-based visibility tracking survives SwiftUI view recreation
-                                VisibilityReporter(index: index, viewportHeight: geo.size.height)
-                            )
+                            .background {
+                                if isEditing, reorderState.isActive {
+                                    // PreferenceKey-based visibility tracking survives SwiftUI view recreation.
+                                    VisibilityReporter(index: index, viewportHeight: geo.size.height)
+                                }
+                            }
                             .modifier(DragDropModifier(
                                 index: index,
                                 isEditing: isEditing,
-                                dragFromIndex: $dragFromIndex,
-                                dragToIndex: $dragToIndex,
+                                reorderState: $reorderState,
                                 onDragStart: { captureDragPreview(pageIndex: index) },
                                 onDrop: { commitReorder() },
                                 onDragUpdate: { updateDragState(proxy: proxy, geo: geo) },
@@ -224,14 +242,14 @@ struct ThumbnailGridView: View {
                         }
                     }
                     .padding(DesignTokens.thumbnailGridPadding)
-                    // NOTE: Removed .animation(.easeInOut(duration: 0.15), value: dragToIndex)
-                    // Animation on LazyVStack causes SwiftUI to rebuild view hierarchy when dragToIndex changes,
+                    // NOTE: Removed animation tied to reorderState changes.
+                    // Animation on LazyVStack causes SwiftUI to rebuild view hierarchy when the target changes,
                     // triggering onDisappear on ALL cells and emptying visibleIndices during drag.
-                    // Visual reordering still works via visualIndex(for:) without animation.
+                    // Visual reordering still works via ThumbnailReorderState without animation.
                 }
                 .coordinateSpace(name: "thumbnailScrollView")
                 .onPreferenceChange(VisibleIndicesPreferenceKey.self) { indices in
-                    autoScrollManager.visibleIndices = indices
+                    autoScrollManager.visibleIndices = reorderState.isActive ? indices : []
                 }
                 .onAppear {
                     autoScrollManager.viewportHeight = geo.size.height
@@ -257,12 +275,14 @@ struct ThumbnailGridView: View {
                 if !editing {
                     resetDragState()
                     clearDragPreview()
+                    autoScrollManager.visibleIndices = []
                 }
             }
-            .onChange(of: dragFromIndex) { _, newValue in
+            .onChange(of: reorderState.fromIndex) { _, newValue in
                 // Clear preview when drag ends (including cancellation)
                 if newValue == nil {
                     clearDragPreview()
+                    autoScrollManager.visibleIndices = []
                 }
             }
             // Custom drag preview overlay - disappears instantly on drop
@@ -298,7 +318,7 @@ struct ThumbnailGridView: View {
     // MARK: - Drag State Update (preview position + autoscroll)
 
     private func updateDragState(proxy: ScrollViewProxy, geo: GeometryProxy) {
-        guard isEditing, dragFromIndex != nil else {
+        guard isEditing, reorderState.isActive else {
             autoScrollManager.stopAll()
             return
         }
@@ -318,54 +338,23 @@ struct ThumbnailGridView: View {
 
         autoScrollManager.viewportHeight = frame.height
         autoScrollManager.updateCursor(y: cursorY) { targetIndex, anchor in
-            withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                proxy.scrollTo("page-\(targetIndex)", anchor: anchor)
-            }
+            proxy.scrollTo("page-\(targetIndex)", anchor: anchor)
         }
-    }
-
-    // MARK: - Visual Reordering (no PDFDocument changes)
-
-    /// Returns the page index to display at position `position` during drag
-    private func visualIndex(for position: Int) -> Int {
-        guard let from = dragFromIndex, let to = dragToIndex, from != to else {
-            return position
-        }
-
-        // Dragged item appears at target position
-        if position == to {
-            return from
-        }
-
-        if from < to {
-            // Dragging down: positions [from, to) show next page (shift up to fill gap)
-            if position >= from && position < to {
-                return position + 1
-            }
-        } else {
-            // Dragging up: positions (to, from] show previous page (shift down to fill gap)
-            if position > to && position <= from {
-                return position - 1
-            }
-        }
-
-        return position
     }
 
     /// Commits the reorder to PDFDocument (called only on drop)
     private func commitReorder() {
-        guard let from = dragFromIndex, let to = dragToIndex, from != to else {
+        guard let move = reorderState.pendingMove else {
             resetDragState()
             return
         }
 
-        pdfManager.movePage(from: from, to: to)
+        pdfManager.movePage(from: move.from, to: move.to)
         resetDragState()
     }
 
     private func resetDragState() {
-        dragFromIndex = nil
-        dragToIndex = nil
+        reorderState.reset()
     }
 }
 
@@ -374,8 +363,7 @@ struct ThumbnailGridView: View {
 private struct DragDropModifier: ViewModifier {
     let index: Int
     let isEditing: Bool
-    @Binding var dragFromIndex: Int?
-    @Binding var dragToIndex: Int?
+    @Binding var reorderState: ThumbnailReorderState
     let onDragStart: () -> Void
     let onDrop: () -> Void
     let onDragUpdate: () -> Void
@@ -385,8 +373,7 @@ private struct DragDropModifier: ViewModifier {
         if isEditing {
             content
                 .onDrag {
-                    dragFromIndex = index
-                    dragToIndex = index
+                    reorderState.begin(at: index)
                     onDragStart()
                     return NSItemProvider(object: String(index) as NSString)
                 } preview: {
@@ -395,8 +382,7 @@ private struct DragDropModifier: ViewModifier {
                 }
                 .onDrop(of: [UTType.text], delegate: ReorderDropDelegate(
                     index: index,
-                    dragFromIndex: $dragFromIndex,
-                    dragToIndex: $dragToIndex,
+                    reorderState: $reorderState,
                     onDrop: onDrop,
                     onDragUpdate: onDragUpdate,
                     onDragEnd: onDragEnd
@@ -411,29 +397,27 @@ private struct DragDropModifier: ViewModifier {
 
 private struct ReorderDropDelegate: DropDelegate {
     let index: Int
-    @Binding var dragFromIndex: Int?
-    @Binding var dragToIndex: Int?
+    @Binding var reorderState: ThumbnailReorderState
     let onDrop: () -> Void
     let onDragUpdate: () -> Void
     let onDragEnd: () -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        dragFromIndex != nil
+        reorderState.isActive
     }
 
     func dropEntered(info: DropInfo) {
-        guard dragFromIndex != nil, dragToIndex != index else { return }
-        dragToIndex = index
+        reorderState.updateTarget(to: index)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard dragFromIndex != nil else { return DropProposal(operation: .cancel) }
+        guard reorderState.isActive else { return DropProposal(operation: .cancel) }
         onDragUpdate()
         return DropProposal(operation: .move)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard dragFromIndex != nil else { return false }
+        guard reorderState.isActive else { return false }
         onDragEnd()
         onDrop()
         return true
@@ -451,12 +435,15 @@ private struct ThumbnailCellView: View {
     let isDragging: Bool
 
     @State private var thumbnailImage: NSImage?
+    @State private var loadedThumbnailKey: String?
     @State private var refreshID = UUID()
 
     private var isSelected: Bool { pageIndex == pdfManager.currentPageIndex }
     private var isBookmarked: Bool { bookmarkManager.isBookmarked(pageIndex) }
 
     var body: some View {
+        let thumbnailRevision = pdfManager.thumbnailRevision(for: pageIndex)
+
         VStack(spacing: DesignTokens.spacingXS) {
             ZStack(alignment: .topTrailing) {
                 thumbnail
@@ -469,7 +456,8 @@ private struct ThumbnailCellView: View {
             }
             Text("\(displayNumber)")
                 .font(.caption2)
-                .foregroundStyle(.white)
+                .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                .pageFlowGlassControlLabel()
         }
         .opacity(isDragging ? 0.4 : 1.0)
         .contentShape(Rectangle())
@@ -478,9 +466,9 @@ private struct ThumbnailCellView: View {
             pdfManager.goToPage(pageIndex)
         }
         .contextMenu { contextMenu }
-        .onAppear { loadThumbnail() }
-        .onChange(of: pageIndex) { _, _ in loadThumbnail() }
-        .onChange(of: pdfManager.pageVersion) { _, _ in loadThumbnail() }
+        .task(id: thumbnailLoadID(revision: thumbnailRevision)) {
+            await loadThumbnail(revision: thumbnailRevision)
+        }
         .id(refreshID)
     }
 
@@ -504,15 +492,61 @@ private struct ThumbnailCellView: View {
         )
     }
 
-    private func loadThumbnail() {
-        guard let page = pdfManager.page(at: pageIndex) else {
+    private func thumbnailLoadID(revision: PageThumbnailRevision) -> String {
+        thumbnailCacheKey(revision: revision) ?? "missing-\(pageIndex)"
+    }
+
+    private func thumbnailCacheKey(revision: PageThumbnailRevision) -> String? {
+        guard let document = pdfManager.document else { return nil }
+        let documentID = String(describing: ObjectIdentifier(document))
+        let width = Int(DesignTokens.thumbnailRenderWidth)
+        let height = Int(DesignTokens.thumbnailRenderHeight)
+
+        return [
+            documentID,
+            "\(pageIndex)",
+            "\(revision.structureVersion)",
+            "\(revision.pageVersion)",
+            "\(width)x\(height)"
+        ].joined(separator: ":")
+    }
+
+    @MainActor
+    private func loadThumbnail(revision: PageThumbnailRevision) async {
+        guard let key = thumbnailCacheKey(revision: revision) else {
             thumbnailImage = nil
+            loadedThumbnailKey = nil
             return
         }
-        thumbnailImage = page.thumbnail(
+
+        if loadedThumbnailKey == key, thumbnailImage != nil {
+            return
+        }
+
+        if let cachedImage = ThumbnailImageCache.shared.image(for: key) {
+            thumbnailImage = cachedImage
+            loadedThumbnailKey = key
+            return
+        }
+
+        thumbnailImage = nil
+        loadedThumbnailKey = nil
+
+        await Task.yield()
+        guard !Task.isCancelled,
+              let page = pdfManager.page(at: pageIndex) else {
+            return
+        }
+
+        let image = page.thumbnail(
             of: CGSize(width: DesignTokens.thumbnailRenderWidth, height: DesignTokens.thumbnailRenderHeight),
             for: .mediaBox
         )
+        ThumbnailImageCache.shared.insert(image, for: key)
+
+        guard !Task.isCancelled else { return }
+        thumbnailImage = image
+        loadedThumbnailKey = key
     }
 
     private var bookmarkBadge: some View {
@@ -527,9 +561,16 @@ private struct ThumbnailCellView: View {
             HStack {
                 Image(systemName: "line.3.horizontal")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(Color.primary.opacity(0.78))
                     .padding(4)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
+                    .pageFlowLiquidGlassSurface(
+                        cornerRadius: 4,
+                        tint: .light,
+                        tintOpacity: 0.10,
+                        interactive: true,
+                        variant: .clear,
+                        strokeOpacity: 0.12
+                    )
                 Spacer()
             }
             Spacer()
