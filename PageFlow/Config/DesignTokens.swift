@@ -112,6 +112,9 @@ struct DesignTokens {
 
     static let trafficLightSize: CGFloat = 12
     static let trafficLightSpacing: CGFloat = 8
+    /// Reserved leading width in the top chrome so the tab strip clears the
+    /// native window buttons (close / minimize / zoom).
+    static let trafficLightClusterWidth: CGFloat = 70
     static let trafficLightContainerPadding: CGFloat = 8
     static let trafficLightHotspotWidth: CGFloat = 180
     static let trafficLightHotspotHeight: CGFloat = 40

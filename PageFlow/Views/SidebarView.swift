@@ -58,15 +58,7 @@ struct SidebarView: View {
         .padding(.horizontal, DesignTokens.spacingXS)
         .padding(.vertical, DesignTokens.spacingXS)
         .frame(width: DesignTokens.sidebarWidth)
-        .pageFlowLiquidGlassPanel(
-            cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-            tint: .light,
-            tintOpacity: DesignTokens.sidebarGlassTintOpacity,
-            variant: .clear,
-            strokeOpacity: 0.22,
-            shadowRadius: 4,
-            shadowY: -2
-        )
+        .pageFlowLiquidGlassPanel(.sidebar)
     }
     
     private var outlineView: some View {

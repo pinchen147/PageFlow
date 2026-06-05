@@ -2,20 +2,25 @@
 //  WindowChromeController.swift
 //  PageFlow
 //
-//  Owns per-window AppKit chrome suppression. The visible top chrome is
-//  rendered by TopChromeView; this controller only keeps the native titlebar
-//  transparent and the system traffic lights hidden.
+//  Owns per-window AppKit chrome: hides the title bar and hover-reveals the
+//  native window buttons (traffic lights) in sync with the SwiftUI top chrome.
+//
+//  The buttons are the real `standardWindowButton`s — controlled by alphaValue,
+//  never `isHidden` (which removes them from layout + accessibility and which
+//  AppKit fights by re-showing them on key/main/full-screen transitions).
 //
 
 import AppKit
 
 final class WindowChromeController: NSObject {
     private weak var window: NSWindow?
+    private var isTrafficLightsVisible = false
 
     init(window: NSWindow) {
         self.window = window
         super.init()
         configureWindow()
+        setTrafficLightsVisible(false, animated: false)
         observeWindowChanges()
     }
 
@@ -27,47 +32,64 @@ final class WindowChromeController: NSObject {
 
     private func configureWindow() {
         guard let window else { return }
-
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         window.titlebarSeparatorStyle = .none
-
-        hideSystemButtons()
     }
 
-    /// Hide the close/min/zoom buttons. Re-applied on multiple notifications
-    /// because AppKit can re-show them when key/main/full-screen state changes.
-    private func hideSystemButtons() {
-        guard let window else { return }
-        for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
-            let button = window.standardWindowButton(kind)
-            button?.isHidden = true
-            button?.alphaValue = 0
+    private var systemButtons: [NSButton] {
+        guard let window else { return [] }
+        return [.closeButton, .miniaturizeButton, .zoomButton].compactMap {
+            window.standardWindowButton($0)
         }
     }
 
     private func observeWindowChanges() {
         let nc = NotificationCenter.default
+        // AppKit re-shows / resets button alpha on these transitions, so we
+        // re-assert the hover-driven visibility after each.
         let names: [NSNotification.Name] = [
             NSWindow.didBecomeKeyNotification,
             NSWindow.didResignKeyNotification,
             NSWindow.didBecomeMainNotification,
             NSWindow.didEnterFullScreenNotification,
-            NSWindow.didExitFullScreenNotification
+            NSWindow.didExitFullScreenNotification,
+            NSWindow.didEndLiveResizeNotification
         ]
         for name in names {
-            nc.addObserver(
-                self,
-                selector: #selector(windowStateChanged),
-                name: name,
-                object: window
-            )
+            nc.addObserver(self, selector: #selector(windowStateChanged), name: name, object: window)
         }
     }
 
     @objc private func windowStateChanged() {
-        hideSystemButtons()
+        applyTrafficLightAlpha(animated: false)
+    }
+
+    // MARK: - Hover reveal
+
+    /// Reveal or hide the native window buttons. No-ops when the animated state
+    /// is already correct, so repeated reporter updates don't restart animations.
+    func setTrafficLightsVisible(_ visible: Bool, animated: Bool = true) {
+        if animated && isTrafficLightsVisible == visible { return }
+        isTrafficLightsVisible = visible
+        applyTrafficLightAlpha(animated: animated)
+    }
+
+    private func applyTrafficLightAlpha(animated: Bool) {
+        let buttons = systemButtons
+        guard !buttons.isEmpty else { return }
+        let target: CGFloat = isTrafficLightsVisible ? 1 : 0
+
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = DesignTokens.animationFast
+                context.allowsImplicitAnimation = true
+                buttons.forEach { $0.animator().alphaValue = target }
+            }
+        } else {
+            buttons.forEach { $0.alphaValue = target }
+        }
     }
 }
 

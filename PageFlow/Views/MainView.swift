@@ -258,14 +258,7 @@ struct MainView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, DesignTokens.spacingMD)
             .padding(.vertical, DesignTokens.spacingSM)
-            .pageFlowLiquidGlassPanel(
-                cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-                tint: .light,
-                tintOpacity: 0.18,
-                interactive: true,
-                shadowRadius: 8,
-                shadowY: 3
-            )
+            .pageFlowLiquidGlassPanel(.primaryButton)
 
             Text("or drag and drop a PDF file here")
                 .font(.caption)
@@ -286,12 +279,7 @@ struct MainView: View {
                 .pageFlowGlassControlLabel()
                 .padding(.horizontal, DesignTokens.spacingSM + 2)
                 .padding(.vertical, DesignTokens.spacingSM)
-                .pageFlowLiquidGlassSurface(
-                    cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-                    tint: .light,
-                    tintOpacity: DesignTokens.sidebarControlGlassTintOpacity,
-                    variant: .clear
-                )
+                .pageFlowLiquidGlassSurface(.pageIndicator)
         }
         .buttonStyle(.plain)
         .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 10, y: -3)
@@ -364,28 +352,27 @@ struct MainView: View {
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else {
-            return false
+        let fileProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
         }
+        guard !fileProviders.isEmpty else { return false }
 
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            let url: URL?
-
-            if let data = item as? Data {
-                url = URL(dataRepresentation: data, relativeTo: nil)
-            } else if let urlItem = item as? URL {
-                url = urlItem
-            } else if let nsURL = item as? NSURL {
-                url = nsURL as URL
-            } else {
-                url = nil
+        // Resolve every dropped file URL in drop order, then open them as tabs in this
+        // window in one batch (TabManager.openDroppedDocuments handles dedup,
+        // empty-tab reuse, failed-file rollback, and a single bring-to-front).
+        Task { @MainActor in
+            var urls: [URL] = []
+            for provider in fileProviders {
+                guard let url = await provider.loadDroppedFileURL(),
+                      url.pathExtension.lowercased() == "pdf" else { continue }
+                urls.append(url)
             }
+            guard !urls.isEmpty else { return }
 
-            guard let url = url, url.pathExtension.lowercased() == "pdf" else { return }
-
-            DispatchQueue.main.async { [tabManager, onOpenFile] in
-                tabManager.closeFilePicker()
-                onOpenFile(url, false, false)
+            tabManager.closeFilePicker()
+            let failed = tabManager.openDroppedDocuments(urls)
+            if failed > 0 {
+                showToast(failed == 1 ? "Couldn’t open 1 file" : "Couldn’t open \(failed) files")
             }
         }
 
@@ -423,14 +410,7 @@ struct MainView: View {
             .padding(DesignTokens.spacingLG)
         }
         .padding(DesignTokens.spacingLG)
-        .pageFlowLiquidGlassPanel(
-            cornerRadius: DesignTokens.spacingMD,
-            tint: .light,
-            tintOpacity: 0.18,
-            strokeOpacity: 0.4,
-            shadowRadius: 16,
-            shadowY: 6
-        )
+        .pageFlowLiquidGlassPanel(.dropZone)
     }
 
     // MARK: - Toast
@@ -448,11 +428,7 @@ struct MainView: View {
             .font(.caption)
             .padding(.horizontal, DesignTokens.spacingMD)
             .padding(.vertical, DesignTokens.spacingXS)
-            .pageFlowLiquidGlassPanel(
-                cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-                tint: .light,
-                tintOpacity: DesignTokens.glassPanelTintOpacity
-            )
+            .pageFlowLiquidGlassPanel(.glassPanel)
     }
 }
 
@@ -488,6 +464,27 @@ final class WindowTitleView: NSView {
     private func updateTitleIfNeeded() {
         guard let window, window.title != title else { return }
         window.title = title
+    }
+}
+
+// MARK: - Drop Helpers
+
+private extension NSItemProvider {
+    /// Resolves a dropped file URL, handling the `Data` / `URL` / `NSURL`
+    /// representations AppKit may deliver. Returns nil if the item is not a file URL.
+    func loadDroppedFileURL() async -> URL? {
+        await withCheckedContinuation { continuation in
+            loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let url: URL?
+                switch item {
+                case let data as Data: url = URL(dataRepresentation: data, relativeTo: nil)
+                case let value as URL: url = value
+                case let value as NSURL: url = value as URL
+                default: url = nil
+                }
+                continuation.resume(returning: url)
+            }
+        }
     }
 }
 

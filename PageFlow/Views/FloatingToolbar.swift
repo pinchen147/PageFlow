@@ -30,15 +30,7 @@ struct FloatingToolbar: View {
 
     private var expandedContainer: some View {
         expandedToolbar
-            .pageFlowLiquidGlassPanel(
-                cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-                tint: .light,
-                tintOpacity: 0.14,
-                variant: .clear,
-                strokeOpacity: 0.22,
-                shadowRadius: 4,
-                shadowY: -2
-            )
+            .pageFlowLiquidGlassPanel(.toolbar)
     }
 
     private var expandedToolbar: some View {
@@ -100,6 +92,7 @@ struct FloatingToolbar: View {
         }
         .padding(.horizontal, toolbarMetrics.horizontalPadding)
         .padding(.vertical, toolbarMetrics.verticalPadding)
+        .proximityField(isEnabled: settingsManager.isToolbarMagnificationEnabled)
     }
 
     private var colorMenu: some View {
@@ -143,6 +136,7 @@ struct FloatingToolbar: View {
                 .pageFlowGlassControlLabel(
                     interactive: pdfManager.hasDocument
                 )
+                .proximityMagnified()
         }
         .buttonStyle(.plain)
         .disabled(!pdfManager.hasDocument)
@@ -158,6 +152,7 @@ struct FloatingToolbar: View {
                 .pageFlowGlassControlLabel(
                     interactive: !disabled
                 )
+                .proximityMagnified()
         }
         .buttonStyle(.plain)
         .disabled(disabled)

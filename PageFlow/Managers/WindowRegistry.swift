@@ -89,6 +89,14 @@ final class WindowRegistry {
             .flatMap { $0.tabManager.dirtyPDFManagers() }
     }
 
+    /// Persists every open window's active-tab reading position to the store.
+    /// Called on app termination so the last position survives a quit.
+    func flushAllViewState() {
+        for entry in entries.values where entry.window != nil {
+            entry.tabManager.flushActiveTabViewState()
+        }
+    }
+
     /// TabManager whose window was most recently main. Stays correct even
     /// after Settings or another panel has stolen `keyWindow`/`mainWindow`.
     func frontmostTabManager() -> TabManager? {
@@ -119,6 +127,16 @@ final class WindowRegistry {
     func anyTabManager() -> TabManager? {
         let values = Array(entries.values).filter { $0.window != nil }
         return preferredEntry(from: values)?.tabManager
+    }
+
+    /// Whether `url`'s document is already open in any registered window. A
+    /// read-only counterpart to `activateExistingDocument` — it never changes focus.
+    func isDocumentOpen(_ url: URL) -> Bool {
+        let canonicalURL = url.pageFlowCanonicalDocumentURL
+        for entry in entries.values where entry.window != nil {
+            if entry.tabManager.tabID(for: canonicalURL) != nil { return true }
+        }
+        return false
     }
 
     /// Activates an existing tab for the given URL if already open. Returns

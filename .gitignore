@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode — user-specific
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Xcode — build output
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.swiftpm/
+.build/
+
+# App build / DMG staging & release exports (local artifacts)
+.dmg-stage/
+dmg-build/
+dmg-build-v*/
+*.dmg
+/v[0-9]*/
+/v[0-9]* export/
+
+# Vendored reference material (not part of the app)
+references/
+
+# Local distribution / mailing scratch (not source)
+bcc-*.txt
+email-body.txt
+listofdownloads.csv

@@ -62,10 +62,9 @@ final class WindowConfiguratorView: NSView {
             window.hasShadow = true
         }
 
-        // Install the NSToolbar + chrome controller (idempotent). The
-        // controller handles titlebar transparency, fullSizeContentView,
-        // hiding the standard window buttons, and re-hiding them on every
-        // window state change (key/main/full-screen/update).
+        // Install the chrome controller (idempotent). The controller handles
+        // titlebar transparency, fullSizeContentView, hiding the standard
+        // window buttons, and hosting the custom traffic-light overlay.
         _ = WindowChromeController.installIfNeeded(on: window)
     }
 }

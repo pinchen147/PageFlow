@@ -16,6 +16,14 @@ enum InteractionMode {
     case pan
 }
 
+/// A one-shot request to fit the current page to the view, owned by `PDFManager`
+/// and consumed by the projector once applied. Transient — this is *not* the
+/// durable Auto-Scale mode (which hands sizing to PDFKit's `autoScales`).
+struct FitRequest: Equatable {
+    /// Scroll to the top of the page after fitting (used on document load).
+    var scrollToTop: Bool
+}
+
 enum DocumentLoadResult {
     case success
     case failed
@@ -45,8 +53,17 @@ final class PDFManager {
     var currentPageIndex: Int = 0
     var scaleFactor: CGFloat = 1.0
     var isAutoScaling: Bool = false
-    var scaleNeedsUpdate: Bool = false
-    var fitOnceRequested: Bool = false
+    /// One-shot fit request consumed by the projector; nil when no fit is pending.
+    var pendingFit: FitRequest?
+    /// One-shot exact-scroll restore (page + point) consumed by the projector to
+    /// land the user where they left off; nil when none pending. Transient.
+    @ObservationIgnored var pendingScrollRestore: PDFDestination?
+    /// Reads the live `PDFView`'s current destination for persistence. Set by the
+    /// view coordinator while a live view is mounted; nil otherwise.
+    @ObservationIgnored var liveDestinationProvider: (() -> PDFDestination?)?
+    /// Source of restored reading positions. Defaults to the app-wide store;
+    /// overridable in tests.
+    @ObservationIgnored var documentStateStore: DocumentStateStore = .shared
     var documentURL: URL?
     var isDirty: Bool = false
     var interactionMode: InteractionMode = .select
@@ -117,12 +134,6 @@ final class PDFManager {
             return nil
         }
         return document.page(at: index)
-    }
-
-    /// Checks if page index is valid for current document
-    func isValidPageIndex(_ index: Int) -> Bool {
-        guard document != nil else { return false }
-        return index >= 0 && index < pageCount
     }
 
     func thumbnailRevision(for pageIndex: Int) -> PageThumbnailRevision {
@@ -313,12 +324,7 @@ final class PDFManager {
 
         document = pdfDocument
         documentURL = url
-        currentPageIndex = 0
-        currentPage = pdfDocument.page(at: 0)
-        isAutoScaling = false
-        fitOnceRequested = true
-        scaleNeedsUpdate = false
-        scaleFactor = DesignTokens.pdfDefaultScale
+        applyInitialViewState(for: pdfDocument, url: url)
         isDirty = false
         copiedPage = nil  // Clear to prevent cross-document paste corruption
         isAccessingSecurityScopedResource = securityScopedURL != nil
@@ -352,7 +358,58 @@ final class PDFManager {
         scaleFactor = 1.0
         isDirty = false
         copiedPage = nil
+        pendingScrollRestore = nil
         markThumbnailStructureDirty()
+    }
+
+    // MARK: - Reading-Position Persistence
+
+    /// Restores the saved reading state for `url` if present and still valid,
+    /// otherwise falls back to first-page, fit-to-width defaults. The single
+    /// place document-load view state is initialized.
+    private func applyInitialViewState(for document: PDFDocument, url: URL) {
+        if let saved = documentStateStore.state(for: url),
+           saved.pageIndex >= 0, saved.pageIndex < document.pageCount,
+           let page = document.page(at: saved.pageIndex) {
+            currentPageIndex = saved.pageIndex
+            currentPage = page
+            isAutoScaling = saved.isAutoScaling
+            scaleFactor = min(max(saved.scaleFactor, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
+            pendingFit = nil
+            pendingScrollRestore = saved.scrollPoint.map { PDFDestination(page: page, at: $0) }
+        } else {
+            currentPageIndex = 0
+            currentPage = document.page(at: 0)
+            isAutoScaling = false
+            scaleFactor = DesignTokens.pdfDefaultScale
+            pendingFit = FitRequest(scrollToTop: true)
+            pendingScrollRestore = nil
+        }
+    }
+
+    /// Snapshots the current reading state for persistence and arms an in-session
+    /// exact-scroll restore (so returning to this tab lands at the same point).
+    /// Returns nil when no document is loaded.
+    func captureViewState() -> DocumentViewState? {
+        guard let document, documentURL != nil else { return nil }
+
+        let destination = liveDestinationProvider?()
+        if destination != nil { pendingScrollRestore = destination }
+
+        let pageIndex: Int
+        if let page = destination?.page {
+            let index = document.index(for: page)
+            pageIndex = index == NSNotFound ? currentPageIndex : index
+        } else {
+            pageIndex = currentPageIndex
+        }
+
+        return DocumentViewState(
+            pageIndex: pageIndex,
+            scaleFactor: scaleFactor,
+            isAutoScaling: isAutoScaling,
+            scrollPoint: destination?.point
+        )
     }
 
     // MARK: - Navigation
@@ -395,36 +452,59 @@ final class PDFManager {
 
     func zoomIn() {
         isAutoScaling = false
+        pendingFit = nil
         scaleFactor = min(scaleFactor + DesignTokens.pdfZoomStep, DesignTokens.pdfMaxScale)
-        scaleNeedsUpdate = true
     }
 
     func zoomOut() {
         isAutoScaling = false
+        pendingFit = nil
         scaleFactor = max(scaleFactor - DesignTokens.pdfZoomStep, DesignTokens.pdfMinScale)
-        scaleNeedsUpdate = true
     }
 
     func resetZoom() {
         isAutoScaling = false
+        pendingFit = nil
         scaleFactor = DesignTokens.pdfDefaultScale
-        scaleNeedsUpdate = true
     }
 
     func setZoom(_ scale: CGFloat) {
         isAutoScaling = false
+        pendingFit = nil
         scaleFactor = max(DesignTokens.pdfMinScale, min(scale, DesignTokens.pdfMaxScale))
-        scaleNeedsUpdate = true
     }
 
     func toggleAutoScale() {
         isAutoScaling.toggle()
-        scaleNeedsUpdate = true
+        pendingFit = nil
     }
 
     func requestFitOnce() {
         isAutoScaling = false
-        fitOnceRequested = true
+        pendingFit = FitRequest(scrollToTop: false)
+    }
+
+    // MARK: - View Event Ingest
+    //
+    // The projector's notification adapters call these to fold user-originated
+    // PDFView changes back into the manager (the source of truth). They are no-ops
+    // when the value already matches, so a projector write that echoes back as a
+    // PDFKit notification resolves to nothing.
+
+    /// PDFKit reported the visible page changed (user scroll, link, etc.).
+    func ingestPageChange(index: Int, page: PDFPage) {
+        if currentPageIndex != index { currentPageIndex = index }
+        if currentPage !== page { currentPage = page }
+    }
+
+    /// PDFKit reported the scale changed (user pinch / control-scroll / internal).
+    func ingestScaleChange(_ scale: CGFloat) {
+        if scaleFactor != scale { scaleFactor = scale }
+    }
+
+    /// PDFKit reported the display mode changed (e.g. via its own context menu).
+    func ingestDisplayModeChange(_ mode: PDFDisplayMode) {
+        if displayMode != mode { displayMode = mode }
     }
 
     func rotateClockwise() {
@@ -777,30 +857,4 @@ final class PDFManager {
                                contextInfo: nil)
     }
 
-    // MARK: - Export
-
-    func exportWithoutAnnotations(to url: URL) -> Bool {
-        guard let document = document else {
-            return false
-        }
-
-        // Create a copy of the document
-        let newDocument = PDFDocument()
-
-        for pageIndex in 0..<document.pageCount {
-            guard let page = document.page(at: pageIndex) else { continue }
-
-            guard let pageCopy = page.copy() as? PDFPage else { continue }
-
-            // Remove all annotations
-            let annotations = pageCopy.annotations
-            for annotation in annotations {
-                pageCopy.removeAnnotation(annotation)
-            }
-
-            newDocument.insert(pageCopy, at: pageIndex)
-        }
-
-        return newDocument.write(to: url)
-    }
 }

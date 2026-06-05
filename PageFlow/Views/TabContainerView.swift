@@ -57,6 +57,16 @@ struct TabContainerView: View {
                         tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
                     }
                 )
+                // Bind the PDF-view subtree to the tab's identity (matching
+                // TopChromeView). Without this, switching tabs reuses one MainView in
+                // place, leaving the PDFViewWrapper's Coordinator captured on the
+                // previous tab's managers (a `let`) and skipping `dismantleNSView`, so
+                // the StablePDFView, its window-wide scroll monitor, and PDFKit's page
+                // cache for the old tab are never torn down — the source of the
+                // grow-over-time lag. Per-tab identity gives each tab its own view that
+                // tears down on switch; per-tab reading position is already restored by
+                // TabManager.restoreTabState + DocumentStateStore.
+                .id(runtime.tabID)
             }
         }
         .ignoresSafeArea(.all, edges: .all)
@@ -94,6 +104,7 @@ struct TabContainerView: View {
             tabManager.openDocument(url: url, isSecurityScoped: false)
         }
         .onDisappear {
+            tabManager.flushActiveTabViewState()
             WindowRegistry.shared.unregister(tabManager)
         }
         .sheet(item: $tabManager.pendingPasswordRequest) { request in

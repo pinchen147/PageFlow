@@ -88,12 +88,7 @@ struct SearchBar: View {
         }
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
-        .pageFlowLiquidGlassPanel(
-            cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-            tint: .light,
-            tintOpacity: DesignTokens.glassPanelTintOpacity,
-            variant: .regular
-        )
+        .pageFlowLiquidGlassPanel(.glassPanel)
         .onAppear {
             focusSearchField()
         }

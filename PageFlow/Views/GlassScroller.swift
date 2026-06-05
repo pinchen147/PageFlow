@@ -4,6 +4,13 @@
 //
 //  Custom NSScroller with a visible glass knob over bright PDF pages.
 //
+//  The knob is rendered with plain CALayers (translucent fill + hairline
+//  border + a subtle top sheen) rather than a live backdrop-blur view.
+//  A scroller knob is repositioned on every scroll frame, and recomputing a
+//  real Liquid Glass / NSVisualEffectView refraction that often is the classic
+//  source of scroll jank. The layer-based knob keeps the glassy look while
+//  tracking the scroll position with effectively zero per-frame cost.
+//
 
 import AppKit
 
@@ -46,7 +53,11 @@ final class GlassScroller: NSScroller {
     }
 
     override func drawKnob() {
-        // The Liquid Glass child view replaces AppKit's painted knob.
+        // The layer-backed child view replaces AppKit's painted knob.
+    }
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
+        // No track: the knob floats over the PDF like an overlay scroller.
     }
 
     private func configure() {
@@ -62,23 +73,29 @@ final class GlassScroller: NSScroller {
 }
 
 private final class GlassScrollerKnobView: NSView {
-    private static let tintOpacity: CGFloat = 0.42
-    private static let strokeOpacity: CGFloat = 0.52
+    private static let fillColor = NSColor(white: 0.17, alpha: 0.55)
+    private static let strokeColor = NSColor.white.withAlphaComponent(0.5)
+    private static let sheenTop = NSColor.white.withAlphaComponent(0.22).cgColor
+    private static let sheenClear = NSColor.white.withAlphaComponent(0.0).cgColor
 
-    private let fill = HUDGlassFillView()
+    private let sheen = CAGradientLayer()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
         wantsLayer = true
-        layer?.masksToBounds = true
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.white.withAlphaComponent(Self.strokeOpacity).cgColor
+        guard let layer else { return }
 
-        fill.frame = bounds
-        fill.autoresizingMask = [.width, .height]
-        fill.apply(cornerRadius: 0, tint: .dark, tintOpacity: Self.tintOpacity, variant: .regular)
-        addSubview(fill)
+        layer.masksToBounds = true
+        layer.backgroundColor = Self.fillColor.cgColor
+        layer.borderWidth = 1
+        layer.borderColor = Self.strokeColor.cgColor
+
+        // Subtle top-down highlight for a glassy sheen.
+        sheen.colors = [Self.sheenTop, Self.sheenClear]
+        sheen.startPoint = CGPoint(x: 0.5, y: 0)
+        sheen.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.addSublayer(sheen)
     }
 
     required init?(coder: NSCoder) {
@@ -93,9 +110,14 @@ private final class GlassScrollerKnobView: NSView {
         isHidden = frame.isEmpty
         guard !frame.isEmpty else { return }
 
+        // Disable implicit animations so the knob tracks the scroll position
+        // exactly instead of lagging behind with a 0.25s default animation.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         self.frame = frame
         let radius = min(frame.width, frame.height) / 2
         layer?.cornerRadius = radius
-        fill.apply(cornerRadius: radius, tint: .dark, tintOpacity: Self.tintOpacity, variant: .regular)
+        sheen.frame = bounds
+        CATransaction.commit()
     }
 }

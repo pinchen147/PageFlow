@@ -18,15 +18,7 @@ struct CommentsSidebar: View {
             commentsList
         }
         .frame(width: DesignTokens.commentSidebarWidth)
-        .pageFlowLiquidGlassPanel(
-            cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-            tint: .light,
-            tintOpacity: DesignTokens.sidebarGlassTintOpacity,
-            variant: .clear,
-            strokeOpacity: 0.22,
-            shadowRadius: 4,
-            shadowY: -2
-        )
+        .pageFlowLiquidGlassPanel(.sidebar)
     }
 
     // MARK: - Header

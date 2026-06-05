@@ -119,6 +119,7 @@ final class SettingsManager {
         static let topBarAlwaysVisible = "settings.topBarAlwaysVisible"
         static let floatingToolbarAlwaysVisible = "settings.floatingToolbarAlwaysVisible"
         static let pageIndicatorAlwaysVisible = "settings.pageIndicatorAlwaysVisible"
+        static let toolbarMagnificationEnabled = "settings.toolbarMagnificationEnabled"
     }
 
     // MARK: - Default Presets
@@ -196,6 +197,15 @@ final class SettingsManager {
         didSet {
             if !isLoading {
                 defaults.set(isPageIndicatorAlwaysVisible, forKey: Keys.pageIndicatorAlwaysVisible)
+            }
+        }
+    }
+
+    /// Dock-style icon magnification on the floating toolbar. Enabled by default (opt-out).
+    var isToolbarMagnificationEnabled = true {
+        didSet {
+            if !isLoading {
+                defaults.set(isToolbarMagnificationEnabled, forKey: Keys.toolbarMagnificationEnabled)
             }
         }
     }
@@ -296,6 +306,11 @@ final class SettingsManager {
         isTopBarAlwaysVisible = defaults.bool(forKey: Keys.topBarAlwaysVisible)
         isFloatingToolbarAlwaysVisible = defaults.bool(forKey: Keys.floatingToolbarAlwaysVisible)
         isPageIndicatorAlwaysVisible = defaults.bool(forKey: Keys.pageIndicatorAlwaysVisible)
+
+        // Opt-out default: only override the `true` default when a value was explicitly stored.
+        if defaults.object(forKey: Keys.toolbarMagnificationEnabled) != nil {
+            isToolbarMagnificationEnabled = defaults.bool(forKey: Keys.toolbarMagnificationEnabled)
+        }
     }
 
     private func savePresets(_ presets: [ColorPreset], forKey key: String) {

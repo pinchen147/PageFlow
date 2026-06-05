@@ -41,13 +41,7 @@ struct TabDragPreviewView: View {
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
         .frame(width: snapshot.width, height: DesignTokens.tabHeight)
-        .pageFlowLiquidGlassSurface(
-            cornerRadius: DesignTokens.tabCornerRadius,
-            tint: .light,
-            tintOpacity: 0.22,
-            variant: .clear,
-            strokeOpacity: 0.32
-        )
+        .pageFlowLiquidGlassSurface(.tabDragPreview)
         .shadow(color: .black.opacity(0.22), radius: 14, y: 7)
         .compositingGroup()
     }

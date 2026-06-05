@@ -66,13 +66,7 @@ struct ShortcutsSettingsTab: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, DesignTokens.spacingMD)
                 .padding(.vertical, DesignTokens.spacingXS)
-                .pageFlowLiquidGlassSurface(
-                    cornerRadius: DesignTokens.spacingSM,
-                    tintOpacity: 0.08,
-                    interactive: true,
-                    variant: .clear,
-                    strokeOpacity: 0.16
-                )
+                .pageFlowLiquidGlassSurface(.settingsRow)
 
                 Text("Changes require restarting PageFlow.")
                     .font(.caption)
@@ -109,13 +103,7 @@ struct ShortcutRow: View {
                     .buttonStyle(.plain)
                     .padding(.horizontal, DesignTokens.spacingSM)
                     .padding(.vertical, DesignTokens.spacingXS)
-                    .pageFlowLiquidGlassSurface(
-                        cornerRadius: DesignTokens.spacingSM,
-                        tintOpacity: pendingShortcut == nil ? 0.04 : 0.10,
-                        interactive: pendingShortcut != nil,
-                        variant: .clear,
-                        strokeOpacity: pendingShortcut == nil ? 0.08 : 0.16
-                    )
+                    .pageFlowLiquidGlassSurface(.settingsAction(enabled: pendingShortcut != nil, activeTint: 0.10))
                     .disabled(pendingShortcut == nil)
 
                     Button("✕") {
@@ -124,13 +112,7 @@ struct ShortcutRow: View {
                     .buttonStyle(.plain)
                     .padding(.horizontal, DesignTokens.spacingSM)
                     .padding(.vertical, DesignTokens.spacingXS)
-                    .pageFlowLiquidGlassSurface(
-                        cornerRadius: DesignTokens.spacingSM,
-                        tintOpacity: 0.08,
-                        interactive: true,
-                        variant: .clear,
-                        strokeOpacity: 0.14
-                    )
+                    .pageFlowLiquidGlassSurface(.settingsRow.with(strokeOpacity: 0.14))
                 }
             } else {
                 Button(currentDisplayString) {
@@ -139,13 +121,7 @@ struct ShortcutRow: View {
                 .buttonStyle(.plain)
                 .frame(width: DesignTokens.shortcutButtonWidth)
                 .padding(.vertical, DesignTokens.spacingXS)
-                .pageFlowLiquidGlassSurface(
-                    cornerRadius: DesignTokens.spacingSM,
-                    tintOpacity: 0.08,
-                    interactive: true,
-                    variant: .clear,
-                    strokeOpacity: 0.16
-                )
+                .pageFlowLiquidGlassSurface(.settingsRow)
             }
         }
         .onDisappear {

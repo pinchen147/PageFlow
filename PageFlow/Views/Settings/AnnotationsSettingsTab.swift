@@ -50,13 +50,7 @@ struct AnnotationsSettingsTab: View {
                     Button(action: { SettingsManager.shared.addHighlightPreset() }) {
                         Image(systemName: "plus")
                             .frame(width: 20, height: 20)
-                            .pageFlowLiquidGlassSurface(
-                                cornerRadius: DesignTokens.spacingSM,
-                                tintOpacity: 0.08,
-                                interactive: true,
-                                variant: .clear,
-                                strokeOpacity: 0.16
-                            )
+                            .pageFlowLiquidGlassSurface(.settingsRow)
                     }
                     .buttonStyle(.plain)
                 }
@@ -99,13 +93,7 @@ struct AnnotationsSettingsTab: View {
                     Button(action: { SettingsManager.shared.addUnderlinePreset() }) {
                         Image(systemName: "plus")
                             .frame(width: 20, height: 20)
-                            .pageFlowLiquidGlassSurface(
-                                cornerRadius: DesignTokens.spacingSM,
-                                tintOpacity: 0.08,
-                                interactive: true,
-                                variant: .clear,
-                                strokeOpacity: 0.16
-                            )
+                            .pageFlowLiquidGlassSurface(.settingsRow)
                     }
                     .buttonStyle(.plain)
                 }
@@ -148,13 +136,7 @@ struct AnnotationsSettingsTab: View {
                     Button(action: { SettingsManager.shared.addCommentPreset() }) {
                         Image(systemName: "plus")
                             .frame(width: 20, height: 20)
-                            .pageFlowLiquidGlassSurface(
-                                cornerRadius: DesignTokens.spacingSM,
-                                tintOpacity: 0.08,
-                                interactive: true,
-                                variant: .clear,
-                                strokeOpacity: 0.16
-                            )
+                            .pageFlowLiquidGlassSurface(.settingsRow)
                     }
                     .buttonStyle(.plain)
                 }
@@ -167,13 +149,7 @@ struct AnnotationsSettingsTab: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, DesignTokens.spacingMD)
                 .padding(.vertical, DesignTokens.spacingXS)
-                .pageFlowLiquidGlassSurface(
-                    cornerRadius: DesignTokens.spacingSM,
-                    tintOpacity: 0.08,
-                    interactive: true,
-                    variant: .clear,
-                    strokeOpacity: 0.16
-                )
+                .pageFlowLiquidGlassSurface(.settingsRow)
             }
         }
         .formStyle(.grouped)
@@ -202,13 +178,7 @@ struct PresetRow: View {
                     Image(systemName: "minus.circle")
                         .foregroundStyle(.red)
                         .frame(width: 20, height: 20)
-                        .pageFlowLiquidGlassSurface(
-                            cornerRadius: DesignTokens.spacingSM,
-                            tintOpacity: 0.08,
-                            interactive: true,
-                            variant: .clear,
-                            strokeOpacity: 0.12
-                        )
+                        .pageFlowLiquidGlassSurface(.settingsRow.with(strokeOpacity: 0.12))
                 }
                 .buttonStyle(.plain)
             }

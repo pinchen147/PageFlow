@@ -49,6 +49,9 @@ private final class ThumbnailImageCache {
 
     private init() {
         cache.countLimit = 400
+        // Ceiling on resident thumbnail memory regardless of count, so a long
+        // session over large/complex pages can't grow the cache without bound.
+        cache.totalCostLimit = 256 * 1024 * 1024
     }
 
     func image(for key: String) -> NSImage? {
@@ -56,8 +59,30 @@ private final class ThumbnailImageCache {
     }
 
     func insert(_ image: NSImage, for key: String) {
-        cache.setObject(image, forKey: key as NSString)
+        cache.setObject(image, forKey: key as NSString, cost: Self.byteCost(of: image))
     }
+
+    /// Approximate decoded footprint in bytes (4 bytes per device pixel).
+    private static func byteCost(of image: NSImage) -> Int {
+        if let rep = image.representations.first {
+            return rep.pixelsWide * rep.pixelsHigh * 4
+        }
+        return Int(image.size.width * image.size.height * 4)
+    }
+}
+
+/// The cache key for a page thumbnail. Shared by the grid cells and the drag
+/// preview so both read and write the same cached image.
+private func makeThumbnailCacheKey(documentID: ObjectIdentifier, pageIndex: Int, revision: PageThumbnailRevision) -> String {
+    let width = Int(DesignTokens.thumbnailRenderWidth)
+    let height = Int(DesignTokens.thumbnailRenderHeight)
+    return [
+        String(describing: documentID),
+        "\(pageIndex)",
+        "\(revision.structureVersion)",
+        "\(revision.pageVersion)",
+        "\(width)x\(height)"
+    ].joined(separator: ":")
 }
 
 // MARK: - Autoscroll Manager
@@ -303,11 +328,25 @@ struct ThumbnailGridView: View {
     // MARK: - Drag Preview
 
     private func captureDragPreview(pageIndex: Int) {
-        guard let page = pdfManager.page(at: pageIndex) else { return }
-        dragPreviewImage = page.thumbnail(
-            of: CGSize(width: DesignTokens.thumbnailRenderWidth, height: DesignTokens.thumbnailRenderHeight),
-            for: .mediaBox
-        )
+        guard let document = pdfManager.document, let page = pdfManager.page(at: pageIndex) else { return }
+
+        // The dragged cell was visible, so its thumbnail is almost always already
+        // cached — reuse it for instant, main-thread-free drag pickup.
+        let revision = pdfManager.thumbnailRevision(for: pageIndex)
+        let key = makeThumbnailCacheKey(documentID: ObjectIdentifier(document), pageIndex: pageIndex, revision: revision)
+        if let cached = ThumbnailImageCache.shared.image(for: key) {
+            dragPreviewImage = cached
+            return
+        }
+
+        // Cold cache (rare): render off the main thread, show the preview when ready.
+        let targetSize = CGSize(width: DesignTokens.thumbnailRenderWidth,
+                                height: DesignTokens.thumbnailRenderHeight)
+        Task {
+            guard let image = await ThumbnailRenderer.shared.render(page: page, size: targetSize, box: .mediaBox) else { return }
+            ThumbnailImageCache.shared.insert(image, for: key)
+            dragPreviewImage = image
+        }
     }
 
     private func clearDragPreview() {
@@ -436,7 +475,6 @@ private struct ThumbnailCellView: View {
 
     @State private var thumbnailImage: NSImage?
     @State private var loadedThumbnailKey: String?
-    @State private var refreshID = UUID()
 
     private var isSelected: Bool { pageIndex == pdfManager.currentPageIndex }
     private var isBookmarked: Bool { bookmarkManager.isBookmarked(pageIndex) }
@@ -469,7 +507,6 @@ private struct ThumbnailCellView: View {
         .task(id: thumbnailLoadID(revision: thumbnailRevision)) {
             await loadThumbnail(revision: thumbnailRevision)
         }
-        .id(refreshID)
     }
 
     // MARK: - Thumbnail with Caching
@@ -498,17 +535,7 @@ private struct ThumbnailCellView: View {
 
     private func thumbnailCacheKey(revision: PageThumbnailRevision) -> String? {
         guard let document = pdfManager.document else { return nil }
-        let documentID = String(describing: ObjectIdentifier(document))
-        let width = Int(DesignTokens.thumbnailRenderWidth)
-        let height = Int(DesignTokens.thumbnailRenderHeight)
-
-        return [
-            documentID,
-            "\(pageIndex)",
-            "\(revision.structureVersion)",
-            "\(revision.pageVersion)",
-            "\(width)x\(height)"
-        ].joined(separator: ":")
+        return makeThumbnailCacheKey(documentID: ObjectIdentifier(document), pageIndex: pageIndex, revision: revision)
     }
 
     @MainActor
@@ -532,19 +559,17 @@ private struct ThumbnailCellView: View {
         thumbnailImage = nil
         loadedThumbnailKey = nil
 
-        await Task.yield()
-        guard !Task.isCancelled,
-              let page = pdfManager.page(at: pageIndex) else {
-            return
-        }
+        guard let page = pdfManager.page(at: pageIndex) else { return }
 
-        let image = page.thumbnail(
-            of: CGSize(width: DesignTokens.thumbnailRenderWidth, height: DesignTokens.thumbnailRenderHeight),
-            for: .mediaBox
-        )
+        // Rasterize off the main thread so sidebar scrolling never blocks on
+        // CoreGraphics. Cells that scroll away cancel this task, so the renderer
+        // skips them before doing the work.
+        let targetSize = CGSize(width: DesignTokens.thumbnailRenderWidth,
+                                height: DesignTokens.thumbnailRenderHeight)
+        let image = await ThumbnailRenderer.shared.render(page: page, size: targetSize, box: .mediaBox)
+
+        guard !Task.isCancelled, let image else { return }
         ThumbnailImageCache.shared.insert(image, for: key)
-
-        guard !Task.isCancelled else { return }
         thumbnailImage = image
         loadedThumbnailKey = key
     }
@@ -563,14 +588,7 @@ private struct ThumbnailCellView: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(Color.primary.opacity(0.78))
                     .padding(4)
-                    .pageFlowLiquidGlassSurface(
-                        cornerRadius: 4,
-                        tint: .light,
-                        tintOpacity: 0.10,
-                        interactive: true,
-                        variant: .clear,
-                        strokeOpacity: 0.12
-                    )
+                    .pageFlowLiquidGlassSurface(.dragHandle)
                 Spacer()
             }
             Spacer()

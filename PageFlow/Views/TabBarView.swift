@@ -104,13 +104,7 @@ struct TabBarView: View {
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(DesignTokens.glassTextPrimary.opacity(0.78))
             .frame(width: 24, height: 24)
-            .pageFlowLiquidGlassSurface(
-                cornerRadius: DesignTokens.tabCornerRadius,
-                tint: .light,
-                tintOpacity: 0.14,
-                variant: .clear,
-                strokeOpacity: 0.22
-            )
+            .pageFlowLiquidGlassSurface(.newTabButton)
             .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 4, y: -2)
             .background(newTabFrameReporter)
     }

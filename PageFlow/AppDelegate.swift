@@ -160,6 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Persist each window's reading position before we quit (views are still live).
+        WindowRegistry.shared.flushAllViewState()
+
         let dirtyEntries = WindowRegistry.shared.allDirtyPDFManagers()
 
         guard let firstDirty = dirtyEntries.first else {

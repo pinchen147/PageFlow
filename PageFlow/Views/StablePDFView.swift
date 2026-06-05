@@ -10,8 +10,14 @@ import AppKit
 
 final class StablePDFView: PDFView {
     private let widthChangeTolerance: CGFloat = 0.5
-    private let scrollRestoreTolerance: CGFloat = 0.5
-    private var pendingScrollRestoreY: CGFloat?
+    /// Reading position (a page + a point on that page) captured before a width
+    /// change and restored after PDFKit reflows. Anchored to a `PDFDestination`, not a
+    /// raw `contentView` scroll offset: when a width change rescales pages (fit-to-width
+    /// / Auto-Scale), a saved absolute Y maps to *different* content afterward, and the
+    /// drift is proportional to the page's depth in the document — so a raw offset gets
+    /// visibly worse on later pages. A destination lands on the same content at any
+    /// depth. (Mirrors the Projector's `restoreScrollPosition`.)
+    private var pendingScrollRestoreDestination: PDFDestination?
     private var pendingScrollRestore: DispatchWorkItem?
     private weak var cachedDocumentScrollView: NSScrollView?
     private weak var configuredScrollView: NSScrollView?
@@ -327,31 +333,31 @@ final class StablePDFView: PDFView {
 
     override func setFrameSize(_ newSize: NSSize) {
         let oldWidth = bounds.width
-        let savedY = documentScrollView?.contentView.bounds.origin.y
+        let savedDestination = currentDestination
         let widthChanged = oldWidth > 0 && abs(oldWidth - newSize.width) > widthChangeTolerance
 
         super.setFrameSize(newSize)
 
-        guard widthChanged, let scrollY = savedY else { return }
-        scheduleVerticalScrollRestore(scrollY)
+        guard widthChanged, let savedDestination else { return }
+        scheduleScrollRestore(to: savedDestination)
     }
 
     override func resize(withOldSuperviewSize oldSize: NSSize) {
         let oldWidth = bounds.width
-        let savedY = documentScrollView?.contentView.bounds.origin.y
+        let savedDestination = currentDestination
 
         super.resize(withOldSuperviewSize: oldSize)
 
         let widthChanged = abs(oldWidth - bounds.width) > widthChangeTolerance
-        guard widthChanged, let scrollY = savedY else { return }
-        scheduleVerticalScrollRestore(scrollY)
+        guard widthChanged, let savedDestination else { return }
+        scheduleScrollRestore(to: savedDestination)
     }
 
     override func viewWillStartLiveResize() {
         super.viewWillStartLiveResize()
         pendingScrollRestore?.cancel()
         pendingScrollRestore = nil
-        pendingScrollRestoreY = documentScrollView?.contentView.bounds.origin.y
+        pendingScrollRestoreDestination = currentDestination
     }
 
     override func viewDidEndLiveResize() {
@@ -359,43 +365,32 @@ final class StablePDFView: PDFView {
         if needsTrackingAreaRefreshAfterLiveResize {
             updateTrackingAreas()
         }
-        flushPendingVerticalScrollRestore()
+        flushPendingScrollRestore()
     }
 
-    private func scheduleVerticalScrollRestore(_ y: CGFloat) {
-        pendingScrollRestoreY = y
+    private func scheduleScrollRestore(to destination: PDFDestination) {
+        pendingScrollRestoreDestination = destination
         guard !inLiveResize else { return }
         guard pendingScrollRestore == nil else { return }
 
         let work = DispatchWorkItem { [weak self] in
-            guard let self, let y = self.pendingScrollRestoreY else { return }
-            self.pendingScrollRestoreY = nil
+            guard let self, let destination = self.pendingScrollRestoreDestination else { return }
+            self.pendingScrollRestoreDestination = nil
             self.pendingScrollRestore = nil
-            self.restoreVerticalScroll(y)
+            self.go(to: destination)
         }
 
         pendingScrollRestore = work
         DispatchQueue.main.async(execute: work)
     }
 
-    private func flushPendingVerticalScrollRestore() {
+    private func flushPendingScrollRestore() {
         pendingScrollRestore?.cancel()
         pendingScrollRestore = nil
 
-        guard let y = pendingScrollRestoreY else { return }
-        pendingScrollRestoreY = nil
-        restoreVerticalScroll(y)
-    }
-
-    private func restoreVerticalScroll(_ y: CGFloat) {
-        guard let scrollView = documentScrollView else { return }
-
-        var origin = scrollView.contentView.bounds.origin
-        guard abs(origin.y - y) > scrollRestoreTolerance else { return }
-
-        origin.y = y
-        scrollView.contentView.scroll(to: origin)
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+        guard let destination = pendingScrollRestoreDestination else { return }
+        pendingScrollRestoreDestination = nil
+        go(to: destination)
     }
 
     var documentScrollView: NSScrollView? {

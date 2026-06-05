@@ -41,13 +41,7 @@ struct TabItemView: View {
         .padding(.vertical, DesignTokens.spacingXS)
         .frame(height: DesignTokens.tabHeight)
         .frame(minWidth: DesignTokens.tabMinWidth, maxWidth: DesignTokens.tabMaxWidth)
-        .pageFlowLiquidGlassSurface(
-            cornerRadius: DesignTokens.tabCornerRadius,
-            tint: .light,
-            tintOpacity: isActive ? 0.22 : 0.14,
-            variant: .clear,
-            strokeOpacity: isActive ? 0.3 : 0.18
-        )
+        .pageFlowLiquidGlassSurface(.tab(active: isActive))
         .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: isActive ? 8 : 4, y: isActive ? -3 : -2)
         .contentShape(Rectangle())
         // Gesture handling moved to TabBarView for unified tap/drag detection

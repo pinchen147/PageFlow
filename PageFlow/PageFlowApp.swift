@@ -303,7 +303,6 @@ struct PageFlowApp: App {
 
         Button("Zoom to Fit") {
             pdfManager?.requestFitOnce()
-            pdfManager?.scaleNeedsUpdate = true
         }
         .keyboardShortcut(for: "zoomToFit")
         .disabled(!hasDocument)
@@ -317,7 +316,6 @@ struct PageFlowApp: App {
                 manager.isAutoScaling = newValue
                 if newValue {
                     manager.requestFitOnce()
-                    manager.scaleNeedsUpdate = true
                 }
             }
         ))

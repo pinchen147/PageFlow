@@ -52,7 +52,7 @@ struct TopChromeView: View {
             HStack(spacing: 0) {
                 if isTopBarVisible {
                     HStack(spacing: 0) {
-                        TrafficLightsView()
+                        trafficLightsReservedSpace
                             .padding(DesignTokens.spacingXS)
 
                         TabBarView(tabManager: tabManager)
@@ -74,6 +74,14 @@ struct TopChromeView: View {
         .frame(maxWidth: .infinity)
         .frame(height: totalHeight)
         .overlay(ChromeHoverSensor(isHovered: $isHoveringChrome))
+        .background(WindowChromeVisibilityReporter(isTrafficLightsVisible: isTopBarVisible))
+    }
+
+    private var trafficLightsReservedSpace: some View {
+        // Reserve leading space so the tab strip clears the native window buttons.
+        Color.clear
+            .frame(width: DesignTokens.trafficLightClusterWidth, height: DesignTokens.trafficLightSize)
+            .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -92,6 +100,43 @@ struct TopChromeView: View {
         } else {
             Color.clear
         }
+    }
+}
+
+private struct WindowChromeVisibilityReporter: NSViewRepresentable {
+    let isTrafficLightsVisible: Bool
+
+    func makeNSView(context: Context) -> WindowChromeVisibilityReporterView {
+        let view = WindowChromeVisibilityReporterView()
+        view.isTrafficLightsVisible = isTrafficLightsVisible
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowChromeVisibilityReporterView, context: Context) {
+        nsView.isTrafficLightsVisible = isTrafficLightsVisible
+    }
+}
+
+private final class WindowChromeVisibilityReporterView: NSView {
+    var isTrafficLightsVisible = false {
+        didSet {
+            applyVisibility()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyVisibility(animated: false)
+    }
+
+    private func applyVisibility(animated: Bool = true) {
+        guard let window else { return }
+        let controller = WindowChromeController.attached(to: window) ?? WindowChromeController.installIfNeeded(on: window)
+        controller.setTrafficLightsVisible(isTrafficLightsVisible, animated: animated)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 

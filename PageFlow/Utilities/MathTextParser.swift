@@ -17,6 +17,11 @@ enum TextSegment: Equatable {
 /// Parser for extracting LaTeX math from comment text
 struct MathTextParser {
 
+    // Compiled once and reused across calls — building these per parse was the
+    // dominant cost when re-rendering comment bubbles that contain math.
+    private static let displayRegex = try? NSRegularExpression(pattern: "\\$\\$(.+?)\\$\\$", options: .dotMatchesLineSeparators)
+    private static let inlineRegex = try? NSRegularExpression(pattern: "\\$([^$]+?)\\$", options: [])
+
     /// Parses text containing LaTeX delimiters into segments.
     /// Returns nil if text contains no math delimiters (optimization for plain text).
     static func parse(_ text: String) -> [TextSegment]? {
@@ -29,7 +34,7 @@ struct MathTextParser {
         var mathRanges: [(range: Range<String.Index>, isDisplay: Bool, content: String)] = []
 
         // Find display math: $$...$$
-        if let displayRegex = try? NSRegularExpression(pattern: "\\$\\$(.+?)\\$\\$", options: .dotMatchesLineSeparators) {
+        if let displayRegex = Self.displayRegex {
             let nsRange = NSRange(text.startIndex..., in: text)
             displayRegex.enumerateMatches(in: text, range: nsRange) { match, _, _ in
                 guard let match = match,
@@ -43,7 +48,7 @@ struct MathTextParser {
         }
 
         // Find inline math: $...$ (but not inside display math regions)
-        if let inlineRegex = try? NSRegularExpression(pattern: "\\$([^$]+?)\\$", options: []) {
+        if let inlineRegex = Self.inlineRegex {
             let nsRange = NSRange(text.startIndex..., in: text)
             inlineRegex.enumerateMatches(in: text, range: nsRange) { match, _, _ in
                 guard let match = match,

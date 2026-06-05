@@ -23,17 +23,27 @@
 - **Bookmarks** — Mark, navigate, and preserve across undo
 - **Tabs & Windows** — Multi-tab, multi-window, per-window undo isolation
 - **Search** — Find text across your documents
+- **Reading Position Memory** — Resume each PDF exactly where you left off — page, scroll, and zoom — across tab switches, reopen, and relaunch
+- **Drag & Drop** — Drop one or many PDFs onto a window to open them as tabs
 - **View Modes** — Single page, continuous, or two-up display
-- **Liquid Glass UI** — Light, readable glass chrome for tabs, toolbar, traffic lights, and sidebars
+- **Liquid Glass UI** — Light, readable glass chrome for the tab bar, toolbar, and sidebars
 - **Always on Top** — Per-window floating, toggled from Settings
 - **Customizable Toolbar** — Resize, pin, and tune to taste
 - **Auto-Updates** — Built-in update checking via Sparkle (direct-download builds)
 - **Privacy First** — Fully offline, no telemetry
 
+## What's New in 1.5
+
+- **Reading position memory** — PageFlow remembers where you left off in every PDF — current page, exact scroll position, and zoom — and restores it across tab switches, close/reopen, and relaunch.
+- **Multi-file drag & drop** — Drop several PDFs onto a window at once and they open in order as tabs; a file already open is focused instead of duplicated.
+- **Faster, smoother scrolling** — Thumbnails now render off the main thread, search is debounced into a single pass per keystroke burst, and zoom quality adapts during interactive zoom — noticeably less jank in large documents.
+- **Steadier long sessions** — Per-tab views, scroll monitors, and PDF page caches are torn down on tab switch, fixing the gradual slowdown during long multi-tab sessions.
+- **Accurate jumps to later pages** — Fixed a position drift when navigating to pages deep in a document.
+
 ## What's New in 1.4
 
-- **Liquid Glass refresh** — tabs, toolbar, traffic lights, sidebars, and controls now use a lighter readable glass treatment.
-- **Hover-reveal chrome** — the traffic lights, tabs, and toolbar can stay out of the way while preserving the native-feeling reveal behavior.
+- **Liquid Glass refresh** — tabs, toolbar, sidebars, and controls now use a lighter readable glass treatment.
+- **Hover-reveal chrome** — the tab bar and toolbar stay out of the way and reveal on hover.
 - **Smoother resizing** — PDF layout settling and stale view cleanup reduce resize lag and prevent delayed work from hitting old views.
 - **More reliable PDF view modes** — display-mode changes now use one synchronization path, so menu changes and PDFKit updates stay in sync.
 - **Cleaner tab architecture** — tab runtime ownership, click targets, sidebar state, and reorder state are split into focused components.
