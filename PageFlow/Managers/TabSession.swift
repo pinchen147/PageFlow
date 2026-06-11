@@ -54,6 +54,14 @@ final class TabSession {
     /// windows; the owning `TabManager` decides which session is presented.
     var pendingUnlock: UnlockRequest?
 
+    /// Snapshot of this tab's page, zoom, and search, captured when the tab is
+    /// switched away from and re-applied when it becomes active again so the
+    /// reused live `PDFView` re-projects to match. It rides with the session on a
+    /// window move (no hand-copy). Distinct from the durable **PDF View State** on
+    /// `pdfManager` and from cross-launch reading-position persistence
+    /// (`DocumentStateStore`): this snapshot is in-memory and per-activation.
+    @ObservationIgnored private(set) var viewSnapshot = ViewSnapshot()
+
     /// Cached undo availability, refreshed from `undoManager`'s notifications so
     /// menu enable/disable stays observable and cheap.
     private(set) var undoAvailability = UndoAvailability()
@@ -73,6 +81,14 @@ final class TabSession {
     struct UndoAvailability: Equatable {
         var canUndo = false
         var canRedo = false
+    }
+
+    /// The page/zoom/search a tab is restored to when it becomes active again.
+    struct ViewSnapshot: Sendable, Equatable {
+        var pageIndex = 0
+        var scaleFactor: CGFloat = 1.0
+        var searchQuery = ""
+        var searchResultIndex = 0
     }
 
     init(id: UUID) {
@@ -110,6 +126,50 @@ final class TabSession {
         undoManager.removeAllActions()
     }
 
+    // MARK: - View Snapshot (tab activation)
+
+    /// Captures the live managers into `viewSnapshot` when the tab is switched
+    /// away from, so it can be restored exactly on re-activation.
+    func captureViewSnapshot() {
+        viewSnapshot = ViewSnapshot(
+            pageIndex: pdfManager.currentPageIndex,
+            scaleFactor: pdfManager.scaleFactor,
+            searchQuery: searchManager.searchQuery,
+            searchResultIndex: searchManager.currentResultIndex
+        )
+    }
+
+    /// Re-applies `viewSnapshot` to the live managers when the tab becomes active,
+    /// forcing the reused `PDFView` to re-project. A no-op without a document.
+    func restoreViewSnapshot() {
+        if pdfManager.hasDocument {
+            pdfManager.goToPage(viewSnapshot.pageIndex)
+            if !pdfManager.isAutoScaling {
+                pdfManager.setZoom(viewSnapshot.scaleFactor)
+            }
+        }
+
+        // Warm tabs keep their SearchManager alive across switches — re-running
+        // the full-document find on every re-activation defeats the instant
+        // switch. Restore only when live state no longer matches the snapshot
+        // (the view was evicted/rebuilt, or the query/results were cleared).
+        if let document = pdfManager.document,
+           !viewSnapshot.searchQuery.isEmpty,
+           searchManager.searchQuery != viewSnapshot.searchQuery || !searchManager.hasResults {
+            searchManager.restoreSearch(
+                viewSnapshot.searchQuery,
+                resultIndex: viewSnapshot.searchResultIndex,
+                in: document
+            )
+        }
+    }
+
+    /// Clears just the search part of the snapshot, leaving page and zoom intact.
+    func clearSearchSnapshot() {
+        viewSnapshot.searchQuery = ""
+        viewSnapshot.searchResultIndex = 0
+    }
+
     // MARK: - Wiring
 
     /// Fans page-structure mutations out to the bookmark and comment managers.
@@ -141,14 +201,12 @@ final class TabSession {
             .NSUndoManagerDidRedoChange
         ]
         undoObservers = names.map { name in
-            NotificationCenter.default.addObserver(
+            // One-turn-deferred availability refresh is fine (see helper doc).
+            NotificationCenter.default.addMainActorObserver(
                 forName: name,
-                object: undoManager,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.refreshUndoAvailability()
-                }
+                object: undoManager
+            ) { [weak self] in
+                self?.refreshUndoAvailability()
             }
         }
         refreshUndoAvailability()

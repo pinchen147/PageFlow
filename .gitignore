@@ -36,3 +36,7 @@ references/
 bcc-*.txt
 email-body.txt
 listofdownloads.csv
+
+# Release artifacts (DMGs, Organizer exports)
+dist/
+PageFlow 20*/

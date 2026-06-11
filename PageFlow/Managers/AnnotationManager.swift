@@ -140,9 +140,7 @@ final class AnnotationManager {
         registerUndoAdd(annotation, on: page, actionName: actionName)
 
         selectedAnnotation = annotation
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        pdfManager?.markThumbnailDirty(for: page)
+        pdfManager?.noteVisibleEdit(on: page)
     }
 
     func removeSelectedAnnotation() {
@@ -177,11 +175,7 @@ final class AnnotationManager {
         } else if annotation.markupType == .highlight {
             highlightColor = color
         }
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        if let page = annotation.page {
-            pdfManager?.markThumbnailDirty(for: page)
-        }
+        pdfManager?.noteVisibleEdit(on: annotation.page)
 
         if let undoManager = getUndoManager(for: "Change Annotation Color") {
             undoManager.registerUndo(withTarget: self) { [weak annotation] target in
@@ -197,11 +191,7 @@ final class AnnotationManager {
     private func restoreAnnotationColor(_ annotation: PDFAnnotation, to color: NSColor) {
         let currentColor = annotation.color
         annotation.color = color
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        if let page = annotation.page {
-            pdfManager?.markThumbnailDirty(for: page)
-        }
+        pdfManager?.noteVisibleEdit(on: annotation.page)
 
         if let undoManager = getUndoManager(for: "Change Annotation Color") {
             undoManager.registerUndo(withTarget: self) { [weak annotation] target in
@@ -249,9 +239,7 @@ final class AnnotationManager {
 
     private func reAdd(_ annotation: PDFAnnotation, to page: PDFPage) {
         page.addAnnotation(annotation)
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        pdfManager?.markThumbnailDirty(for: page)
+        pdfManager?.noteVisibleEdit(on: page)
 
         // Register undo to enable infinite undo/redo cycle
         if let undoManager = getUndoManager(for: "Add Annotation") {

@@ -2,7 +2,8 @@
 //  FloatingToolbar.swift
 //  PageFlow
 //
-//  Floating glassmorphism toolbar with collapse functionality
+//  Floating Liquid Glass toolbar: document, zoom, annotation, and
+//  page-navigation controls.
 //
 
 import SwiftUI
@@ -24,16 +25,12 @@ struct FloatingToolbar: View {
     }
 
     var body: some View {
-        expandedContainer
+        toolbarContent
+            .pageFlowLiquidGlassPanel(.toolbar)
             .frame(height: toolbarMetrics.containerHeight)
     }
 
-    private var expandedContainer: some View {
-        expandedToolbar
-            .pageFlowLiquidGlassPanel(.toolbar)
-    }
-
-    private var expandedToolbar: some View {
+    private var toolbarContent: some View {
         HStack(spacing: DesignTokens.spacingXS) {
             toolbarButton(icon: "doc", action: onOpenFilePicker)
             Divider().frame(height: 16)

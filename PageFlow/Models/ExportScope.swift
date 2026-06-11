@@ -9,7 +9,7 @@ import PDFKit
 
 enum ExportScope {
     case currentPage(Int)
-    case outlineSection(OutlineItem, [OutlineItem])
+    case outlineSection(OutlineItem)
     case entireDocument
 
     func pageIndices(in document: PDFDocument) -> Range<Int> {
@@ -21,8 +21,8 @@ enum ExportScope {
             let clamped = index.clamped(to: 0..<pageCount)
             return clamped..<(clamped + 1)
 
-        case .outlineSection(let item, let siblings):
-            return item.pageRange(in: document, siblings: siblings)
+        case .outlineSection(let item):
+            return item.pageRange(in: document)
 
         case .entireDocument:
             return 0..<pageCount

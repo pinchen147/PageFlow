@@ -9,9 +9,8 @@ import SwiftUI
 import AppKit
 
 struct GeneralSettingsTab: View {
-    @State private var updateManager = UpdateManager()
+    @Environment(UpdateManager.self) private var updateManager
     @State private var settingsManager = SettingsManager.shared
-    @State private var autoCheckEnabled = false
     @State private var showingNoUpdatesAlert = false
     @State private var frontmostTab: TabManager?
 
@@ -52,10 +51,19 @@ struct GeneralSettingsTab: View {
             }
 
             Section {
-                Toggle("Check for updates automatically", isOn: $autoCheckEnabled)
-                    .onChange(of: autoCheckEnabled) { _, newValue in
-                        updateManager.automaticallyChecksForUpdates = newValue
-                    }
+                if updateManager.isSparkleEnabled {
+                    // Bind straight to the shared updater. Sparkle persists this in
+                    // the app's UserDefaults itself, so there is no separate local
+                    // @State to fall out of sync — the previous code mirrored it into
+                    // an @State that reset to false whenever this tab was re-created
+                    // (e.g. switching Settings tabs), which is why it "turned off by
+                    // itself." Hidden entirely when Sparkle isn't compiled in, so the
+                    // toggle can never be a no-op that silently reverts.
+                    Toggle("Check for updates automatically", isOn: Binding(
+                        get: { updateManager.automaticallyChecksForUpdates },
+                        set: { updateManager.automaticallyChecksForUpdates = $0 }
+                    ))
+                }
 
                 HStack {
                     Spacer()
@@ -137,7 +145,6 @@ struct GeneralSettingsTab: View {
         .formStyle(.grouped)
         .padding()
         .onAppear {
-            autoCheckEnabled = updateManager.automaticallyChecksForUpdates
             frontmostTab = WindowRegistry.shared.frontmostTabManager()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeMainNotification)) { _ in

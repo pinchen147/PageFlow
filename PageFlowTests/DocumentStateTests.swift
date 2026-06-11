@@ -13,7 +13,7 @@ struct DocumentStateTests {
     @Test
     func pdfViewHostFreezesPDFLayoutDuringLiveResize() {
         let pdfView = StablePDFView()
-        pdfView.document = makeDocument(pageCount: 1)
+        pdfView.document = makeTestDocument(pageCount: 1)
 
         let host = PDFViewHost(pdfView: pdfView)
         #expect(host.preservesContentDuringLiveResize)
@@ -122,7 +122,7 @@ struct DocumentStateTests {
         let bookmarkManager = BookmarkManager()
         let undoManager = UndoManager()
 
-        pdfManager.document = makeDocument(pageCount: 5)
+        pdfManager.document = makeTestDocument(pageCount: 5)
         pdfManager.documentURL = originalURL
         bookmarkManager.configure(pdfManager: pdfManager) { undoManager }
         bookmarkManager.addBookmark(at: 2)
@@ -144,8 +144,8 @@ struct DocumentStateTests {
 
         let existingURL = tempDirectory.appendingPathComponent("existing.pdf")
         let lockedURL = tempDirectory.appendingPathComponent("locked.pdf")
-        writeDocument(makeDocument(pageCount: 1), to: existingURL)
-        writePasswordProtectedDocument(makeDocument(pageCount: 1), to: lockedURL, password: "secret")
+        writeDocument(makeTestDocument(pageCount: 1), to: existingURL)
+        writePasswordProtectedDocument(makeTestDocument(pageCount: 1), to: lockedURL, password: "secret")
 
         let tabManager = TabManager()
         let originalTabID = tabManager.tabs[0].id
@@ -174,7 +174,7 @@ struct DocumentStateTests {
         defer { try? FileManager.default.removeItem(at: tempDirectory) }
 
         let lockedURL = tempDirectory.appendingPathComponent("locked.pdf")
-        writePasswordProtectedDocument(makeDocument(pageCount: 1), to: lockedURL, password: "secret")
+        writePasswordProtectedDocument(makeTestDocument(pageCount: 1), to: lockedURL, password: "secret")
 
         let pdfManager = PDFManager()
         let result = pdfManager.loadDocument(from: lockedURL)
@@ -208,7 +208,7 @@ struct DocumentStateTests {
 
         let originalURL = tempDirectory.appendingPathComponent("original.pdf")
         let movedURL = tempDirectory.appendingPathComponent("moved.pdf")
-        writeDocument(makeDocument(pageCount: 1), to: originalURL)
+        writeDocument(makeTestDocument(pageCount: 1), to: originalURL)
 
         let bookmarkData = try originalURL.bookmarkData(
             options: [.withSecurityScope],
@@ -270,7 +270,7 @@ struct DocumentStateTests {
 
     @Test
     func commentManagerReconcilesAfterPageStructureChanges() {
-        let document = makeDocument(pageCount: 3)
+        let document = makeTestDocument(pageCount: 3)
         let pdfManager = PDFManager()
         let commentManager = CommentManager()
         let undoManager = UndoManager()
@@ -303,7 +303,7 @@ struct DocumentStateTests {
 
     @Test
     func pdfManagerKeepsCurrentPageStableWhenPagesChangeBeforeIt() {
-        let document = makeDocument(pageCount: 4)
+        let document = makeTestDocument(pageCount: 4)
         let pdfManager = PDFManager()
         let undoManager = UndoManager()
 
@@ -317,25 +317,6 @@ struct DocumentStateTests {
 
         pdfManager.deletePage(at: 1)
         #expect(pdfManager.currentPageIndex == 3)
-    }
-
-    private func makeDocument(pageCount: Int) -> PDFDocument {
-        let document = PDFDocument()
-
-        for index in 0..<pageCount {
-            let image = NSImage(size: NSSize(width: 32, height: 32))
-            image.lockFocus()
-            NSColor.white.setFill()
-            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 32, height: 32)).fill()
-            image.unlockFocus()
-
-            guard let page = PDFPage(image: image) else {
-                fatalError("Failed to create PDF page from test image.")
-            }
-            document.insert(page, at: index)
-        }
-
-        return document
     }
 
     private func writeDocument(_ document: PDFDocument, to url: URL) {

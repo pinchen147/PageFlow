@@ -123,32 +123,15 @@ struct SidebarView: View {
     }
 
     private func copySectionAsMarkdown(_ item: OutlineItem) {
-        guard let document = pdfManager.document,
-              let siblings = siblings(for: item, within: items) else { return }
+        guard let document = pdfManager.document else { return }
 
         let markdown = MarkdownExporter.export(
-            scope: .outlineSection(item, siblings),
+            scope: .outlineSection(item),
             document: document
         )
 
         guard !markdown.isEmpty else { return }
         MarkdownExporter.copyToClipboard(markdown)
-    }
-
-    private func siblings(for target: OutlineItem, within candidates: [OutlineItem]) -> [OutlineItem]? {
-        if candidates.contains(where: { $0.id == target.id }) {
-            return candidates
-        }
-
-        for candidate in candidates {
-            guard let children = candidate.children,
-                  let nestedSiblings = siblings(for: target, within: children) else {
-                continue
-            }
-            return nestedSiblings
-        }
-
-        return nil
     }
 
     // MARK: - Bookmarks View

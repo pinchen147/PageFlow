@@ -30,6 +30,13 @@ final class CommentManager {
     var selectedCommentID: UUID?
     var editingCommentID: UUID?
 
+    /// Comments in sidebar display order (creation time). Lives here so the
+    /// display rule is testable through the manager's interface — same pattern
+    /// as `BookmarkManager.sortedBookmarks`.
+    var sortedComments: [CommentModel] {
+        comments.sorted { $0.createdAt < $1.createdAt }
+    }
+
     private weak var pdfManager: PDFManager?
     private var selectionProvider: (() -> (PDFSelection?, PDFPage?))?
     private var undoManagerProvider: (() -> UndoManager?)?
@@ -91,9 +98,7 @@ final class CommentManager {
         highlights[commentID] = highlight
         selectedCommentID = commentID
         editingCommentID = commentID
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        pdfManager?.markThumbnailDirty(for: page)
+        pdfManager?.noteVisibleEdit(on: page)
 
         registerUndoAdd(model, highlight: highlight, page: page)
         return commentID
@@ -131,11 +136,7 @@ final class CommentManager {
 
         if selectedCommentID == id { selectedCommentID = nil }
         if editingCommentID == id { editingCommentID = nil }
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        if let page {
-            pdfManager?.markThumbnailDirty(for: page)
-        }
+        pdfManager?.noteVisibleEdit(on: page)
 
         if let page {
             registerUndoDelete(comment, highlight: highlight, page: page)
@@ -151,7 +152,19 @@ final class CommentManager {
             return
         }
 
-        pdfManager?.goToPage(comment.pageIndex)
+        // Jump to the comment's location on its page, not just the page top.
+        if let highlight = highlights[id], let page = highlight.page {
+            let pageBounds = page.bounds(for: .mediaBox)
+            let bounds = highlight.bounds
+            // A little headroom above the highlight so it isn't flush to the top edge.
+            let y = min(bounds.maxY + DesignTokens.spacingLG, pageBounds.maxY)
+            // Use the highlight's own x (not the page's left edge) so a right-side
+            // comment stays on screen when the page is wider than the viewport (zoom).
+            let destination = PDFDestination(page: page, at: CGPoint(x: bounds.minX, y: y))
+            pdfManager?.goToDestination(destination)
+        } else {
+            pdfManager?.goToPage(comment.pageIndex)
+        }
     }
 
     func selectAnnotation(_ annotation: PDFAnnotation) -> Bool {
@@ -181,11 +194,7 @@ final class CommentManager {
         guard previousColor != color else { return }
 
         highlight.color = color
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        if let page = highlight.page {
-            pdfManager?.markThumbnailDirty(for: page)
-        }
+        pdfManager?.noteVisibleEdit(on: highlight.page)
 
         if let undoManager = getUndoManager(for: "Change Comment Color") {
             undoManager.registerUndo(withTarget: self) { target in
@@ -440,9 +449,7 @@ final class CommentManager {
         highlights.removeValue(forKey: comment.id)
         if selectedCommentID == comment.id { selectedCommentID = nil }
         if editingCommentID == comment.id { editingCommentID = nil }
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        pdfManager?.markThumbnailDirty(for: page)
+        pdfManager?.noteVisibleEdit(on: page)
 
         guard let undoManager = getUndoManager(for: "Add Comment") else { return }
         undoManager.registerUndo(withTarget: self) { [highlight, page] target in
@@ -458,9 +465,7 @@ final class CommentManager {
         highlight.contents = comment.text
         comments.append(comment)
         highlights[comment.id] = highlight
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        pdfManager?.markThumbnailDirty(for: page)
+        pdfManager?.noteVisibleEdit(on: page)
 
         registerUndoAdd(comment, highlight: highlight, page: page)
     }
@@ -481,9 +486,7 @@ final class CommentManager {
         highlight.contents = comment.text
         comments.append(comment)
         highlights[comment.id] = highlight
-        pdfManager?.isDirty = true
-        pdfManager?.pageVersion += 1
-        pdfManager?.markThumbnailDirty(for: page)
+        pdfManager?.noteVisibleEdit(on: page)
 
         guard let undoManager = getUndoManager(for: "Delete Comment") else { return }
         undoManager.registerUndo(withTarget: self) { target in

@@ -48,15 +48,13 @@ final class WindowRegistry {
         }
 
         if let window {
-            let token = NotificationCenter.default.addObserver(
+            // One-turn-deferred front-most tracking is harmless (see helper doc).
+            let token = NotificationCenter.default.addMainActorObserver(
                 forName: NSWindow.didBecomeMainNotification,
-                object: window,
-                queue: .main
-            ) { [weak self, weak tabManager] _ in
-                MainActor.assumeIsolated {
-                    guard let self, let tabManager else { return }
-                    self.lastActiveTabManager = tabManager
-                }
+                object: window
+            ) { [weak self, weak tabManager] in
+                guard let self, let tabManager else { return }
+                self.lastActiveTabManager = tabManager
             }
             mainWindowObservers[ObjectIdentifier(tabManager)] = token
         }
@@ -65,7 +63,7 @@ final class WindowRegistry {
 
         // Deliver any URLs buffered during cold launch (before this TabManager existed).
         Task { @MainActor in
-            guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
+            guard let appDelegate = AppDelegate.shared else { return }
             appDelegate.flushPendingURLs(to: tabManager)
         }
     }
@@ -101,7 +99,7 @@ final class WindowRegistry {
     /// after Settings or another panel has stolen `keyWindow`/`mainWindow`.
     func frontmostTabManager() -> TabManager? {
         let tracked = lastActiveTabManager
-        let values = Array(entries.values).filter { $0.window != nil }
+        let values = entries.values.filter { $0.window != nil }
 
         if let tracked, values.contains(where: { $0.tabManager === tracked }) {
             return tracked
@@ -125,7 +123,7 @@ final class WindowRegistry {
 
     /// Any registered TabManager — used by Finder open routing.
     func anyTabManager() -> TabManager? {
-        let values = Array(entries.values).filter { $0.window != nil }
+        let values = entries.values.filter { $0.window != nil }
         return preferredEntry(from: values)?.tabManager
     }
 

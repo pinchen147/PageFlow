@@ -232,28 +232,39 @@ struct ThumbnailGridView: View {
     // Autoscroll
     @State private var autoScrollManager = AutoScrollManager()
 
+    // Keep-visible rail follow: the page indices currently visible in the rail
+    // (reported by the per-cell VisibilityReporter), used to decide when the current
+    // page has reached the edge and the rail should reposition with headroom.
+    @State private var visiblePages: Set<Int> = []
+
     var body: some View {
         ScrollViewReader { proxy in
             GeometryReader { geo in
                 ScrollView {
                     LazyVStack(spacing: DesignTokens.spacingSM) {
-                        ForEach(Array(0..<pdfManager.pageCount), id: \.self) { index in
+                        ForEach(0..<pdfManager.pageCount, id: \.self) { index in
                             let displayIndex = reorderState.visualIndex(for: index)
 
+                            // Read currentPageIndex once here (in the parent) and pass
+                            // selection down as a plain Bool. Otherwise every visible
+                            // cell observes currentPageIndex and re-renders on every
+                            // tick while the user scrolls the PDF — the main cause of
+                            // sidebar-open scroll lag.
                             ThumbnailCellView(
                                 pdfManager: pdfManager,
                                 bookmarkManager: bookmarkManager,
                                 pageIndex: displayIndex,
                                 displayNumber: index + 1,
+                                isSelected: displayIndex == pdfManager.currentPageIndex,
                                 isEditing: isEditing,
                                 isDragging: reorderState.isDraggingPlaceholder(at: index)
                             )
                             .id("page-\(index)")
                             .background {
-                                if isEditing, reorderState.isActive {
-                                    // PreferenceKey-based visibility tracking survives SwiftUI view recreation.
-                                    VisibilityReporter(index: index, viewportHeight: geo.size.height)
-                                }
+                                // Always-on visibility tracking: drives keep-visible rail
+                                // follow while reading and edge autoscroll during drag.
+                                // PreferenceKey-based, so it survives view recreation.
+                                VisibilityReporter(index: index, viewportHeight: geo.size.height)
                             }
                             .modifier(DragDropModifier(
                                 index: index,
@@ -274,6 +285,7 @@ struct ThumbnailGridView: View {
                 }
                 .coordinateSpace(name: "thumbnailScrollView")
                 .onPreferenceChange(VisibleIndicesPreferenceKey.self) { indices in
+                    visiblePages = indices
                     autoScrollManager.visibleIndices = reorderState.isActive ? indices : []
                 }
                 .onAppear {
@@ -284,17 +296,15 @@ struct ThumbnailGridView: View {
                     autoScrollManager.viewportHeight = newSize.height
                 }
             }
-            .onChange(of: pdfManager.currentPageIndex) { _, newIndex in
-                withAnimation {
-                    proxy.scrollTo("page-\(newIndex)", anchor: .center)
-                }
-            }
             .onChange(of: pdfManager.pageCount) { _, newCount in
                 autoScrollManager.pageCount = newCount
             }
             .onAppear {
                 resetDragState()
                 proxy.scrollTo("page-\(pdfManager.currentPageIndex)", anchor: .center)
+            }
+            .onChange(of: pdfManager.currentPageIndex) { oldIndex, newIndex in
+                keepCurrentPageVisible(from: oldIndex, to: newIndex, proxy: proxy)
             }
             .onChange(of: isEditing) { _, editing in
                 if !editing {
@@ -323,6 +333,23 @@ struct ThumbnailGridView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Keep-Visible Rail Follow
+
+    /// Repositions the rail only when the current page has reached/passed the visible
+    /// edge, bringing it back with headroom in the scroll direction so the rail then
+    /// sits still for many pages — Apple Preview's model. No-op while the page is
+    /// comfortably in view. Instant (no animation): an animated scroll is deferred
+    /// during the PDF scroll gesture's event-tracking run loop, which would make the
+    /// rail lag the document.
+    private func keepCurrentPageVisible(from oldIndex: Int, to newIndex: Int, proxy: ScrollViewProxy) {
+        // During a reorder drag, cell ids (position-space) and page indices
+        // diverge — a follow would scroll to the wrong cell. The rail catches
+        // up on the next page change after the drop.
+        guard !reorderState.isActive else { return }
+        guard let move = RailFollow.move(from: oldIndex, to: newIndex, visiblePages: visiblePages) else { return }
+        proxy.scrollTo("page-\(move.pageIndex)", anchor: move.anchor)
     }
 
     // MARK: - Drag Preview
@@ -470,13 +497,13 @@ private struct ThumbnailCellView: View {
     let bookmarkManager: BookmarkManager
     let pageIndex: Int      // Actual page in PDFDocument
     let displayNumber: Int  // Number shown to user (1-based position)
+    let isSelected: Bool    // Computed by the parent so the cell never observes currentPageIndex
     let isEditing: Bool
     let isDragging: Bool
 
     @State private var thumbnailImage: NSImage?
     @State private var loadedThumbnailKey: String?
 
-    private var isSelected: Bool { pageIndex == pdfManager.currentPageIndex }
     private var isBookmarked: Bool { bookmarkManager.isBookmarked(pageIndex) }
 
     var body: some View {
@@ -518,10 +545,14 @@ private struct ThumbnailCellView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
             } else {
-                Color.gray.opacity(0.1)
+                Color.clear
             }
         }
         .frame(width: DesignTokens.thumbnailWidth, height: DesignTokens.thumbnailHeight)
+        // Fill the cell (and the letterbox bars when the page isn't A4) with the same
+        // content-card surface as the comment bubbles, so a non-A4 page sits on a card
+        // rather than showing the dark viewer/glass behind it.
+        .background(DesignTokens.contentCardSurface)
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.thumbnailCornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: DesignTokens.thumbnailCornerRadius)

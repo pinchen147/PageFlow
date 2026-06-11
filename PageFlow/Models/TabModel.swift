@@ -7,17 +7,14 @@
 
 import Foundation
 
-struct TabModel: Identifiable, Codable {
+struct TabModel: Identifiable {
     let id: UUID
     var documentURL: URL?
     var title: String
     var isSecurityScoped: Bool
 
-    // Per-tab state for restoration
-    var savedPageIndex: Int
-    var savedScaleFactor: CGFloat
-    var savedSearchQuery: String
-    var savedSearchResultIndex: Int
+    // Per-tab view state for restoration (page, zoom, search) lives on the tab's
+    // TabSession (`viewSnapshot`), so it travels intact when a tab moves windows.
 
     var displayTitle: String {
         if let url = documentURL {
@@ -40,9 +37,5 @@ struct TabModel: Identifiable, Codable {
         self.documentURL = documentURL
         self.title = title
         self.isSecurityScoped = isSecurityScoped
-        self.savedPageIndex = 0
-        self.savedScaleFactor = 1.0
-        self.savedSearchQuery = ""
-        self.savedSearchResultIndex = 0
     }
 }

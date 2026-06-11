@@ -50,17 +50,20 @@ struct TopChromeView: View {
                 .frame(maxWidth: .infinity)
 
             HStack(spacing: 0) {
-                if isTopBarVisible {
-                    HStack(spacing: 0) {
-                        trafficLightsReservedSpace
-                            .padding(DesignTokens.spacingXS)
+                // The tab bar stays mounted while hidden — reveal is an opacity
+                // flip, not a subtree rebuild, so hover doesn't hitch and the
+                // bar's scroll position survives. `isInteractive` unmounts its
+                // AppKit overlays (mouse routing, window-drag), keeping the
+                // hidden strip hit-test-transparent.
+                HStack(spacing: 0) {
+                    trafficLightsReservedSpace
+                        .padding(DesignTokens.spacingXS)
 
-                        TabBarView(tabManager: tabManager)
-                    }
-                    .frame(maxWidth: .infinity)
-                } else {
-                    Spacer(minLength: 0)
+                    TabBarView(tabManager: tabManager, isInteractive: isTopBarVisible)
                 }
+                .frame(maxWidth: .infinity)
+                .opacity(isTopBarVisible ? 1 : 0)
+                .allowsHitTesting(isTopBarVisible)
 
                 if isFloatingToolbarVisible {
                     activeFloatingToolbar

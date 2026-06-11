@@ -39,7 +39,21 @@ final class TabManager {
     // MARK: - Properties
 
     var tabs: [TabModel] = []
-    var activeTabID: UUID?
+    var activeTabID: UUID? {
+        didSet { touchRenderedTab(activeTabID) }
+    }
+
+    /// Tab ids whose views are kept warm so switching back is an instant show, not
+    /// a rebuild — most-recently-active first, the active tab always at the head.
+    /// Capped at `maxRenderedTabs`: beyond that the least-recently-active tab's
+    /// view is torn down and rebuilt on next visit (Safari/Preview-style). The cap
+    /// bounds both memory and the window-wide event monitors that would otherwise
+    /// accumulate across a long multi-tab session.
+    private(set) var renderedTabIDs: [UUID] = []
+
+    /// Internal (not private) so tests assert against the real cap instead of
+    /// mirroring the literal.
+    static let maxRenderedTabs = 4
 
     /// Whether this window floats above other apps. Scoped per-window, not persisted.
     var isAlwaysOnTop: Bool = false
@@ -120,6 +134,37 @@ final class TabManager {
 
     var activeRuntime: TabRuntime? {
         activeSession.map(runtime)
+    }
+
+    /// The runtimes this window keeps mounted, active-first. Filters out any id
+    /// whose session is already gone, so a just-closed tab drops out immediately
+    /// even before its id is pruned from `renderedTabIDs`.
+    var renderedRuntimes: [TabRuntime] {
+        renderedTabIDs.compactMap { sessions[$0].map(runtime) }
+    }
+
+    /// Promotes `id` to the warm set's head and evicts past the cap. Called when
+    /// the active tab changes; a tab only enters the warm set by becoming active.
+    private func touchRenderedTab(_ id: UUID?) {
+        guard let id else { return }
+        renderedTabIDs.removeAll { $0 == id }
+        renderedTabIDs.insert(id, at: 0)
+        if renderedTabIDs.count > Self.maxRenderedTabs {
+            // Re-arm each evicted tab's exact-scroll restore while its live view
+            // still exists. The switch-away one-shot was already consumed by the
+            // warm (still-mounted) view; without re-arming, the evicted tab's
+            // rebuilt view falls back to scroll-to-top and then persists that
+            // wrong position over the user's real one.
+            for evictedID in renderedTabIDs[Self.maxRenderedTabs...] {
+                _ = sessions[evictedID]?.pdfManager.captureViewState()
+            }
+            renderedTabIDs.removeLast(renderedTabIDs.count - Self.maxRenderedTabs)
+        }
+    }
+
+    /// Drops a closed/torn-off tab from the warm set so its view tears down.
+    private func dropRenderedTab(_ id: UUID) {
+        renderedTabIDs.removeAll { $0 == id }
     }
 
     var activeUndoManager: UndoManager? { activeSession?.undoManager }
@@ -236,6 +281,9 @@ final class TabManager {
 
     /// Opens NSOpenPanel as a sheet on the key window — waits for window readiness.
     func openFilePicker() {
+        // Test host: an NSOpenPanel here blocks the main actor that all
+        // @MainActor tests need, stalling the suite (see TestEnvironment).
+        guard !TestEnvironment.isRunningTests else { return }
         // Prevent duplicate panels (concurrent onAppear calls, retry chains, etc.)
         guard openPanel == nil else { return }
 
@@ -482,7 +530,7 @@ final class TabManager {
         // with it → hand to the AppDelegate, which creates and shows a window
         // hosting that TabManager. No async callback, no placeholder dance —
         // if the window opens, the tab is already in it.
-        guard let appDelegate = NSApp.delegate as? AppDelegate,
+        guard let appDelegate = AppDelegate.shared,
               let detachedTab = detachTab(tabID) else {
             return false
         }
@@ -752,11 +800,7 @@ final class TabManager {
     func clearAllSearchState() {
         for session in sessions.values {
             session.searchManager.clearSearch()
-        }
-
-        for index in tabs.indices {
-            tabs[index].savedSearchQuery = ""
-            tabs[index].savedSearchResultIndex = 0
+            session.clearSearchSnapshot()
         }
     }
 
@@ -782,22 +826,14 @@ final class TabManager {
     }
 
     private func clearSearchState(for tabID: UUID) {
-        sessions[tabID]?.searchManager.clearSearch()
-
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
-        tabs[index].savedSearchQuery = ""
-        tabs[index].savedSearchResultIndex = 0
+        guard let session = sessions[tabID] else { return }
+        session.searchManager.clearSearch()
+        session.clearSearchSnapshot()
     }
 
     private func saveCurrentTabState() {
-        guard let id = activeTabID,
-              let index = tabs.firstIndex(where: { $0.id == id }),
-              let session = sessions[id] else { return }
-
-        tabs[index].savedPageIndex = session.pdfManager.currentPageIndex
-        tabs[index].savedScaleFactor = session.pdfManager.scaleFactor
-        tabs[index].savedSearchQuery = session.searchManager.searchQuery
-        tabs[index].savedSearchResultIndex = session.searchManager.currentResultIndex
+        guard let id = activeTabID, let session = sessions[id] else { return }
+        session.captureViewSnapshot()
         persistViewState(for: session.pdfManager)
     }
 
@@ -839,27 +875,7 @@ final class TabManager {
     }
 
     private func restoreTabState(_ tabID: UUID) {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }),
-              let session = sessions[tabID] else { return }
-
-        let tab = tabs[index]
-        let pdfManager = session.pdfManager
-
-        if pdfManager.hasDocument {
-            pdfManager.goToPage(tab.savedPageIndex)
-            if !pdfManager.isAutoScaling {
-                pdfManager.setZoom(tab.savedScaleFactor)
-            }
-        }
-
-        if let document = pdfManager.document,
-           !tab.savedSearchQuery.isEmpty {
-            session.searchManager.restoreSearch(
-                tab.savedSearchQuery,
-                resultIndex: tab.savedSearchResultIndex,
-                in: document
-            )
-        }
+        sessions[tabID]?.restoreViewSnapshot()
     }
 
     // MARK: - Dirty State
@@ -969,6 +985,7 @@ final class TabManager {
         // pending unlock — travels intact. Only this window's presentation order
         // is released; the session's undo observers are NOT torn down.
         unlockQueue.removeAll { $0 == tabID }
+        dropRenderedTab(tabID)
         tabs.remove(at: index)
         sessions.removeValue(forKey: tabID)
 
@@ -1024,6 +1041,7 @@ final class TabManager {
     private func closeSession(for tabID: UUID) {
         sessions.removeValue(forKey: tabID)?.cleanup()
         unlockQueue.removeAll { $0 == tabID }
+        dropRenderedTab(tabID)
     }
 
     // MARK: - Edit Mode Keyboard Monitor

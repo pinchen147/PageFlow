@@ -268,12 +268,18 @@ final class TabDragController {
             // No target and we never crossed the threshold — snap back.
             return
         }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-            if resolution.tabManager === host {
+        if resolution.tabManager === host {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
                 host.commitTabReorder(drag.tabID, toIndex: resolution.index)
-            } else {
-                _ = host.moveTab(drag.tabID, to: resolution.tabManager, at: resolution.index)
             }
+        } else {
+            // Not animated: a cross-window move does session detach/attach,
+            // state persistence, and a view-state restore — wrapping all of
+            // that in withAnimation animates every observable mutation in the
+            // pass (the destination's PDF view included), which reads as a
+            // hitch on drop. The destination bar's insertion gap has already
+            // previewed the landing slot.
+            _ = host.moveTab(drag.tabID, to: resolution.tabManager, at: resolution.index)
         }
     }
 
@@ -305,7 +311,7 @@ final class TabDragController {
     // MARK: - Tear Off
 
     private func tearOff(at screenPoint: CGPoint, drag: ActiveDrag, host: TabManager) {
-        guard let appDelegate = NSApp.delegate as? AppDelegate else { return }
+        guard let appDelegate = AppDelegate.shared else { return }
 
         let frameSize = hostWindowFrameSize == .zero
             ? NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight)
@@ -338,6 +344,9 @@ final class TabDragController {
         }
 
         guard let newWindow = appDelegate.createNewWindow(with: newTabManager, frame: frame) else {
+            // Window creation failed — put the tab back where it came from so
+            // it (and any unsaved edits) can't strand in an unanchored manager.
+            _ = newTabManager.moveTab(drag.tabID, to: host, at: 0)
             return
         }
         newWindow.collectionBehavior.insert(.canJoinAllSpaces)
@@ -553,14 +562,11 @@ final class TabDragController {
             }
         }
         if resignActiveObserver == nil {
-            resignActiveObserver = NotificationCenter.default.addObserver(
-                forName: NSApplication.willResignActiveNotification,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    self?.cancelDrag()
-                }
+            // Cancelling the drag one turn later is fine (see helper doc).
+            resignActiveObserver = NotificationCenter.default.addMainActorObserver(
+                forName: NSApplication.willResignActiveNotification
+            ) { [weak self] in
+                self?.cancelDrag()
             }
         }
     }

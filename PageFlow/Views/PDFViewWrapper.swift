@@ -78,8 +78,6 @@ struct PDFViewWrapper: NSViewRepresentable {
             annotationManager?.selectedAnnotation = nil
         }
 
-        pdfView.setupRightClickMonitor()
-
         pdfView.onAnnotationRemove = { [weak pdfView, weak annotationManager, weak commentManager] annotation in
             // Route through the appropriate manager's undo system
             if let commentManager = commentManager,
@@ -170,6 +168,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         // Lets persistence read the live scroll position (page + point) on demand.
         pdfManager.liveDestinationProvider = { [weak pdfView] in pdfView?.currentDestination }
+        pdfManager.liveDestinationProviderOwner = ObjectIdentifier(context.coordinator)
 
         annotationManager.configure(
             pdfManager: pdfManager,
@@ -222,13 +221,24 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
 
-        context.coordinator.setupScrollMonitor(for: pdfView)
+        // The window-wide scroll-zoom and right-click monitors are installed by
+        // `setActive` in updateNSView, so kept-warm inactive tabs hold none — only
+        // the active tab does. (PDFKit notification observers above are scoped to
+        // this pdfView object, so they stay regardless.)
     }
 
     func updateNSView(_ hostView: PDFViewHost, context: Context) {
+        // Hidden, not just transparent: AppKit skips hidden views for BOTH
+        // hit-testing and layout/draw, so an inactive warm tab can't receive
+        // events through an empty active tab, and live resize doesn't lay out
+        // the whole warm set. (SwiftUI's opacity(0)/allowsHitTesting(false)
+        // don't reach AppKit-backed views.)
+        let shouldHide = !isActive
+        if hostView.isHidden != shouldHide { hostView.isHidden = shouldHide }
+
         let pdfView = hostView.pdfView
         let coordinator = context.coordinator
-        coordinator.isActive = isActive
+        coordinator.setActive(isActive, pdfView: pdfView)
 
         // Structural: load/replace the document and its markup.
         let documentDidChange = pdfView.document !== pdfManager.document
@@ -312,6 +322,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             object: pdfView
         )
         coordinator.removeScrollMonitor()
+        pdfView.removeRightClickMonitor()
 
         // Clear all callbacks to prevent any lingering references
         pdfView.onAnnotationClick = nil
@@ -326,7 +337,14 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.onToggleBookmark = nil
 
         // The live view is gone; persistence must fall back to manager state.
-        coordinator.pdfManager.liveDestinationProvider = nil
+        // Guarded by owner: after a cross-window tab move the destination's
+        // makeNSView may have installed its provider before this (lazily run)
+        // dismantle — clearing unconditionally would blind persistence for the
+        // tab's new window.
+        if coordinator.pdfManager.liveDestinationProviderOwner == ObjectIdentifier(coordinator) {
+            coordinator.pdfManager.liveDestinationProvider = nil
+            coordinator.pdfManager.liveDestinationProviderOwner = nil
+        }
     }
 
     // MARK: - Private
@@ -368,6 +386,10 @@ struct PDFViewWrapper: NSViewRepresentable {
         /// so a PDFKit notification posted synchronously by our own write defers its
         /// ingest instead of mutating @Observable state during a SwiftUI view update.
         private var isProjecting = false
+        /// Bumped each time `scrollTo` applies a destination, so a superseding scroll
+        /// invalidates an earlier one's pending settle-reapply (prevents a stale
+        /// delayed go(to:) from yanking the user back after they navigate away).
+        private var scrollApplyToken = 0
         var lastNavigatedSearchIndex: Int = -1
         var lastSearchResultCount: Int = 0
         fileprivate var lastAppliedSearchHighlightSignature: SearchHighlightSignature?
@@ -392,7 +414,45 @@ struct PDFViewWrapper: NSViewRepresentable {
             removeScrollMonitor()
         }
 
+        /// Installs/removes the window-wide event monitors for this tab based on
+        /// whether it is the active tab. Only the active tab keeps its scroll-zoom
+        /// and right-click monitors, so kept-warm inactive tabs add no per-event
+        /// cost — the accumulation that made long multi-tab sessions lag. Idempotent.
+        /// The last activity state actually applied, so monitor + responder work
+        /// runs only on genuine transitions (updateNSView calls this every pass).
+        private var lastAppliedActive: Bool?
+
+        func setActive(_ active: Bool, pdfView: StablePDFView) {
+            isActive = active
+            guard lastAppliedActive != active else { return }
+            lastAppliedActive = active
+            if active {
+                setupScrollMonitor(for: pdfView)
+                pdfView.setupRightClickMonitor()
+                // Deterministic keyboard routing on tab switch: without this,
+                // the hidden previous tab keeps first responder and swallows
+                // arrow/space scrolling until the user clicks. Deferred a turn —
+                // responder changes inside a SwiftUI update re-enter AppKit.
+                DispatchQueue.main.async { [weak pdfView] in
+                    guard let pdfView, let window = pdfView.window,
+                          !pdfView.isHiddenOrHasHiddenAncestor else { return }
+                    window.makeFirstResponder(pdfView)
+                }
+            } else {
+                removeScrollMonitor()
+                pdfView.removeRightClickMonitor()
+                // Hand the keyboard back if this (now hidden) view still holds it.
+                DispatchQueue.main.async { [weak pdfView] in
+                    guard let pdfView, let window = pdfView.window,
+                          let responder = window.firstResponder as? NSView,
+                          responder === pdfView || responder.isDescendant(of: pdfView) else { return }
+                    window.makeFirstResponder(nil)
+                }
+            }
+        }
+
         func setupScrollMonitor(for pdfView: StablePDFView) {
+            guard scrollMonitor == nil else { return }
             scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self, weak pdfView] event in
                 guard let self = self,
                       let pdfView = pdfView,
@@ -428,6 +488,10 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             if let page = pdfManager.currentPage,
                documentDidChange || pdfView.currentPage !== page {
+                // Durable page navigation supersedes any in-flight settle
+                // re-apply (comment jump / position restore): bump the token so
+                // a stale delayed go(to:) can't yank the view back.
+                scrollApplyToken += 1
                 pdfView.go(to: page)
             }
 
@@ -450,6 +514,13 @@ struct PDFViewWrapper: NSViewRepresentable {
                         scheduleCenterContent(in: pdfView, scrollToTop: true)
                     }
                 }
+            }
+
+            // Explicit jump-to (e.g. clicking a comment): scroll to the target
+            // point once page/scale have settled. `pendingNavigation` is observable,
+            // so this also runs when the destination is on the page already showing.
+            if let destination = pdfManager.pendingNavigation {
+                scrollTo(destination, on: pdfView, retryCount: 0, oneShot: \.pendingNavigation)
             }
         }
 
@@ -664,26 +735,43 @@ struct PDFViewWrapper: NSViewRepresentable {
         /// view is laid out, then re-applies after PDFKit's async relayout settles
         /// (which can otherwise snap scroll back to the page top). One-shot.
         private func restoreScrollPosition(_ destination: PDFDestination, on pdfView: StablePDFView, retryCount: Int) {
+            scrollTo(destination, on: pdfView, retryCount: retryCount, oneShot: \.pendingScrollRestore)
+        }
+
+        /// Scrolls to an exact destination once the view is laid out, then re-applies
+        /// after PDFKit's async relayout settles (which can otherwise snap scroll back
+        /// to the page top). `oneShot` is the manager property that armed this scroll:
+        /// a newer value there supersedes an in-flight scroll, and it is cleared once
+        /// applied. One-shot.
+        private func scrollTo(_ destination: PDFDestination,
+                              on pdfView: StablePDFView,
+                              retryCount: Int,
+                              oneShot: ReferenceWritableKeyPath<PDFManager, PDFDestination?>) {
             DispatchQueue.main.async { [weak self, weak pdfView] in
                 guard let self, let pdfView else { return }
-                // Bail if a newer load/restore superseded this one.
-                guard let pending = self.pdfManager.pendingScrollRestore, pending === destination else { return }
+                // Bail if a newer request superseded this one.
+                guard self.pdfManager[keyPath: oneShot] === destination else { return }
 
                 // Wait for the view to finish initial layout before scrolling, mirroring `performFit`.
                 if (pdfView.bounds.isEmpty || pdfView.document == nil),
                    retryCount < DesignTokens.maxReadinessRetries {
                     DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) { [weak self, weak pdfView] in
                         guard let self, let pdfView else { return }
-                        self.restoreScrollPosition(destination, on: pdfView, retryCount: retryCount + 1)
+                        self.scrollTo(destination, on: pdfView, retryCount: retryCount + 1, oneShot: oneShot)
                     }
                     return
                 }
 
                 pdfView.go(to: destination)
-                self.pdfManager.pendingScrollRestore = nil
+                self.pdfManager[keyPath: oneShot] = nil
+                self.scrollApplyToken &+= 1
+                let token = self.scrollApplyToken
 
                 // Re-apply after the layout settles; PDFKit can reset scroll mid-relayout.
-                DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak pdfView] in
+                // Skip if a newer scroll superseded this one, so a stale delayed reapply
+                // can't yank the user back after they've navigated elsewhere.
+                DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak self, weak pdfView] in
+                    guard let self, self.scrollApplyToken == token else { return }
                     pdfView?.go(to: destination)
                 }
             }

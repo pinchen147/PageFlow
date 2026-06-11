@@ -163,9 +163,22 @@ struct DesignTokens {
     static let commentNoteIconSize: CGFloat = 24
     static let commentNoteOffset: CGFloat = 12
 
-    // Comment bubble styling (glassmorphism)
-    static let commentBubbleBackground: Double = 0.18
-    static let commentBubbleBackgroundSelected: Double = 0.28
+    // Comment card styling.
+    //
+    // The sidebar bubbles were too transparent: a translucent white bubble on the
+    // translucent (white-tinted) glass sidebar let the dark PDF page bleed through,
+    // collapsing text contrast. PageFlow's glass chrome is a *fixed* light-frosted
+    // look (white tint + dark `glassTextPrimary` text) regardless of system
+    // appearance, so the fix is an OPAQUE light card carrying that same dark glass
+    // text — NOT an appearance-adaptive surface, which renders dark in the viewer's
+    // dark appearance context and clashes with the light chrome. Glass stays on the
+    // panel; text rides on the opaque card.
+    /// The opaque content-card surface, shared by comment bubbles, the thumbnail
+    /// letterbox fill, and the tab drag pill so they all read as the same card.
+    static let contentCardSurface = Color.white
+    static let commentCardBackground = contentCardSurface
+    static let commentCardStroke = Color.black.opacity(0.08)
+    static let commentCardStrokeSelected = Color(nsColor: .controlAccentColor)
     static let commentTextOpacity: Double = 1.0
     static let commentTextColor = glassTextPrimary
     static let commentTextNSColor = NSColor(srgbRed: 0.08, green: 0.08, blue: 0.08, alpha: 1)

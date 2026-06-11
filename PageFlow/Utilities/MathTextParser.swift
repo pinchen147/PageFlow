@@ -22,9 +22,34 @@ struct MathTextParser {
     private static let displayRegex = try? NSRegularExpression(pattern: "\\$\\$(.+?)\\$\\$", options: .dotMatchesLineSeparators)
     private static let inlineRegex = try? NSRegularExpression(pattern: "\\$([^$]+?)\\$", options: [])
 
+    // Parsing is a pure function of the text, but it is re-invoked on every
+    // comment-bubble body evaluation (each scroll frame, for every visible bubble).
+    // Memoize by text so a steady comment list re-renders without re-parsing.
+    // NSCache is thread-safe and bounded.
+    private final class ParsedBox {
+        let value: [TextSegment]?
+        init(_ value: [TextSegment]?) { self.value = value }
+    }
+
+    private static let cache: NSCache<NSString, ParsedBox> = {
+        let cache = NSCache<NSString, ParsedBox>()
+        cache.countLimit = 256
+        return cache
+    }()
+
     /// Parses text containing LaTeX delimiters into segments.
     /// Returns nil if text contains no math delimiters (optimization for plain text).
     static func parse(_ text: String) -> [TextSegment]? {
+        let key = text as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached.value
+        }
+        let segments = computeSegments(text)
+        cache.setObject(ParsedBox(segments), forKey: key)
+        return segments
+    }
+
+    private static func computeSegments(_ text: String) -> [TextSegment]? {
         // Fast path: no dollar sign means no math
         guard text.contains("$") else {
             return nil

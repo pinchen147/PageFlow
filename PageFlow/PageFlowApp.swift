@@ -22,9 +22,12 @@ struct PageFlowApp: App {
     @FocusedValue(\.searchFocusRequest) private var focusedSearchFocusRequest
     @FocusedValue(\.alwaysOnTop) private var focusedAlwaysOnTop
 
-    #if ENABLE_SPARKLE
+    // Single shared updater for the whole app. UpdateManager is a no-op stub when
+    // Sparkle isn't compiled in, so it is safe to hold unconditionally and inject
+    // everywhere (the menu and the Settings toggle) rather than creating a second
+    // SPUStandardUpdaterController — Sparkle requires exactly one updater instance,
+    // and a second one is why the "check automatically" toggle wasn't sticking.
     @State private var updateManager = UpdateManager()
-    #endif
 
     @State private var firstLaunchManager = FirstLaunchManager()
 
@@ -85,6 +88,7 @@ struct PageFlowApp: App {
         // MARK: Settings Window
         Settings {
             SettingsView()
+                .environment(updateManager)
         }
     }
 
@@ -171,7 +175,9 @@ struct PageFlowApp: App {
         Divider()
 
         Button("Print…") {
-            pdfManager?.print()
+            if let document = pdfManager?.document {
+                runPrintPanel(for: document)
+            }
         }
         .keyboardShortcut("p", modifiers: .command)
         .disabled(!hasDocument)

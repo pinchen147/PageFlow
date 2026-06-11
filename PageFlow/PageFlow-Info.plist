@@ -24,6 +24,18 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<!-- Work around a macOS 26 Swift-concurrency runtime crash: the executor
+	     identity check (swift_task_isCurrentExecutor) segfaults from
+	     MainActor.assumeIsolated, including SwiftUI's own _ButtonGesture, so the
+	     app crashes on a click. `legacy` restores the non-crashing executor check.
+	     Safe here: the app is MainActor-by-default and single-main-thread, so the
+	     isolation assumptions are genuinely correct — only the check is buggy.
+	     See swiftlang/swift#76804. Revisit when the toolchain/OS fixes it. -->
+	<key>LSEnvironment</key>
+	<dict>
+		<key>SWIFT_IS_CURRENT_EXECUTOR_LEGACY_MODE_OVERRIDE</key>
+		<string>legacy</string>
+	</dict>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

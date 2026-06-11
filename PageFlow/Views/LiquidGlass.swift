@@ -205,10 +205,6 @@ extension GlassStyle {
         cornerRadius: DesignTokens.tabCornerRadius,
         tint: .light, tintOpacity: 0.14, variant: .clear, strokeOpacity: 0.22
     )
-    static let tabDragPreview = GlassStyle(
-        cornerRadius: DesignTokens.tabCornerRadius,
-        tint: .light, tintOpacity: 0.22, variant: .clear, strokeOpacity: 0.32
-    )
     static let dragHandle = GlassStyle(
         cornerRadius: 4,
         tint: .light, tintOpacity: 0.10, interactive: true, variant: .clear, strokeOpacity: 0.12

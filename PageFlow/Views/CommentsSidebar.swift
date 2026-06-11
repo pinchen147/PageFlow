@@ -59,7 +59,7 @@ struct CommentsSidebar: View {
                 if commentManager.comments.isEmpty {
                     emptyState
                 } else {
-                    ForEach(commentManager.comments.sorted { $0.createdAt < $1.createdAt }) { comment in
+                    ForEach(commentManager.sortedComments) { comment in
                         CommentBubbleView(
                             comment: comment,
                             isSelected: commentManager.selectedCommentID == comment.id,
@@ -161,7 +161,7 @@ struct CommentBubbleView: View {
 
     private var bubbleTail: some View {
         BubbleTail()
-            .fill(Color.white.opacity(isSelected ? DesignTokens.commentBubbleBackgroundSelected : DesignTokens.commentBubbleBackground))
+            .fill(DesignTokens.commentCardBackground)
             .frame(width: DesignTokens.commentTailSize, height: DesignTokens.commentTailSize * 2)
             .padding(.top, DesignTokens.spacingSM)
     }
@@ -180,7 +180,16 @@ struct CommentBubbleView: View {
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
             .shadow(color: .black.opacity(DesignTokens.commentBubbleShadowOpacity), radius: DesignTokens.commentBubbleShadowRadius, y: 2)
             .contentShape(Rectangle())
-            .onTapGesture { onStartEditing() }
+            // Single click jumps to the comment on its page; double click edits.
+            // Uses AppKit click recognizers (single requires double to fail) instead of
+            // SwiftUI TapGesture(count:)/.exclusively, which composed unreliably here —
+            // a double-click registered as separate single clicks, so editing needed a
+            // third click. Absent while editing so clicks reach the text editor.
+            .background {
+                if !isEditing {
+                    ClickCatcher(onSingleClick: onSelect, onDoubleClick: onStartEditing)
+                }
+            }
             .onHover { hovering in
                 if !isEditing {
                     (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
@@ -260,15 +269,17 @@ struct CommentBubbleView: View {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 2)
-            .pageFlowGlassControlLabel()
     }
 
     private var bubbleBackground: some View {
         RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
-            .fill(Color.white.opacity(isSelected ? DesignTokens.commentBubbleBackgroundSelected : DesignTokens.commentBubbleBackground))
+            .fill(DesignTokens.commentCardBackground)
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
-                    .strokeBorder(.white.opacity(isSelected ? 0.30 : 0.18), lineWidth: 1)
+                    .strokeBorder(
+                        isSelected ? DesignTokens.commentCardStrokeSelected : DesignTokens.commentCardStroke,
+                        lineWidth: isSelected ? 1.5 : 1
+                    )
             )
     }
 
@@ -278,6 +289,64 @@ struct CommentBubbleView: View {
         Button("Go to Page") { onSelect() }
         Divider()
         Button("Delete", role: .destructive) { onDelete() }
+    }
+}
+
+// MARK: - Click Catcher
+
+/// Deterministic single- vs double-click discrimination via AppKit. SwiftUI's
+/// `TapGesture(count:)` + `.exclusively` compose unreliably on macOS — a double-click
+/// can register as separate single clicks, so editing a comment needed a third click.
+/// `NSClickGestureRecognizer` with `require(toFail:)` gives a clean either/or: the
+/// single fires only if the double fails. Sits in the bubble's background, so the
+/// (non-interactive) text content's clicks fall through to it while the close button
+/// and context menu layered in front keep working; it's omitted while editing so the
+/// text editor receives clicks directly.
+private struct ClickCatcher: NSViewRepresentable {
+    let onSingleClick: () -> Void
+    let onDoubleClick: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        let single = NSClickGestureRecognizer(target: context.coordinator,
+                                              action: #selector(Coordinator.handleSingle))
+        single.numberOfClicksRequired = 1
+        single.delegate = context.coordinator
+        let double = NSClickGestureRecognizer(target: context.coordinator,
+                                              action: #selector(Coordinator.handleDouble))
+        double.numberOfClicksRequired = 2
+        double.delegate = context.coordinator
+        view.addGestureRecognizer(single)
+        view.addGestureRecognizer(double)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onSingle = onSingleClick
+        context.coordinator.onDouble = onDoubleClick
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onSingleClick, onDoubleClick) }
+
+    final class Coordinator: NSObject, NSGestureRecognizerDelegate {
+        var onSingle: () -> Void
+        var onDouble: () -> Void
+        init(_ onSingle: @escaping () -> Void, _ onDouble: @escaping () -> Void) {
+            self.onSingle = onSingle
+            self.onDouble = onDouble
+        }
+        @objc func handleSingle() { onSingle() }
+        @objc func handleDouble() { onDouble() }
+
+        // AppKit has no require(toFail:); express it via the delegate so the 1-click
+        // recognizer only succeeds once the 2-click recognizer has failed. A clean
+        // double-click then fires the double handler alone (no stray single).
+        func gestureRecognizer(_ recognizer: NSGestureRecognizer,
+                               shouldRequireFailureOf other: NSGestureRecognizer) -> Bool {
+            guard let recognizer = recognizer as? NSClickGestureRecognizer,
+                  let other = other as? NSClickGestureRecognizer else { return false }
+            return recognizer.numberOfClicksRequired == 1 && other.numberOfClicksRequired == 2
+        }
     }
 }
 

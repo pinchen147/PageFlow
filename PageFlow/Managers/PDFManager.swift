@@ -30,7 +30,7 @@ enum DocumentLoadResult {
     case needsPassword
 }
 
-enum PageMutation {
+enum PageMutation: Equatable {
     case inserted(at: Int)
     case deleted(at: Int)
     case moved(from: Int, to: Int)
@@ -58,9 +58,17 @@ final class PDFManager {
     /// One-shot exact-scroll restore (page + point) consumed by the projector to
     /// land the user where they left off; nil when none pending. Transient.
     @ObservationIgnored var pendingScrollRestore: PDFDestination?
+    /// One-shot "jump to" target (page + point) for explicit navigation such as
+    /// clicking a comment in the sidebar. Observable — unlike `pendingScrollRestore`
+    /// it must drive a projection pass even when the destination is on the page
+    /// already showing; consumed and cleared by the projector.
+    var pendingNavigation: PDFDestination?
     /// Reads the live `PDFView`'s current destination for persistence. Set by the
     /// view coordinator while a live view is mounted; nil otherwise.
     @ObservationIgnored var liveDestinationProvider: (() -> PDFDestination?)?
+    /// Identity of the coordinator that installed `liveDestinationProvider`, so a
+    /// lazily-run dismantle of an old view can't clear a successor's provider.
+    @ObservationIgnored var liveDestinationProviderOwner: ObjectIdentifier?
     /// Source of restored reading positions. Defaults to the app-wide store;
     /// overridable in tests.
     @ObservationIgnored var documentStateStore: DocumentStateStore = .shared
@@ -84,10 +92,8 @@ final class PDFManager {
     var pendingLockedURL: URL?
     var pendingIsSecurityScoped: Bool = false
 
-    // Navigation history for back/forward
-    private var backStack: [NavigationEntry] = []
-    private var forwardStack: [NavigationEntry] = []
-    private let maxHistoryDepth = 50
+    // Back/forward page history (pure value type; see NavigationHistory).
+    private var navigationHistory = NavigationHistory()
 
     private var isAccessingSecurityScopedResource = false
     @ObservationIgnored private var securityScopedURL: URL?
@@ -155,6 +161,17 @@ final class PDFManager {
         markThumbnailDirty(at: pageIndex)
     }
 
+    /// Records a visible in-place edit to `page` (annotation/comment add, remove,
+    /// recolor): marks the document dirty and invalidates the page's rendered
+    /// artifacts (`pageVersion` for live views, the page's thumbnail). The single
+    /// fan-in for the annotation managers' edit bookkeeping; structural page
+    /// changes go through `markThumbnailStructureDirty` instead.
+    func noteVisibleEdit(on page: PDFPage?) {
+        isDirty = true
+        pageVersion += 1
+        if let page { markThumbnailDirty(for: page) }
+    }
+
     private func markThumbnailStructureDirty() {
         thumbnailStructureVersion += 1
         thumbnailPageVersions.removeAll()
@@ -180,37 +197,28 @@ final class PDFManager {
     }
 
     var canGoBack: Bool {
-        !backStack.isEmpty
+        navigationHistory.canGoBack
     }
 
     var canGoForward: Bool {
-        !forwardStack.isEmpty
+        navigationHistory.canGoForward
     }
 
     // MARK: - Navigation History
 
     /// Push current position to history before navigating (call before goToPage for link/outline navigation)
     func pushNavigationState() {
-        let entry = NavigationEntry(pageIndex: currentPageIndex)
-        backStack.append(entry)
-        if backStack.count > maxHistoryDepth {
-            backStack.removeFirst()
-        }
-        forwardStack.removeAll()
+        navigationHistory.push(currentPageIndex)
     }
 
     func goBack() {
-        guard let entry = backStack.popLast() else { return }
-        let currentEntry = NavigationEntry(pageIndex: currentPageIndex)
-        forwardStack.append(currentEntry)
-        goToPageWithoutHistory(entry.pageIndex)
+        guard let target = navigationHistory.stepBack(from: currentPageIndex) else { return }
+        goToPageWithoutHistory(target)
     }
 
     func goForward() {
-        guard let entry = forwardStack.popLast() else { return }
-        let currentEntry = NavigationEntry(pageIndex: currentPageIndex)
-        backStack.append(currentEntry)
-        goToPageWithoutHistory(entry.pageIndex)
+        guard let target = navigationHistory.stepForward(from: currentPageIndex) else { return }
+        goToPageWithoutHistory(target)
     }
 
     /// Navigate to page without affecting history (used by goBack/goForward)
@@ -228,8 +236,7 @@ final class PDFManager {
     }
 
     func clearNavigationHistory() {
-        backStack.removeAll()
-        forwardStack.removeAll()
+        navigationHistory.clear()
     }
 
     // MARK: - Document Loading
@@ -359,6 +366,7 @@ final class PDFManager {
         isDirty = false
         copiedPage = nil
         pendingScrollRestore = nil
+        pendingNavigation = nil
         markThumbnailStructureDirty()
     }
 
@@ -446,6 +454,26 @@ final class PDFManager {
     func goToLastPage() {
         guard pageCount > 0 else { return }
         goToPage(pageCount - 1)
+    }
+
+    /// Jump to an explicit destination (a point on a page) — e.g. bringing a
+    /// clicked comment into view rather than just its page top. Records history
+    /// (so Back returns) only when the page actually changes. `pendingNavigation`
+    /// is observable, so the projector also runs when the destination is on the
+    /// page already showing.
+    func goToDestination(_ destination: PDFDestination) {
+        guard let document, let page = destination.page else { return }
+        let index = document.index(for: page)
+        guard index != NSNotFound else { return }
+        if currentPageIndex != index || currentPage !== page {
+            pushNavigationState()
+            goToPageWithoutHistory(index)
+        }
+        // An explicit jump supersedes any still-pending reading-position
+        // restore — otherwise the restore's settle retry can land after this
+        // navigation and yank the view away from the target.
+        pendingScrollRestore = nil
+        pendingNavigation = destination
     }
 
     // MARK: - Zoom
@@ -605,11 +633,7 @@ final class PDFManager {
         document.removePage(at: index)
         isDirty = true
 
-        if currentPageIndex > index {
-            currentPageIndex -= 1
-        } else if currentPageIndex >= document.pageCount {
-            currentPageIndex = document.pageCount - 1
-        }
+        currentPageIndex = PageIndexMath.afterDeletion(current: currentPageIndex, deletedIndex: index, newPageCount: document.pageCount)
         currentPage = document.page(at: currentPageIndex)
         pageVersion += 1
         markThumbnailStructureDirty()
@@ -632,9 +656,7 @@ final class PDFManager {
         document.insert(pageCopy, at: insertIndex)
         isDirty = true
 
-        if currentPageIndex >= insertIndex {
-            currentPageIndex += 1
-        }
+        currentPageIndex = PageIndexMath.afterInsertion(current: currentPageIndex, insertedIndex: insertIndex)
         currentPage = document.page(at: currentPageIndex)
         pageVersion += 1
         markThumbnailStructureDirty()
@@ -662,13 +684,7 @@ final class PDFManager {
         markThumbnailStructureDirty()
 
         // Update current page index if affected
-        if currentPageIndex == sourceIndex {
-            currentPageIndex = destinationIndex
-        } else if sourceIndex < currentPageIndex && destinationIndex >= currentPageIndex {
-            currentPageIndex -= 1
-        } else if sourceIndex > currentPageIndex && destinationIndex <= currentPageIndex {
-            currentPageIndex += 1
-        }
+        currentPageIndex = PageIndexMath.afterMove(current: currentPageIndex, from: sourceIndex, to: destinationIndex)
         currentPage = document.page(at: currentPageIndex)
         pageMutationHandler?(.moved(from: sourceIndex, to: destinationIndex))
 
@@ -709,11 +725,7 @@ final class PDFManager {
 
         document.removePage(at: index)
         isDirty = true
-        if currentPageIndex > index {
-            currentPageIndex -= 1
-        } else if currentPageIndex >= document.pageCount {
-            currentPageIndex = document.pageCount - 1
-        }
+        currentPageIndex = PageIndexMath.afterDeletion(current: currentPageIndex, deletedIndex: index, newPageCount: document.pageCount)
         currentPage = document.page(at: currentPageIndex)
         pageVersion += 1
         markThumbnailStructureDirty()
@@ -735,15 +747,7 @@ final class PDFManager {
             return cachedOutlineItems
         }
 
-        var items: [OutlineItem] = []
-        let childCount = root.numberOfChildren
-        if childCount > 0 {
-            for index in 0..<childCount {
-                guard let child = root.child(at: index),
-                      let item = OutlineItem(outline: child, path: "root-\(index)") else { continue }
-                items.append(item)
-            }
-        }
+        let items = OutlineItem.buildRoot(from: root)
         cachedOutlineRoot = root
         cachedOutlineItems = items
         return items
@@ -828,33 +832,6 @@ final class PDFManager {
         }
 
         return result
-    }
-
-    // MARK: - Print
-
-    func print() {
-        guard let document = document else { return }
-
-        let printInfo = NSPrintInfo.shared
-        printInfo.horizontalPagination = .fit
-        printInfo.verticalPagination = .automatic
-        printInfo.isHorizontallyCentered = true
-        printInfo.isVerticallyCentered = false
-
-        guard let printOperation = document.printOperation(
-            for: printInfo,
-            scalingMode: .pageScaleToFit,
-            autoRotate: true
-        ) else {
-            return
-        }
-
-        printOperation.showsPrintPanel = true
-        printOperation.showsProgressPanel = true
-        printOperation.runModal(for: NSApp.keyWindow ?? NSWindow(),
-                               delegate: nil,
-                               didRun: nil,
-                               contextInfo: nil)
     }
 
 }

@@ -32,6 +32,13 @@
 - **Auto-Updates** — Built-in update checking via Sparkle (direct-download builds)
 - **Privacy First** — Fully offline, no telemetry
 
+## What's New in 1.5.1
+
+- **Window tear-off works again** — dragging a tab out of the bar reliably creates a new window (a macOS 26 change had silently broken it), and "Move to New Window" is back too.
+- **Smoother tab dragging** — the drag pill now tracks the cursor without lag, and reordering doesn't stutter.
+- **Warm tab switching, hardened** — switching tabs is instant, background tabs no longer intercept clicks or keyboard input, and your reading position survives long multi-tab sessions.
+- **Stability** — fixes for comment editing, outline section export, and a markdown export edge case that could corrupt links.
+
 ## What's New in 1.5
 
 - **Reading position memory** — PageFlow remembers where you left off in every PDF — current page, exact scroll position, and zoom — and restores it across tab switches, close/reopen, and relaunch.

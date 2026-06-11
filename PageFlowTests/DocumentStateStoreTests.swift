@@ -132,19 +132,7 @@ struct DocumentStateStoreTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent("doc.pdf")
 
-        let document = PDFDocument()
-        for index in 0..<pageCount {
-            let image = NSImage(size: NSSize(width: 32, height: 32))
-            image.lockFocus()
-            NSColor.white.setFill()
-            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 32, height: 32)).fill()
-            image.unlockFocus()
-            guard let page = PDFPage(image: image) else {
-                throw CocoaError(.fileWriteUnknown)
-            }
-            document.insert(page, at: index)
-        }
-        #expect(document.write(to: url))
+        #expect(makeTestDocument(pageCount: pageCount).write(to: url))
         return url
     }
 }

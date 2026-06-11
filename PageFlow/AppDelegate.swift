@@ -13,6 +13,17 @@ enum PageFlowWindowIdentifiers {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// The adaptor instance. On macOS 26 SwiftUI installs its own proxy as
+    /// `NSApp.delegate` and only forwards callbacks here, so
+    /// `NSApp.delegate as? AppDelegate` returns nil — every call site must use
+    /// this instead (verified by AppDelegateInstallTests).
+    private(set) static weak var shared: AppDelegate?
+
+    override init() {
+        super.init()
+        AppDelegate.shared = self
+    }
+
     struct PendingDocumentOpen {
         let url: URL
         let isSecurityScoped: Bool
@@ -160,6 +171,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Test host: never block termination behind the save prompt — a modal
+        // alert in a headless host turns finished test runs into zombies.
+        if TestEnvironment.isRunningTests { return .terminateNow }
+
         // Persist each window's reading position before we quit (views are still live).
         WindowRegistry.shared.flushAllViewState()
 

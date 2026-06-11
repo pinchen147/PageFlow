@@ -43,7 +43,10 @@ struct MainView: View {
 
     private var showingGoToPageBinding: Binding<Bool> {
         Binding(
-            get: { tabManager.showingGoToPage(for: tabID) },
+            // Gated on isActive like the sidebars and search bar: a hidden warm
+            // tab's window-modal sheet would strand over the visible tab and
+            // navigate the wrong document.
+            get: { isActive && tabManager.showingGoToPage(for: tabID) },
             set: { tabManager.setShowingGoToPage($0, for: tabID) }
         )
     }
@@ -102,7 +105,9 @@ struct MainView: View {
             outlineSidebarOverlay
         }
         .overlay(alignment: .bottom) {
-            if pdfManager.hasDocument {
+            // isActive gate: keeps inactive warm tabs' hover tracking areas out
+            // of the window (same gate as the sidebars).
+            if isActive, pdfManager.hasDocument {
                 bottomPageBar
             }
         }
@@ -137,7 +142,7 @@ struct MainView: View {
                 // flushed synchronously by TabContainerView.onAppear before this fires.
                 // On macOS 15+, onOpenURL delivers the file asynchronously — delay
                 // the file picker to give it time to arrive.
-                let hasPending = !((NSApp.delegate as? AppDelegate)?.pendingURLs.isEmpty ?? true)
+                let hasPending = !(AppDelegate.shared?.pendingURLs.isEmpty ?? true)
                 if !hasPending && !tabManager.isAwaitingPassword(for: tabID) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [pdfManager, tabManager] in
                         guard !pdfManager.hasDocument,
@@ -175,7 +180,12 @@ struct MainView: View {
 
     private var commentsSidebarOverlay: some View {
         ZStack(alignment: .topTrailing) {
-            if showingComments, pdfManager.hasDocument {
+            // Only the active warm tab mounts its sidebar: an inactive tab's
+            // invisible copy keeps AppKit machinery alive (ClickCatcher's click
+            // recognizers, the comment text editor) that competes with the
+            // active tab's sidebar for clicks and focus — same class of bug as
+            // the SearchBar focus gate below.
+            if isActive, showingComments, pdfManager.hasDocument {
                 CommentsSidebar(
                     commentManager: commentManager,
                     onClose: { showingComments = false }
@@ -192,7 +202,10 @@ struct MainView: View {
 
     private var outlineSidebarOverlay: some View {
         ZStack(alignment: .topLeading) {
-            if showingOutline, pdfManager.hasDocument {
+            // Same gate as the comments sidebar: the thumbnail grid's AppKit
+            // reporters and drag machinery must not stay mounted in inactive
+            // warm tabs.
+            if isActive, showingOutline, pdfManager.hasDocument {
                 SidebarView(
                     pdfManager: pdfManager,
                     bookmarkManager: bookmarkManager,
@@ -215,7 +228,9 @@ struct MainView: View {
 
     private var searchOverlay: some View {
         ZStack(alignment: .bottom) {
-            if showingSearch {
+            // `showingSearch` is window-level state shared by every warm tab; only
+            // the active tab presents the bar so an inactive tab can't grab focus.
+            if isActive && showingSearch {
                 SearchBar(
                     searchManager: searchManager,
                     pdfManager: pdfManager,

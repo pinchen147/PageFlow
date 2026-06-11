@@ -41,7 +41,18 @@ struct TabDragPreviewView: View {
         .padding(.horizontal, DesignTokens.spacingSM)
         .padding(.vertical, DesignTokens.spacingXS)
         .frame(width: snapshot.width, height: DesignTokens.tabHeight)
-        .pageFlowLiquidGlassSurface(.tabDragPreview)
+        // Opaque card, not Liquid Glass: the pill tracks the cursor, and live
+        // glass re-samples its backdrop on every move (macOS 26) — the single
+        // biggest source of drag lag. A static surface renders once and the
+        // panel then moves for free.
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
+                .fill(DesignTokens.contentCardSurface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
+                .strokeBorder(.white.opacity(0.32))
+        )
         .shadow(color: .black.opacity(0.22), radius: 14, y: 7)
         .compositingGroup()
     }

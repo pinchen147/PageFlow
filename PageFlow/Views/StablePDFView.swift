@@ -103,9 +103,7 @@ final class StablePDFView: PDFView {
     deinit {
         pendingScrollRestore?.cancel()
         NotificationCenter.default.removeObserver(self)
-        if let monitor = rightClickMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
+        removeRightClickMonitor()
     }
 
     func setupRightClickMonitor() {
@@ -115,6 +113,13 @@ final class StablePDFView: PDFView {
         rightClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
             guard let self = self else { return event }
             return self.handleRightClickEvent(event)
+        }
+    }
+
+    func removeRightClickMonitor() {
+        if let monitor = rightClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            rightClickMonitor = nil
         }
     }
 
@@ -207,8 +212,8 @@ final class StablePDFView: PDFView {
     @objc private func handleScrollChanged(_ notification: Notification) {
         guard let scrollView = documentScrollView else { return }
         // Enforce visibility state during scroll to prevent system override
-        // We use animator() proxy to match the active animation state if any, 
-        // or just set it directly if we want strict enforcement. 
+        // We use animator() proxy to match the active animation state if any,
+        // or just set it directly if we want strict enforcement.
         // Direct set is safer to fight system "flash" logic.
         syncScrollerVisibility(in: scrollView)
     }

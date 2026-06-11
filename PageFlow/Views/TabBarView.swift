@@ -47,7 +47,11 @@ struct TabBarView: View {
 
             // Empty bar space falls through to here so dragging the
             // background drags the window — Chrome / Safari behavior.
-            WindowDragArea()
+            // AppKit hit-testing reaches this NSView regardless of SwiftUI's
+            // `allowsHitTesting`, so it must unmount when the bar is hidden.
+            if isInteractive {
+                WindowDragArea()
+            }
 
             if isInteractive {
                 TabBarMouseView(
@@ -83,7 +87,8 @@ struct TabBarView: View {
             tab: tab,
             isActive: tab.id == tabManager.activeTabID,
             isDirty: tabManager.isTabDirty(tab.id),
-            isHovering: hoveredTabID == tab.id
+            isHovering: hoveredTabID == tab.id,
+            isDragInProgress: dragController.isActive
         )
         .background(tabFrameReporter(for: tab.id))
         .offset(x: shiftOffset(for: tab.id))

@@ -38,35 +38,53 @@ struct TabContainerView: View {
         tabManager.activePDFManager?.documentTitle ?? "PageFlow"
     }
 
+    /// One warm tab in the ZStack: the active tab is visible, hit-testable, and on
+    /// top; the rest stay mounted but invisible and inert. Extracted from the
+    /// `ForEach` so the SwiftUI type-checker resolves `MainView`'s initializer once
+    /// here instead of inside the loop closure.
+    @ViewBuilder
+    private func warmTab(for runtime: TabRuntime) -> some View {
+        let isActiveTab = runtime.tabID == tabManager.activeTabID
+        MainView(
+            tabID: runtime.tabID,
+            pdfManager: runtime.pdfManager,
+            searchManager: runtime.searchManager,
+            annotationManager: runtime.annotationManager,
+            commentManager: runtime.commentManager,
+            bookmarkManager: runtime.bookmarkManager,
+            tabUndoManager: runtime.undoManager,
+            isActive: isActiveTab,
+            showingSearch: $showingSearch,
+            searchFocusRequest: searchFocusRequest,
+            tabManager: tabManager,
+            onOpenFile: { url, isSecurityScoped, replaceCurrent in
+                tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
+            }
+        )
+        .id(runtime.tabID)
+        .opacity(isActiveTab ? 1 : 0)
+        .allowsHitTesting(isActiveTab)
+        .zIndex(isActiveTab ? 1 : 0)
+        .accessibilityHidden(!isActiveTab)
+    }
+
     var body: some View {
         ZStack {
-            if let runtime = tabManager.activeRuntime {
-                MainView(
-                    tabID: runtime.tabID,
-                    pdfManager: runtime.pdfManager,
-                    searchManager: runtime.searchManager,
-                    annotationManager: runtime.annotationManager,
-                    commentManager: runtime.commentManager,
-                    bookmarkManager: runtime.bookmarkManager,
-                    tabUndoManager: runtime.undoManager,
-                    isActive: true,
-                    showingSearch: $showingSearch,
-                    searchFocusRequest: searchFocusRequest,
-                    tabManager: tabManager,
-                    onOpenFile: { url, isSecurityScoped, replaceCurrent in
-                        tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
-                    }
-                )
-                // Bind the PDF-view subtree to the tab's identity (matching
-                // TopChromeView). Without this, switching tabs reuses one MainView in
-                // place, leaving the PDFViewWrapper's Coordinator captured on the
-                // previous tab's managers (a `let`) and skipping `dismantleNSView`, so
-                // the StablePDFView, its window-wide scroll monitor, and PDFKit's page
-                // cache for the old tab are never torn down — the source of the
-                // grow-over-time lag. Per-tab identity gives each tab its own view that
-                // tears down on switch; per-tab reading position is already restored by
-                // TabManager.restoreTabState + DocumentStateStore.
-                .id(runtime.tabID)
+            // Keep a small warm set of tabs mounted (TabManager.renderedRuntimes,
+            // LRU-capped) and switch by visibility, so Cmd-number/⌘[ ⌘] switching is
+            // an instant show rather than a teardown + cold PDFKit rebuild.
+            //
+            // Each tab keeps its own `.id(tabID)`, so its PDFViewWrapper Coordinator
+            // stays bound to that tab's managers (the original reason this `.id`
+            // exists — without it one reused MainView kept a Coordinator captured on
+            // the wrong tab's `let` managers). The grow-over-time lag that the
+            // earlier "tear down on every switch" fix targeted is instead prevented
+            // at its real source: only the active tab keeps its window-wide event
+            // monitors installed (driven by `isActive`), and the LRU cap tears down
+            // and frees least-recently-used tabs. Per-tab reading position is still
+            // restored by TabManager.restoreTabState + DocumentStateStore.
+            ForEach(tabManager.renderedRuntimes, id: \.tabID) { runtime in
+                warmTab(for: runtime)
             }
         }
         .ignoresSafeArea(.all, edges: .all)
@@ -94,7 +112,7 @@ struct TabContainerView: View {
 
             // Flush any Finder-opened URLs immediately on cold launch
             // (faster than waiting for WindowRegistrarView to mount + async dispatch)
-            if let appDelegate = NSApp.delegate as? AppDelegate {
+            if let appDelegate = AppDelegate.shared {
                 appDelegate.flushPendingURLs(to: tabManager)
             }
         }
