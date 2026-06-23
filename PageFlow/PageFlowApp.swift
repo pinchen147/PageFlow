@@ -539,6 +539,14 @@ struct PageFlowApp: App {
 
     @ViewBuilder
     private var tabMenuContent: some View {
+        Button("Search Tabs…") {
+            TabSwitcherController.shared.toggle(forWindow: NSApp.keyWindow, hostTabManager: focusedTabManager)
+        }
+        .keyboardShortcut(for: "searchTabs")
+        .disabled(focusedTabManager == nil)
+
+        Divider()
+
         Button("Select Next Tab") {
             focusedTabManager?.selectNextTab()
         }

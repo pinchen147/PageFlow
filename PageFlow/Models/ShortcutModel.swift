@@ -144,7 +144,9 @@ struct ShortcutModel: Codable, Equatable {
         "toggleToolbar": ShortcutModel(key: "t", shift: true),
         "togglePageIndicator": ShortcutModel(key: "p", shift: true),
         "copyPageAsMarkdown": ShortcutModel(key: "m", shift: true),
-        "copyDocumentAsMarkdown": ShortcutModel(key: "m", shift: true, option: true)
+        "copyDocumentAsMarkdown": ShortcutModel(key: "m", shift: true, option: true),
+        // Tabs
+        "searchTabs": ShortcutModel(key: "a", shift: true)
     ]
 
     static func current(for action: String) -> ShortcutModel {

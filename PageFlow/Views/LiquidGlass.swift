@@ -98,6 +98,24 @@ extension View {
     ) -> some View {
         self
             .foregroundStyle(DesignTokens.glassControlForeground.opacity(interactive ? 1 : 0.52))
+            .pageFlowGlassTextHalo()
+    }
+
+    /// A soft light halo behind text/glyphs so they stay legible over TRANSLUCENT
+    /// liquid glass — whatever busy content shows through the surface — without
+    /// frosting the glass opaque. Two stacked passes (tight + soft) give a clean,
+    /// dense separation; the white glow is invisible over light areas.
+    ///
+    /// ONLY for DARK text — i.e. the fixed `glassText*` / `sidebar*Text` /
+    /// `glassControlForeground` tokens (the design's "dark text on glass"). Do NOT
+    /// apply it to light/white or system-adaptive (`.secondary`, default-label)
+    /// text — e.g. a button over the dark empty state — where a WHITE glow on light
+    /// text just smudges. Used on tab titles, the toolbar/sidebars (via
+    /// `pageFlowGlassControlLabel`), `ChromeGlassIcon`, and the Tab Switcher.
+    func pageFlowGlassTextHalo() -> some View {
+        self
+            .shadow(color: .white.opacity(0.6), radius: 1)
+            .shadow(color: .white.opacity(0.55), radius: 2.5)
     }
 }
 
@@ -181,6 +199,15 @@ extension GlassStyle {
     static let glassPanel = GlassStyle(
         cornerRadius: DesignTokens.floatingToolbarCornerRadius,
         tint: .light, tintOpacity: DesignTokens.glassPanelTintOpacity, variant: .regular,
+        strokeOpacity: 0.22, shadowRadius: 10, shadowY: 5
+    )
+    /// The Tab Switcher dropdown — TRANSLUCENT liquid glass (CLEAR variant), not
+    /// frosted. Text legibility over busy document content comes from a soft light
+    /// halo behind the glyphs (see `pageFlowGlassTextHalo`), NOT from making the panel
+    /// opaque — so it stays see-through liquid glass while the words still read.
+    static let tabSwitcher = GlassStyle(
+        cornerRadius: DesignTokens.floatingToolbarCornerRadius,
+        tint: .light, tintOpacity: 0.4, variant: .clear,
         strokeOpacity: 0.22, shadowRadius: 10, shadowY: 5
     )
     /// The "Open PDF" empty-state button.
@@ -269,5 +296,25 @@ extension View {
             shadowRadius: style.shadowRadius,
             shadowY: style.shadowY
         )
+    }
+}
+
+// MARK: - Chrome Glyph Button
+
+/// A 24×24 liquid-glass chrome glyph, shared by the tab bar's "+" and the Tab
+/// Switcher chevron so the two stay visually identical by construction instead
+/// of by copy-paste.
+struct ChromeGlassIcon: View {
+    let systemName: String
+    var pointSize: CGFloat = 10
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: pointSize, weight: .semibold))
+            .foregroundStyle(DesignTokens.glassTextPrimary.opacity(0.78))
+            .pageFlowGlassTextHalo()
+            .frame(width: 24, height: 24)
+            .pageFlowLiquidGlassSurface(.newTabButton)
+            .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 4, y: -2)
     }
 }

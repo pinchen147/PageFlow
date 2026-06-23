@@ -105,12 +105,7 @@ struct TabBarView: View {
     // MARK: - New Tab Button
 
     private var newTabButton: some View {
-        Image(systemName: "plus")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(DesignTokens.glassTextPrimary.opacity(0.78))
-            .frame(width: 24, height: 24)
-            .pageFlowLiquidGlassSurface(.newTabButton)
-            .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 4, y: -2)
+        ChromeGlassIcon(systemName: "plus")
             .background(newTabFrameReporter)
     }
 

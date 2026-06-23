@@ -390,7 +390,8 @@ final class TabManager {
                 url: url,
                 isSecurityScoped: isSecurityScoped,
                 closeTabOnCancel: true,
-                restoreTabIDOnCancel: previousActiveTabID
+                restoreTabIDOnCancel: previousActiveTabID,
+                closeTabOnFailure: true
             )
         } else {
             // A new empty tab (Cmd+T / the "+" button) prompts for a file to open,
@@ -413,6 +414,11 @@ final class TabManager {
         if activeTabID == tabID, sessions[tabID]?.uiState.isEditingPages == true {
             stopEditModeKeyMonitor()
         }
+
+        // Archive into the Recently Closed history (Tab Switcher) before teardown.
+        // Placed after the dirty-confirm guard so a cancelled close isn't recorded;
+        // URL-less tabs are ignored by the store (nothing to reopen).
+        ClosedTabStore.shared.record(tabs[index])
 
         // Capture the closing tab's reading position before teardown, but only
         // when it's the active tab (its live view still exists for an exact scroll
@@ -629,9 +635,7 @@ final class TabManager {
     ) -> Bool {
         if case .failed = result {
             if createdTab {
-                closeSession(for: tabID)
-                tabs.removeAll { $0.id == tabID }
-                activeTabID = restoreOnFailure ?? tabs.last?.id
+                removeFailedTab(tabID, restoringTo: restoreOnFailure)
             }
             return false
         }
@@ -652,7 +656,8 @@ final class TabManager {
         url: URL,
         isSecurityScoped: Bool,
         closeTabOnCancel: Bool = false,
-        restoreTabIDOnCancel: UUID? = nil
+        restoreTabIDOnCancel: UUID? = nil,
+        closeTabOnFailure: Bool = false
     ) {
         switch result {
         case .success:
@@ -674,8 +679,20 @@ final class TabManager {
             )
         case .failed:
             clearPendingPasswordRequest(for: tabID)
-            break
+            if closeTabOnFailure {
+                removeFailedTab(tabID, restoringTo: restoreTabIDOnCancel)
+            }
         }
+    }
+
+    /// Removes a tab whose document failed to load and restores the previously
+    /// active tab, so a missing/corrupt file never leaves a stray "New Tab"
+    /// behind (e.g. reopening a since-deleted Recently-Closed document).
+    private func removeFailedTab(_ tabID: UUID, restoringTo restoreTabID: UUID?) {
+        closeSession(for: tabID)
+        tabs.removeAll { $0.id == tabID }
+        let restore = restoreTabID.flatMap { id in tabs.contains { $0.id == id } ? id : nil }
+        activeTabID = restore ?? tabs.last?.id
     }
 
     func consumeAutomaticFilePickerSuppression() -> Bool {

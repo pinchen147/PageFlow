@@ -32,6 +32,11 @@
 - **Auto-Updates** — Built-in update checking via Sparkle (direct-download builds)
 - **Privacy First** — Fully offline, no telemetry
 
+## What's New in 1.5.2
+
+- **Search Tabs across every window** — a new chevron beside the window controls (or ⌘⇧A) opens a searchable list of every open tab in every window, plus recently closed documents. Type to filter, then Return or click to jump straight to a tab.
+- **Crisper text on the glass UI** — labels in the tab bar, toolbar, and panels stay legible over the translucent Liquid Glass.
+
 ## What's New in 1.5.1
 
 - **Window tear-off works again** — dragging a tab out of the bar reliably creates a new window (a macOS 26 change had silently broken it), and "Move to New Window" is back too.

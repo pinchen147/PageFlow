@@ -13,6 +13,22 @@
 import AppKit
 import Foundation
 
+/// A frozen snapshot of one open window's tabs for the cross-window Tab
+/// Switcher: everything the dropdown renders (titles, active tab, dirty marks)
+/// is captured at query time. `tabManager` is retained only as the *action*
+/// handle for "jump to this tab".
+struct WindowTabGroup: Identifiable {
+    let tabManager: TabManager
+    let window: NSWindow
+    let tabs: [TabModel]
+    let activeTabID: UUID?
+    let dirtyTabIDs: Set<UUID>
+    /// True for the window the user is currently working in (frontmost).
+    let isFrontmost: Bool
+
+    var id: ObjectIdentifier { ObjectIdentifier(tabManager) }
+}
+
 @MainActor
 final class WindowRegistry {
     static let shared = WindowRegistry()
@@ -151,10 +167,57 @@ final class WindowRegistry {
             return nil
         }()
 
-        guard let (tabManager, tabID, window) = match else { return false }
-        tabManager.selectTab(tabID)
-        bringWindowToFront(window)
+        guard let (tabManager, tabID, _) = match else { return false }
+        activate(tabID, in: tabManager)
         return true
+    }
+
+    // MARK: - Tab Switcher (cross-window)
+
+    /// Every open window's tabs, frontmost window first. Dead (closed) windows
+    /// are excluded. The Tab Switcher re-queries this each time it opens, so the
+    /// list never goes stale.
+    func allOpenTabs() -> [WindowTabGroup] {
+        let frontmost = frontmostTabManager()
+        return entries.values
+            .filter { $0.window != nil }
+            .sorted { lhs, rhs in
+                // Frontmost window first, then most-recently-registered.
+                if (lhs.tabManager === frontmost) != (rhs.tabManager === frontmost) {
+                    return lhs.tabManager === frontmost
+                }
+                return lhs.registeredAt > rhs.registeredAt
+            }
+            .compactMap { entry in
+                guard let window = entry.window else { return nil }
+                let manager = entry.tabManager
+                return WindowTabGroup(
+                    tabManager: manager,
+                    window: window,
+                    tabs: manager.tabs,
+                    activeTabID: manager.activeTabID,
+                    dirtyTabIDs: Set(manager.tabs.lazy.filter { manager.isTabDirty($0.id) }.map(\.id)),
+                    isFrontmost: manager === frontmost
+                )
+            }
+    }
+
+    /// Selects `tabID` in its window and brings that window to the front — the
+    /// click-to-jump action for the Tab Switcher.
+    func jumpToTab(_ tabID: UUID, in tabManager: TabManager) {
+        activate(tabID, in: tabManager)
+    }
+
+    /// Archives every document-backed tab of `window` into Recently Closed.
+    /// Window teardown (the red close button, or closing a multi-tab window)
+    /// never routes through `TabManager.closeTab`, so the per-tab archival there
+    /// would miss them. `ClosedTabStore.record` dedups by URL, so a tab already
+    /// archived by a per-tab close stays single.
+    func recordClosedTabs(forWindow window: NSWindow) {
+        guard let entry = entries.values.first(where: { $0.window === window }) else { return }
+        for tab in entry.tabManager.tabs {
+            ClosedTabStore.shared.record(tab)
+        }
     }
 
     // MARK: - Window Front/Close
@@ -171,12 +234,30 @@ final class WindowRegistry {
         bringWindowToFront(window)
     }
 
+    /// The canonical "go to this tab" action: select it in its window and raise
+    /// that window. Both `activateExistingDocument` (URL-resolved) and
+    /// `jumpToTab` (direct) funnel through here, so the sequence lives once.
+    private func activate(_ tabID: UUID, in tabManager: TabManager) {
+        guard let window = entries[ObjectIdentifier(tabManager)]?.window else { return }
+        tabManager.selectTab(tabID)
+        bringWindowToFront(window)
+    }
+
     private func bringWindowToFront(_ window: NSWindow?) {
+        // Raise the target window FIRST, so the opened document's first paint never
+        // waits on app-level activation timing.
+        if let window {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        }
+        // DO NOT "modernize" this to the no-arg cooperative `NSApp.activate()`:
+        // although `ignoringOtherApps:` is advisory-deprecated, on macOS 26 the
+        // cooperative form is best-effort and is DROPPED right after a sandboxed
+        // NSOpenPanel (powerbox) resigns key — deferring the SwiftUI redraw that
+        // paints a freshly opened document by ~5s. `ignoringOtherApps: true` still
+        // force-activates and drives that redraw immediately.
         NSApp.activate(ignoringOtherApps: true)
-        guard let window else { return }
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
     }
 
     // MARK: - Transient Placeholder Cleanup

@@ -86,7 +86,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
-        ) { [weak self, weak windowController] _ in
+        ) { [weak self, weak windowController] notification in
+            // Archive the closing window's tabs into Recently Closed (Tab
+            // Switcher): a window-level close (red button / multi-tab window)
+            // never routes through TabManager.closeTab. This `queue: .main`
+            // callback runs on the main thread, so the main-actor hop is safe.
+            if let closingWindow = notification.object as? NSWindow {
+                MainActor.assumeIsolated {
+                    WindowRegistry.shared.recordClosedTabs(forWindow: closingWindow)
+                }
+            }
             guard let self = self else { return }
             if let wc = windowController {
                 self.windowControllers.removeAll { $0 === wc }

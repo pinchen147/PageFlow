@@ -46,6 +46,9 @@ struct ShortcutsSettingsTab: View {
             ("togglePageIndicator", "Toggle Page Number Visibility"),
             ("copyPageAsMarkdown", "Copy Page as Markdown"),
             ("copyDocumentAsMarkdown", "Copy Document as Markdown")
+        ]),
+        ("Tabs", [
+            ("searchTabs", "Search Tabs")
         ])
     ]
 

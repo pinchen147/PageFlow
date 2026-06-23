@@ -32,6 +32,7 @@ struct TabItemView: View {
                 Text(tab.displayTitle)
                     .font(.system(size: 11, weight: isActive ? .medium : .regular))
                     .foregroundStyle(DesignTokens.glassTextPrimary.opacity(isActive ? 0.92 : 0.74))
+                    .pageFlowGlassTextHalo()
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: DesignTokens.tabMaxWidth - DesignTokens.tabCloseButtonSize - DesignTokens.spacingSM)
@@ -40,6 +41,7 @@ struct TabItemView: View {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundStyle(DesignTokens.glassTextSecondary.opacity(0.62))
+                .pageFlowGlassTextHalo()
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
                 .opacity(isCloseVisible ? 1 : 0)
         }

@@ -59,6 +59,8 @@ struct TopChromeView: View {
                     trafficLightsReservedSpace
                         .padding(DesignTokens.spacingXS)
 
+                    TabSwitcherChevron(tabManager: tabManager, isInteractive: isTopBarVisible)
+
                     TabBarView(tabManager: tabManager, isInteractive: isTopBarVisible)
                 }
                 .frame(maxWidth: .infinity)
