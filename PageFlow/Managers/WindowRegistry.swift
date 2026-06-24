@@ -12,6 +12,7 @@
 
 import AppKit
 import Foundation
+import Observation
 
 /// A frozen snapshot of one open window's tabs for the cross-window Tab
 /// Switcher: everything the dropdown renders (titles, active tab, dirty marks)
@@ -71,10 +72,12 @@ final class WindowRegistry {
             ) { [weak self, weak tabManager] in
                 guard let self, let tabManager else { return }
                 self.lastActiveTabManager = tabManager
+                self.publishActiveWindow()
             }
             mainWindowObservers[ObjectIdentifier(tabManager)] = token
         }
 
+        publishActiveWindow()
         dismissPendingTransientPlaceholderWindows()
 
         // Deliver any URLs buffered during cold launch (before this TabManager existed).
@@ -93,6 +96,16 @@ final class WindowRegistry {
         if let token {
             NotificationCenter.default.removeObserver(token)
         }
+        publishActiveWindow()
+    }
+
+    /// Mirrors the resolved frontmost manager onto `ActiveWindowModel`, the
+    /// reactive surface SwiftUI menu `Commands` read so their action targets
+    /// AND enabled state follow the frontmost window. A manually-created ⌘N /
+    /// tear-off window holds no focused SwiftUI view, so `@FocusedValue` alone
+    /// cannot route to it — commands resolve `focusedTabManager ?? frontmost`.
+    private func publishActiveWindow() {
+        ActiveWindowModel.shared.update(frontmostTabManager())
     }
 
     // MARK: - Lookups
@@ -326,5 +339,28 @@ final class WindowRegistry {
         }
 
         return values.first
+    }
+}
+
+/// Reactive projection of "which window is frontmost," kept in sync by
+/// `WindowRegistry` (its single writer) on every register / unregister and
+/// `didBecomeMain`. SwiftUI menu `Commands` read `tabManager` so they
+/// re-evaluate when the main window changes; resolve it as
+/// `focusedTabManager ?? ActiveWindowModel.shared.tabManager` so a command
+/// still targets a manual (⌘N / tear-off) window that holds no focused view.
+@MainActor
+@Observable
+final class ActiveWindowModel {
+    static let shared = ActiveWindowModel()
+
+    private(set) var tabManager: TabManager?
+
+    private init() {}
+
+    func update(_ tabManager: TabManager?) {
+        // Skip a redundant Observation mutation when the frontmost is unchanged,
+        // so menu Commands don't re-evaluate on every window-registry churn.
+        guard self.tabManager !== tabManager else { return }
+        self.tabManager = tabManager
     }
 }

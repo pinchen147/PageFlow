@@ -110,47 +110,12 @@ struct ShortcutModel: Codable, Equatable {
         }
     }
 
-    // MARK: - Defaults
+    // MARK: - Resolution
 
-    static let defaults: [String: ShortcutModel] = [
-        // Navigation
-        "nextPage": ShortcutModel(key: "↓"),
-        "previousPage": ShortcutModel(key: "↑"),
-        "goBack": ShortcutModel(key: "["),
-        "goForward": ShortcutModel(key: "]"),
-        "goToPage": ShortcutModel(key: "g", option: true),
-        // Zoom
-        "zoomIn": ShortcutModel(key: "+"),
-        "zoomOut": ShortcutModel(key: "-"),
-        "actualSize": ShortcutModel(key: "0"),
-        "zoomToFit": ShortcutModel(key: "f", option: true),
-        // Annotations
-        "highlight": ShortcutModel(key: "y"),
-        "underline": ShortcutModel(key: "u"),
-        "comment": ShortcutModel(key: "e"),
-        "bookmark": ShortcutModel(key: "d"),
-        // Edit (page operations)
-        "copyPage": ShortcutModel(key: "c"),
-        "cutPage": ShortcutModel(key: "x"),
-        "pastePage": ShortcutModel(key: "v"),
-        "deletePage": ShortcutModel(key: "⌫"),
-        "rotateClockwise": ShortcutModel(key: "r"),
-        "rotateCounterClockwise": ShortcutModel(key: "r", shift: true),
-        // Other
-        "search": ShortcutModel(key: "f"),
-        "save": ShortcutModel(key: "s"),
-        "toggleSidebar": ShortcutModel(key: "s", option: true),
-        "toggleTopBar": ShortcutModel(key: "b", shift: true),
-        "toggleToolbar": ShortcutModel(key: "t", shift: true),
-        "togglePageIndicator": ShortcutModel(key: "p", shift: true),
-        "copyPageAsMarkdown": ShortcutModel(key: "m", shift: true),
-        "copyDocumentAsMarkdown": ShortcutModel(key: "m", shift: true, option: true),
-        // Tabs
-        "searchTabs": ShortcutModel(key: "a", shift: true)
-    ]
-
+    /// The active binding for `action`: the user's override, else the factory
+    /// default from `ShortcutCatalog`, else an empty (no-op) shortcut.
     static func current(for action: String) -> ShortcutModel {
-        SettingsManager.shared.customShortcuts[action] ?? defaults[action] ?? ShortcutModel(key: "")
+        SettingsManager.shared.customShortcuts[action] ?? ShortcutCatalog.defaults[action] ?? ShortcutModel(key: "")
     }
 
     /// Returns KeyEquivalent and modifiers tuple for use with .keyboardShortcut()
@@ -227,6 +192,11 @@ struct ShortcutModel: Codable, Equatable {
         case UInt16(kVK_Delete): key = "⌫"
         case UInt16(kVK_Space): key = "Space"
         case UInt16(kVK_Escape): key = "⎋"
+        // Bracket keys carry their unshifted glyph by keyCode: with Shift held,
+        // `charactersIgnoringModifiers` returns "{"/"}", so a recorded ⇧⌘[ would
+        // otherwise persist the wrong key.
+        case UInt16(kVK_ANSI_LeftBracket): key = "["
+        case UInt16(kVK_ANSI_RightBracket): key = "]"
         default: key = characters
         }
 

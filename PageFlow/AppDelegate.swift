@@ -55,26 +55,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
     }
 
+    /// Builds the chrome-less window that hosts `contentView`, without showing,
+    /// positioning, or registering it (`createNewWindow` does that).
+    ///
+    /// The SwiftUI view is hosted as the window's `contentView` via `NSHostingView`
+    /// (the WWDC23-blessed form), NOT by installing an `NSHostingController` as the
+    /// window's `contentViewController`. A hosting controller keeps re-asserting its
+    /// view to the FRONT of the theme frame — above the `NSTitlebarContainerView` —
+    /// so opaque content paints over the native traffic-light buttons and they are
+    /// invisible (the tear-off / ⌘N "no traffic lights" bug). An `NSHostingView`
+    /// set as the content view stays BEHIND the titlebar like SwiftUI's own
+    /// WindowGroup, AND bridges scene state (notably the focused values the ⌘T/⌘W
+    /// menu commands read) to the window — which a nested hosting subview does not.
+    /// `isReleasedWhenClosed` is false because the `NSWindowController` owns the
+    /// window's lifetime (see `createNewWindow`).
+    static func makeHostedWindow(contentView: some View, contentSize: NSSize) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: contentSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        // Host the SwiftUI view directly AS the window's content view (WWDC23):
+        // this is what bridges scene state — including focused values, which the
+        // ⌘T/⌘W menu commands read via `.focusedSceneValue` — to a manually
+        // created NSWindow. (A nested hosting subview does not bridge.)
+        window.contentView = NSHostingView(rootView: contentView)
+        // Canonical hidden-titlebar chrome (adds .fullSizeContentView). Applied
+        // here at construction so the window never flashes a solid titlebar
+        // before WindowChromeController installs via the SwiftUI content.
+        WindowChromeController.applyHiddenTitlebarChrome(to: window)
+        window.identifier = PageFlowWindowIdentifiers.userCreated
+        return window
+    }
+
     @discardableResult
     func createNewWindow(
         with contentView: some View,
         screenPoint: CGPoint? = nil,
         frame: NSRect? = nil
     ) -> NSWindow {
-        let hostingController = NSHostingController(rootView: contentView)
-
-        let window = NSWindow(contentViewController: hostingController)
         let contentSize = frame?.size
             ?? NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight)
-        window.setContentSize(contentSize)
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        window.identifier = PageFlowWindowIdentifiers.userCreated
+
+        let window = Self.makeHostedWindow(contentView: contentView, contentSize: contentSize)
         if let frame {
             window.setFrame(frame, display: false)
         } else {
-            positionWindow(window, contentSize: contentSize, near: screenPoint)
+            positionWindow(window, near: screenPoint)
         }
 
         let windowController = NSWindowController(window: window)
@@ -235,27 +264,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    private func positionWindow(
-        _ window: NSWindow,
-        contentSize: NSSize,
-        near screenPoint: CGPoint?
-    ) {
-        guard let screenPoint,
-              let screen = NSScreen.screens.first(where: { $0.frame.contains(screenPoint) }) ?? NSScreen.main else {
+    private func positionWindow(_ window: NSWindow, near screenPoint: CGPoint?) {
+        guard let screenPoint, let screen = NSScreen.containing(screenPoint) else {
             window.center()
             return
         }
 
-        let visibleFrame = screen.visibleFrame
-        let originX = min(
-            max(screenPoint.x - contentSize.width * 0.35, visibleFrame.minX),
-            visibleFrame.maxX - contentSize.width
+        // Anchor near the cursor, then fit the WHOLE window frame on-screen via
+        // the shared clamp. Using `window.frame.size` (not the content size)
+        // includes the titlebar, so the title bar can't slide under the menu bar.
+        let size = window.frame.size
+        let anchored = NSRect(
+            origin: NSPoint(x: screenPoint.x - size.width * 0.35, y: screenPoint.y - 64),
+            size: size
         )
-        let originY = min(
-            max(screenPoint.y - 64, visibleFrame.minY),
-            visibleFrame.maxY - contentSize.height
-        )
-
-        window.setFrameOrigin(NSPoint(x: originX, y: originY))
+        window.setFrame(NSScreen.onScreenFrame(anchored, in: screen.visibleFrame), display: false)
     }
 }

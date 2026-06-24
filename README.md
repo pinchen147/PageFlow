@@ -32,6 +32,12 @@
 - **Auto-Updates** — Built-in update checking via Sparkle (direct-download builds)
 - **Privacy First** — Fully offline, no telemetry
 
+## What's New in 1.5.3
+
+- **Customizable keyboard shortcuts** — every menu command can now be rebound in Settings → Shortcuts, with conflict warnings and protection for system-reserved combos.
+- **Torn-off & new windows fixed** — windows torn off from a tab (or opened with ⌘N) now show their traffic-light buttons, and ⌘T / ⌘W / ⌘S act on the window you're actually working in.
+- **Multi-display tear-off** — a tab dropped onto another display now lands fully on that screen.
+
 ## What's New in 1.5.2
 
 - **Search Tabs across every window** — a new chevron beside the window controls (or ⌘⇧A) opens a searchable list of every open tab in every window, plus recently closed documents. Type to filter, then Return or click to jump straight to a tab.
