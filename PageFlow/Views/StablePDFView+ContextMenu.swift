@@ -266,7 +266,7 @@ extension StablePDFView {
     }
 
     private func appendPageMenuItems(to menu: NSMenu) {
-        let bookmarkShortcut = ShortcutModel.current(for: "toggleBookmark")
+        let bookmarkShortcut = ShortcutModel.current(for: "bookmark")
         let bookmarkItem = NSMenuItem(
             title: "Bookmark Page",
             action: #selector(toggleBookmarkAction),

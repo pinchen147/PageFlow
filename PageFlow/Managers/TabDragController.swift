@@ -193,16 +193,19 @@ final class TabDragController {
         case .pill:
             commitPillDrop(drag: drag, at: screenPoint)
         case .window(let window, _):
-            finalizeTornOffWindow(window)
+            finalizeTornOffWindow(window, at: screenPoint)
         }
         cleanup()
     }
 
-    func cancelDrag() {
+    /// `dropPoint` is the cursor location when the cancel was driven by an ESC
+    /// keystroke; nil for app-resign-active or source-window-close, where the
+    /// torn-off window is still fit on-screen using its own screen.
+    func cancelDrag(at dropPoint: CGPoint? = nil) {
         // ESC during `.window`: drop the window where it is (option 5b).
         // Everywhere else cancel is a pure state reset.
         if case .window(let window, _) = phase {
-            finalizeTornOffWindow(window)
+            finalizeTornOffWindow(window, at: dropPoint)
         }
         cleanup()
     }
@@ -304,8 +307,28 @@ final class TabDragController {
         clearInsertion(drag: drag)
     }
 
-    private func finalizeTornOffWindow(_ window: NSWindow) {
+    private func finalizeTornOffWindow(_ window: NSWindow, at dropPoint: CGPoint?) {
         window.collectionBehavior.remove(.canJoinAllSpaces)
+        constrainOnScreen(window, at: dropPoint)
+    }
+
+    /// During a `.window` drag the torn-off window follows the cursor via
+    /// `setFrameOrigin`, which — unlike `setFrame(_:display:)` or window
+    /// creation — does NOT constrain the frame to the screen. So on drop the
+    /// window can hang off a screen edge, or (dropped on a display smaller than
+    /// the one it was sized for) be larger than the drop screen entirely. Fit it
+    /// fully onto the screen it now occupies, shrinking if necessary.
+    ///
+    /// The drop screen is resolved by `dropPoint` (the cursor — the same anchor
+    /// the tear-off uses to size the window, so the two never disagree across
+    /// displays), falling back to the window's own screen when no cursor is
+    /// known (ESC / app-resign-active / source-window-close).
+    private func constrainOnScreen(_ window: NSWindow, at dropPoint: CGPoint?) {
+        let screen = dropPoint.flatMap { NSScreen.containing($0) } ?? window.screen ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else { return }
+        let fitted = NSScreen.onScreenFrame(window.frame, in: visible)
+        guard fitted != window.frame else { return }
+        window.setFrame(fitted, display: true)
     }
 
     // MARK: - Tear Off
@@ -313,9 +336,13 @@ final class TabDragController {
     private func tearOff(at screenPoint: CGPoint, drag: ActiveDrag, host: TabManager) {
         guard let appDelegate = AppDelegate.shared else { return }
 
-        let frameSize = hostWindowFrameSize == .zero
+        let rawSize = hostWindowFrameSize == .zero
             ? NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight)
             : hostWindowFrameSize
+        let frameSize = Self.tornOffWindowSize(
+            rawSize,
+            visibleFrame: NSScreen.containing(screenPoint)?.visibleFrame.size
+        )
 
         let offset = Self.cursorToWindowOffset(
             draggedWidth: drag.draggedWidth,
@@ -494,6 +521,32 @@ final class TabDragController {
 
     // MARK: - Geometry
 
+    /// A source window at or above this fraction of the visible frame (in both
+    /// dimensions) counts as maximized — a tab torn off it opens at the default
+    /// size instead of inheriting the full maximized size.
+    static let tornOffMaximizedThreshold: CGFloat = 0.92
+
+    /// Size for a torn-off window. Torn-off windows inherit the source window's
+    /// size; but a tab dragged out of a (near-)maximized window should become a
+    /// normal, movable window — not another maximized one (Chrome/Safari
+    /// behavior) — so fall back to the default size when the source nearly fills
+    /// the screen. Otherwise inherit the source size, clamped so it cannot be
+    /// larger than the visible frame. `visibleFrame` nil (no resolvable screen)
+    /// means inherit the source size unchanged. Pure (no `NSScreen` lookup) so
+    /// it is unit-testable.
+    static func tornOffWindowSize(_ source: NSSize, visibleFrame: NSSize?) -> NSSize {
+        guard let visible = visibleFrame else { return source }
+        let nearlyMaximized = source.width >= visible.width * tornOffMaximizedThreshold
+            && source.height >= visible.height * tornOffMaximizedThreshold
+        if nearlyMaximized {
+            return NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight)
+        }
+        return NSSize(
+            width: min(source.width, visible.width),
+            height: min(source.height, visible.height)
+        )
+    }
+
     /// Vertical distance from `point.y` to the host bar's vertical extent.
     /// 0 if the point's Y is inside the bar's vertical band.
     private func verticalDistanceFromHostBar(_ point: CGPoint) -> CGFloat {
@@ -591,7 +644,7 @@ final class TabDragController {
             endDrag(at: Self.screenPoint(forEvent: event))
             return event
         case .keyDown where event.keyCode == 53:  // ESC
-            cancelDrag()
+            cancelDrag(at: Self.screenPoint(forEvent: event))
             return nil  // consume so the keystroke doesn't leak through
         default:
             return event

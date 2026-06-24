@@ -9,55 +9,12 @@ import SwiftUI
 import AppKit
 
 struct ShortcutsSettingsTab: View {
-    private let groups: [(String, [(String, String)])] = [
-        ("Navigation", [
-            ("nextPage", "Next Page"),
-            ("previousPage", "Previous Page"),
-            ("goBack", "Back"),
-            ("goForward", "Forward"),
-            ("goToPage", "Go to Page...")
-        ]),
-        ("Zoom", [
-            ("zoomIn", "Zoom In"),
-            ("zoomOut", "Zoom Out"),
-            ("actualSize", "Actual Size"),
-            ("zoomToFit", "Zoom to Fit")
-        ]),
-        ("Annotations", [
-            ("highlight", "Highlight"),
-            ("underline", "Underline"),
-            ("comment", "Add Comment"),
-            ("bookmark", "Toggle Bookmark")
-        ]),
-        ("Edit", [
-            ("copyPage", "Copy Page"),
-            ("cutPage", "Cut Page"),
-            ("pastePage", "Paste Page"),
-            ("rotateClockwise", "Rotate Clockwise"),
-            ("rotateCounterClockwise", "Rotate Counter-Clockwise"),
-            ("deletePage", "Delete Page")
-        ]),
-        ("Other", [
-            ("search", "Find..."),
-            ("save", "Save"),
-            ("toggleSidebar", "Toggle Sidebar"),
-            ("toggleTopBar", "Toggle Top Bar Visibility"),
-            ("toggleToolbar", "Toggle Toolbar Visibility"),
-            ("togglePageIndicator", "Toggle Page Number Visibility"),
-            ("copyPageAsMarkdown", "Copy Page as Markdown"),
-            ("copyDocumentAsMarkdown", "Copy Document as Markdown")
-        ]),
-        ("Tabs", [
-            ("searchTabs", "Search Tabs")
-        ])
-    ]
-
     var body: some View {
         Form {
-            ForEach(groups, id: \.0) { group in
-                Section(group.0) {
-                    ForEach(group.1, id: \.0) { action, label in
-                        ShortcutRow(actionID: action, label: label)
+            ForEach(ShortcutCatalog.grouped(), id: \.0) { group in
+                Section(group.0.rawValue) {
+                    ForEach(group.1) { action in
+                        ShortcutRow(actionID: action.id, label: action.title)
                     }
                 }
             }
@@ -100,14 +57,21 @@ struct ShortcutRow: View {
                         .foregroundStyle(.secondary)
                         .frame(width: DesignTokens.shortcutKeyDisplayWidth)
 
+                    if let warning = validation?.warning {
+                        Text(warning)
+                            .font(.caption)
+                            .foregroundStyle(validation?.blocksConfirm == true ? .red : .orange)
+                            .fixedSize()
+                    }
+
                     Button("✓") {
                         confirmShortcut()
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, DesignTokens.spacingSM)
                     .padding(.vertical, DesignTokens.spacingXS)
-                    .pageFlowLiquidGlassSurface(.settingsAction(enabled: pendingShortcut != nil, activeTint: 0.10))
-                    .disabled(pendingShortcut == nil)
+                    .pageFlowLiquidGlassSurface(.settingsAction(enabled: canConfirm, activeTint: 0.10))
+                    .disabled(!canConfirm)
 
                     Button("✕") {
                         cancelRecording()
@@ -137,6 +101,18 @@ struct ShortcutRow: View {
         ShortcutModel.current(for: actionID).displayString
     }
 
+    /// Vetting of the in-progress recording (nil until a key is captured).
+    private var validation: ShortcutValidation? {
+        pendingShortcut.map { ShortcutCatalog.validate($0, for: actionID) }
+    }
+
+    /// Confirm is allowed once a key is captured and it isn't reserved / too weak.
+    /// A mere conflict only warns — the user may deliberately reassign.
+    private var canConfirm: Bool {
+        guard let validation else { return false }
+        return !validation.blocksConfirm
+    }
+
     private func startRecording() {
         isRecording = true
         pendingShortcut = nil
@@ -155,7 +131,8 @@ struct ShortcutRow: View {
     }
 
     private func confirmShortcut() {
-        guard let shortcut = pendingShortcut else { return }
+        guard let shortcut = pendingShortcut,
+              !ShortcutCatalog.validate(shortcut, for: actionID).blocksConfirm else { return }
         SettingsManager.shared.customShortcuts[actionID] = shortcut
         stopRecording()
     }

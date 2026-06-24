@@ -19,7 +19,7 @@ final class WindowChromeController: NSObject {
     init(window: NSWindow) {
         self.window = window
         super.init()
-        configureWindow()
+        Self.applyHiddenTitlebarChrome(to: window)
         setTrafficLightsVisible(false, animated: false)
         observeWindowChanges()
     }
@@ -30,8 +30,13 @@ final class WindowChromeController: NSObject {
 
     // MARK: - Window setup
 
-    private func configureWindow() {
-        guard let window else { return }
+    /// Applies PageFlow's hidden-titlebar, full-bleed-content chrome to `window`:
+    /// transparent/hidden titlebar with no separator, content under the titlebar.
+    /// The single source of truth for this styling — `init` applies it on install
+    /// (covering the SwiftUI WindowGroup window), and `AppDelegate.makeHostedWindow`
+    /// also calls it at construction so a programmatically-created window never
+    /// flashes a solid titlebar before this controller installs.
+    static func applyHiddenTitlebarChrome(to window: NSWindow) {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)

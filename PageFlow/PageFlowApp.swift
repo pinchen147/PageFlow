@@ -17,10 +17,23 @@ struct PageFlowApp: App {
 
     // MARK: - Focused Values
 
-    @FocusedValue(\.tabManager) private var focusedTabManager
+    @FocusedValue(\.tabManager) private var focusedSceneTabManager
     @FocusedValue(\.showingSearch) private var focusedShowingSearch
     @FocusedValue(\.searchFocusRequest) private var focusedSearchFocusRequest
     @FocusedValue(\.alwaysOnTop) private var focusedAlwaysOnTop
+
+    /// Reactive frontmost-window fallback for the menu commands. `@FocusedValue`
+    /// resolves nil when the key window (e.g. a manually-created ⌘N / tear-off
+    /// window) holds no focused SwiftUI view, so commands routed purely through
+    /// it would no-op AND grey out. Resolving `focused ?? frontmost` keeps both
+    /// the action targets and the enabled state on the window the user is in.
+    @State private var activeWindow = ActiveWindowModel.shared
+
+    /// The TabManager every menu command (⌘T/⌘W/⌘S/Find/…) targets: the focused
+    /// window's, else the frontmost window's. Reactive on both inputs.
+    private var focusedTabManager: TabManager? {
+        focusedSceneTabManager ?? activeWindow.tabManager
+    }
 
     // Single shared updater for the whole app. UpdateManager is a no-op stub when
     // Sparkle isn't compiled in, so it is safe to hold unconditionally and inject
@@ -117,20 +130,20 @@ struct PageFlowApp: App {
         Button("New Tab") {
             focusedTabManager?.createNewTab()
         }
-        .keyboardShortcut("t", modifiers: .command)
+        .keyboardShortcut(for: "newTab")
         .disabled(focusedTabManager == nil)
 
         Button("New Window") {
             openNewWindow()
         }
-        .keyboardShortcut("n", modifiers: .command)
+        .keyboardShortcut(for: "newWindow")
 
         Divider()
 
         Button("Open…") {
             focusedTabManager?.openFilePicker()
         }
-        .keyboardShortcut("o", modifiers: .command)
+        .keyboardShortcut(for: "openFile")
         .disabled(focusedTabManager == nil)
 
         Menu("Open Recent") {
@@ -154,7 +167,7 @@ struct PageFlowApp: App {
         Button("Close Tab") {
             focusedTabManager?.closeActiveTab()
         }
-        .keyboardShortcut("w", modifiers: .command)
+        .keyboardShortcut(for: "closeTab")
         .disabled(focusedTabManager?.tabs.isEmpty != false)
     }
 
@@ -163,13 +176,13 @@ struct PageFlowApp: App {
         Button("Save") {
             Task { await handleSave() }
         }
-        .keyboardShortcut("s", modifiers: .command)
+        .keyboardShortcut(for: "save")
         .disabled(!hasDocument)
 
         Button("Save As…") {
             Task { await handleSaveAs() }
         }
-        .keyboardShortcut("s", modifiers: [.command, .shift])
+        .keyboardShortcut(for: "saveAs")
         .disabled(!hasDocument)
 
         Divider()
@@ -179,7 +192,7 @@ struct PageFlowApp: App {
                 runPrintPanel(for: document)
             }
         }
-        .keyboardShortcut("p", modifiers: .command)
+        .keyboardShortcut(for: "print")
         .disabled(!hasDocument)
     }
 
@@ -230,7 +243,7 @@ struct PageFlowApp: App {
                 focusedSearchFocusRequest?.wrappedValue += 1
             }
         }
-        .keyboardShortcut("f", modifiers: .command)
+        .keyboardShortcut(for: "search")
         .disabled(!hasDocument)
 
         Divider()
@@ -346,13 +359,13 @@ struct PageFlowApp: App {
         Button(showingSidebarLabel) {
             focusedTabManager?.showingOutline.toggle()
         }
-        .keyboardShortcut("s", modifiers: [.command, .option])
+        .keyboardShortcut(for: "toggleSidebar")
         .disabled(!hasDocument)
 
         Button(showingCommentsLabel) {
             focusedTabManager?.showingComments.toggle()
         }
-        .keyboardShortcut("e", modifiers: [.command, .option])
+        .keyboardShortcut(for: "toggleComments")
         .disabled(!hasDocument)
 
         Toggle("Always Show Top Bar", isOn: topBarVisibilityBinding)
@@ -393,7 +406,7 @@ struct PageFlowApp: App {
         Button("Enter Full Screen") {
             NSApp.keyWindow?.toggleFullScreen(nil)
         }
-        .keyboardShortcut("f", modifiers: [.command, .control])
+        .keyboardShortcut(for: "enterFullScreen")
     }
 
     // MARK: - Go Menu
@@ -431,13 +444,13 @@ struct PageFlowApp: App {
         Button("First Page") {
             pdfManager?.goToFirstPage()
         }
-        .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+        .keyboardShortcut(for: "firstPage")
         .disabled(!hasDocument)
 
         Button("Last Page") {
             pdfManager?.goToLastPage()
         }
-        .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+        .keyboardShortcut(for: "lastPage")
         .disabled(!hasDocument)
 
         Divider()
@@ -550,13 +563,13 @@ struct PageFlowApp: App {
         Button("Select Next Tab") {
             focusedTabManager?.selectNextTab()
         }
-        .keyboardShortcut("]", modifiers: [.command, .shift])
+        .keyboardShortcut(for: "selectNextTab")
         .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
 
         Button("Select Previous Tab") {
             focusedTabManager?.selectPreviousTab()
         }
-        .keyboardShortcut("[", modifiers: [.command, .shift])
+        .keyboardShortcut(for: "selectPreviousTab")
         .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
 
         Divider()
@@ -575,7 +588,10 @@ struct PageFlowApp: App {
     private func openRecentFile(_ recentFile: RecentFile) {
         guard let resolved = recentFilesManager.resolveRecentFile(recentFile) else { return }
 
-        if let tabManager = focusedTabManager ?? WindowRegistry.shared.anyTabManager() {
+        // `focusedTabManager` already folds in the frontmost-window fallback,
+        // which is nil only when no window exists at all — exactly when we want
+        // the new-window branch below.
+        if let tabManager = focusedTabManager {
             tabManager.openDocument(url: resolved.url, isSecurityScoped: resolved.isSecurityScoped)
         } else {
             appDelegate.enqueuePendingURLs([resolved.url], isSecurityScoped: resolved.isSecurityScoped)
