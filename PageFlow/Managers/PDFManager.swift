@@ -48,21 +48,40 @@ final class PDFManager {
 
     private let logger = Logger(subsystem: "com.pageflow", category: "PDFManager")
 
-    var document: PDFDocument?
-    var currentPage: PDFPage?
-    var currentPageIndex: Int = 0
-    var scaleFactor: CGFloat = 1.0
-    var isAutoScaling: Bool = false
+    typealias FileWriter = @Sendable (Data, URL) throws -> Void
+    typealias WriteScheduler = @Sendable (@escaping @Sendable () -> Void) -> Void
+    @ObservationIgnored private let fileSession: PDFFileSession
+    @ObservationIgnored private let scheduleWrite: WriteScheduler
+
+    init(
+        fileWriter: @escaping FileWriter = { data, url in try data.write(to: url, options: .atomic) },
+        scheduleWrite: @escaping WriteScheduler = { work in
+            DispatchQueue.global(qos: .userInitiated).async(execute: work)
+        }
+    ) {
+        self.fileSession = PDFFileSession(writer: fileWriter)
+        self.scheduleWrite = scheduleWrite
+    }
+
+    // Deferred native work belongs to the intent that admitted it. Increment
+    // on every command, including equal-valued fit requests (the ABA case).
+    @ObservationIgnored private(set) var viewIntentRevision: UInt64 = 0
+    @ObservationIgnored private var isIngestingPageChange = false
+    var document: PDFDocument? { didSet { viewIntentRevision &+= 1 } }
+    var currentPage: PDFPage? { didSet { if !isIngestingPageChange { viewIntentRevision &+= 1 } } }
+    var currentPageIndex: Int = 0 { didSet { if !isIngestingPageChange { viewIntentRevision &+= 1 } } }
+    var scaleFactor: CGFloat = 1.0 { didSet { viewIntentRevision &+= 1 } }
+    var isAutoScaling: Bool = false { didSet { viewIntentRevision &+= 1 } }
     /// One-shot fit request consumed by the projector; nil when no fit is pending.
-    var pendingFit: FitRequest?
+    var pendingFit: FitRequest? { didSet { viewIntentRevision &+= 1 } }
     /// One-shot exact-scroll restore (page + point) consumed by the projector to
     /// land the user where they left off; nil when none pending. Transient.
-    @ObservationIgnored var pendingScrollRestore: PDFDestination?
+    @ObservationIgnored var pendingScrollRestore: PDFDestination? { didSet { viewIntentRevision &+= 1 } }
     /// One-shot "jump to" target (page + point) for explicit navigation such as
     /// clicking a comment in the sidebar. Observable — unlike `pendingScrollRestore`
     /// it must drive a projection pass even when the destination is on the page
     /// already showing; consumed and cleared by the projector.
-    var pendingNavigation: PDFDestination?
+    var pendingNavigation: PDFDestination? { didSet { viewIntentRevision &+= 1 } }
     /// Reads the live `PDFView`'s current destination for persistence. Set by the
     /// view coordinator while a live view is mounted; nil otherwise.
     @ObservationIgnored var liveDestinationProvider: (() -> PDFDestination?)?
@@ -73,9 +92,19 @@ final class PDFManager {
     /// overridable in tests.
     @ObservationIgnored var documentStateStore: DocumentStateStore = .shared
     var documentURL: URL?
-    var isDirty: Bool = false
+    var isDirty: Bool = false {
+        didSet { if isDirty { editRevision &+= 1 } }
+    }
+    @ObservationIgnored private var editRevision: UInt64 = 0
+    @ObservationIgnored private var documentEpoch: UInt64 = 0
+    @ObservationIgnored private var savingDocumentID: ObjectIdentifier?
+    @ObservationIgnored private var lastAppliedWrite: UInt64 = 0
+    var closeRevision: UInt64 { editRevision }
+    private var pendingWrites = 0
+    var hasPendingWrites: Bool { pendingWrites > 0 }
+    var usesSecurityScopedAccess: Bool { fileAccess?.isSecurityScoped == true }
     var interactionMode: InteractionMode = .select
-    var displayMode: PDFDisplayMode = .singlePageContinuous
+    var displayMode: PDFDisplayMode = .singlePageContinuous { didSet { viewIntentRevision &+= 1 } }
 
     /// Increments whenever pages are added/removed/reordered - triggers UI refresh
     var pageVersion: Int = 0
@@ -86,17 +115,19 @@ final class PDFManager {
 
     /// Copied page for paste operation (same-document only)
     private(set) var copiedPage: PDFPage?
+
+    /// What the open document's security handler permits (see `PDFPermissions`).
+    var permissions: PDFPermissions { PDFPermissions(document) }
     
     // Password-protected PDF state
     var pendingLockedDocument: PDFDocument?
     var pendingLockedURL: URL?
-    var pendingIsSecurityScoped: Bool = false
 
     // Back/forward page history (pure value type; see NavigationHistory).
     private var navigationHistory = NavigationHistory()
 
-    private var isAccessingSecurityScopedResource = false
-    @ObservationIgnored private var securityScopedURL: URL?
+    @ObservationIgnored private var fileAccess: PDFFileAccess?
+    @ObservationIgnored private var pendingFileAccess: PDFFileAccess?
 
     var undoManagerProvider: (() -> UndoManager?)?
     var pageMutationHandler: ((PageMutation) -> Void)?
@@ -108,9 +139,6 @@ final class PDFManager {
     }
 
     deinit {
-        if let url = securityScopedURL {
-            url.stopAccessingSecurityScopedResource()
-        }
         #if DEBUG
         Swift.print("[deinit] PDFManager")
         #endif
@@ -130,6 +158,16 @@ final class PDFManager {
 
     var hasDocument: Bool {
         document != nil
+    }
+
+    /// A security-scoped bookmark for the currently open document when it is held
+    /// under a security scope (sandboxed open), or `nil` otherwise. The PDF peer of
+    /// `MarkdownDocumentManager.securityScopedBookmark`, consumed by session restore (S8).
+    /// A pure read of existing state — it does NOT change the load/close control
+    /// flow. Non-scoped (Finder-opened / non-sandbox) documents return `nil` here;
+    /// the capture path then mints one from the live document URL, else the path.
+    var securityScopedBookmark: Data? {
+        usesSecurityScopedAccess ? fileAccess?.bookmark : nil
     }
 
     /// Safe page accessor with bounds validation
@@ -248,35 +286,24 @@ final class PDFManager {
 
         discardPendingLockedDocument()
 
-        let startedSecurityScopedAccess: Bool
-        if isSecurityScoped {
-            guard url.startAccessingSecurityScopedResource() else {
-                return .failed
-            }
-            startedSecurityScopedAccess = true
-        } else {
-            startedSecurityScopedAccess = false
-        }
-
-        guard let pdfDocument = PDFDocument(url: url) else {
-            if startedSecurityScopedAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
-            return .failed
-        }
+        let access = PDFFileAccess(url: url, requestSecurityScope: isSecurityScoped)
+        guard !isSecurityScoped || access.isSecurityScoped else { return .failed }
+        // Complete accepted writes before reading, including reload of the same file.
+        finishPendingWrites()
+        guard let pdfDocument = PDFDocument(url: url) else { return .failed }
 
         // Check if document is locked (password-protected)
         if pdfDocument.isLocked {
             pendingLockedDocument = pdfDocument
             pendingLockedURL = url
-            pendingIsSecurityScoped = startedSecurityScopedAccess
+            pendingFileAccess = access
             return .needsPassword
         }
 
         finalizeDocumentLoad(
             pdfDocument,
             url: url,
-            securityScopedURL: startedSecurityScopedAccess ? url : nil
+            access: access
         )
         return .success
     }
@@ -291,11 +318,9 @@ final class PDFManager {
             return false
         }
 
-        finalizeDocumentLoad(
-            pdfDocument,
-            url: url,
-            securityScopedURL: pendingIsSecurityScoped ? url : nil
-        )
+        finishPendingWrites()
+        finalizeDocumentLoad(pdfDocument, url: url,
+                             access: pendingFileAccess ?? PDFFileAccess(url: url))
         resetPendingLockedDocument()
         return true
     }
@@ -307,56 +332,37 @@ final class PDFManager {
     private func resetPendingLockedDocument() {
         pendingLockedDocument = nil
         pendingLockedURL = nil
-        pendingIsSecurityScoped = false
+        pendingFileAccess = nil
     }
 
     private func discardPendingLockedDocument() {
-        if pendingIsSecurityScoped, let url = pendingLockedURL {
-            url.stopAccessingSecurityScopedResource()
-
-            if securityScopedURL == url {
-                isAccessingSecurityScopedResource = false
-                securityScopedURL = nil
-            }
-        }
-
         resetPendingLockedDocument()
     }
 
-    private func finalizeDocumentLoad(_ pdfDocument: PDFDocument, url: URL, securityScopedURL: URL?) {
-        // Clear previous document's undo actions to prevent stale references
+    private func finalizeDocumentLoad(_ pdfDocument: PDFDocument, url: URL, access: PDFFileAccess) {
         clearUndoHistory()
         clearNavigationHistory()
-        stopAccessingCurrentResource()
-
+        documentEpoch &+= 1
         document = pdfDocument
         documentURL = url
+        fileAccess = access
+        savingDocumentID = ObjectIdentifier(pdfDocument)
+        fileSession.reset(access: access)
         applyInitialViewState(for: pdfDocument, url: url)
         isDirty = false
-        copiedPage = nil  // Clear to prevent cross-document paste corruption
-        isAccessingSecurityScopedResource = securityScopedURL != nil
-        self.securityScopedURL = securityScopedURL
+        copiedPage = nil
         markThumbnailStructureDirty()
     }
 
-    private func stopAccessingCurrentResource() {
-        if isAccessingSecurityScopedResource, let oldURL = documentURL {
-            oldURL.stopAccessingSecurityScopedResource()
-            isAccessingSecurityScopedResource = false
-            securityScopedURL = nil
-        }
-    }
-
     func closeDocument() {
+        finishPendingWrites()
+        documentEpoch &+= 1
+        savingDocumentID = nil
+        fileSession.reset(access: nil)
+        fileAccess = nil
         clearUndoHistory()
         discardPendingLockedDocument()
         clearNavigationHistory()
-
-        if isAccessingSecurityScopedResource, let url = documentURL {
-            url.stopAccessingSecurityScopedResource()
-            isAccessingSecurityScopedResource = false
-            securityScopedURL = nil
-        }
 
         document = nil
         documentURL = nil
@@ -521,6 +527,10 @@ final class PDFManager {
 
     /// PDFKit reported the visible page changed (user scroll, link, etc.).
     func ingestPageChange(index: Int, page: PDFPage) {
+        // A native reflow can change the visible spread while a mode fit is
+        // pending. It reports the projection, rather than issuing a new command.
+        isIngestingPageChange = true
+        defer { isIngestingPageChange = false }
         if currentPageIndex != index { currentPageIndex = index }
         if currentPage !== page { currentPage = page }
     }
@@ -545,7 +555,7 @@ final class PDFManager {
 
     /// Rotates page at specified index - used by both toolbar and thumbnail context menu
     func rotatePage(at index: Int, clockwise: Bool) {
-        guard let document = document,
+        guard permissions.editPages, let document = document,
               index >= 0, index < document.pageCount,
               let page = document.page(at: index) else { return }
 
@@ -572,14 +582,15 @@ final class PDFManager {
 
     /// Copies the page at the given index for later paste
     func copyPage(at index: Int) {
-        guard let page = document?.page(at: index),
+        guard permissions.copy, let page = document?.page(at: index),
               let pageCopy = page.copy() as? PDFPage else { return }
         copiedPage = pageCopy
     }
 
     /// Cuts the page at the given index (copy + delete)
     func cutPage(at index: Int) {
-        guard let document = document, document.pageCount > 1 else { return }
+        // Cut is copy then delete: a page that cannot be copied is not removed either.
+        guard permissions.editPages, permissions.copy, let document = document, document.pageCount > 1 else { return }
         copyPage(at: index)
         deletePage(at: index)
     }
@@ -587,7 +598,7 @@ final class PDFManager {
     /// Pastes the copied page after the given index
     /// Returns true if paste succeeded
     func pastePage(after index: Int) -> Bool {
-        guard let page = copiedPage,
+        guard permissions.editPages, let page = copiedPage,
               let document = document,
               index >= 0, index < document.pageCount else { return false }
 
@@ -625,7 +636,7 @@ final class PDFManager {
     }
 
     func deletePage(at index: Int) {
-        guard let document = document,
+        guard permissions.editPages, let document = document,
               document.pageCount > 1,
               index >= 0, index < document.pageCount,
               let page = document.page(at: index) else { return }
@@ -648,7 +659,7 @@ final class PDFManager {
     }
 
     func duplicatePage(at index: Int) {
-        guard let document = document,
+        guard permissions.editPages, let document = document,
               let page = document.page(at: index),
               let pageCopy = page.copy() as? PDFPage else { return }
 
@@ -671,7 +682,7 @@ final class PDFManager {
     }
 
     func movePage(from sourceIndex: Int, to destinationIndex: Int) {
-        guard let document = document,
+        guard permissions.editPages, let document = document,
               sourceIndex != destinationIndex,
               sourceIndex >= 0, sourceIndex < document.pageCount,
               destinationIndex >= 0, destinationIndex < document.pageCount,
@@ -699,7 +710,7 @@ final class PDFManager {
     // MARK: - Page Operation Helpers (for undo/redo)
 
     private func insertPageForUndo(_ page: PDFPage, at index: Int) {
-        guard let document = document,
+        guard permissions.editPages, let document = document,
               index >= 0, index <= document.pageCount else { return }
 
         document.insert(page, at: index)
@@ -719,7 +730,7 @@ final class PDFManager {
     }
 
     private func removePageForUndo(at index: Int) {
-        guard let document = document,
+        guard permissions.editPages, let document = document,
               document.pageCount > 1,
               let page = document.page(at: index) else { return }
 
@@ -755,83 +766,82 @@ final class PDFManager {
 
     // MARK: - Save
 
-    /// Async save - use for normal save operations to prevent UI freeze
-    func save() async -> Bool {
-        guard let targetURL = documentURL,
-              let data = document?.dataRepresentation() else {
-            return false
-        }
-
-        let log = logger
-
-        // File I/O on background thread. Serialization stays on MainActor to avoid PDFKit races.
-        let result = await Task.detached(priority: .userInitiated) {
-            do {
-                try data.write(to: targetURL, options: .atomic)
-                return true
-            } catch {
-                log.error("Save failed: \(error.localizedDescription)")
-                return false
-            }
-        }.value
-
-        // Update state on main thread
-        if result {
-            isDirty = false
-        }
-
-        return result
+    struct SaveCompletion {
+        let didWrite: Bool
+        fileprivate let epoch: UInt64
+        fileprivate let documentID: ObjectIdentifier?
+        fileprivate let sequence: UInt64
     }
 
-    /// Synchronous save - use only for quit-time saves where we can't await
-    func saveSync() -> Bool {
-        guard let document = document,
-              let url = documentURL else {
-            return false
-        }
-
-        guard let data = document.dataRepresentation() else {
-            return false
-        }
-
-        do {
-            try data.write(to: url, options: .atomic)
-            isDirty = false
-            return true
-        } catch {
-            logger.error("Sync save failed: \(error.localizedDescription)")
-            return false
-        }
+    /// Evaluate at delivery time: the tab may have loaded another PDF since await.
+    func acceptsSaveCompletion(_ completion: SaveCompletion) -> Bool {
+        document != nil && completion.epoch == documentEpoch &&
+            completion.documentID == document.map(ObjectIdentifier.init)
     }
 
-    /// Async save as - use for Save As operations
-    func saveAs(to url: URL) async -> Bool {
+    func isCurrentSaveCompletion(_ completion: SaveCompletion) -> Bool {
+        acceptsSaveCompletion(completion) && completion.sequence >= lastAppliedWrite
+    }
+
+    func save() async -> Bool { await saveWithCompletion().didWrite }
+
+    func saveWithCompletion() async -> SaveCompletion {
+        await performAsyncWrite(target: .current)
+    }
+
+    func saveAs(to url: URL) async -> Bool { await saveAsWithCompletion(to: url).didWrite }
+
+    func saveAsWithCompletion(to url: URL, isSecurityScoped: Bool = false) async -> SaveCompletion {
+        await performAsyncWrite(target: .saveAs(PDFFileAccess(url: url, requestSecurityScope: isSecurityScoped)))
+    }
+
+    /// PDFKit never leaves MainActor. The file session receives only a snapshot.
+    private func performAsyncWrite(target: PDFFileSession.Target) async -> SaveCompletion {
+        prepareSavingIdentity()
+        let epoch = documentEpoch
+        let identity = savingDocumentID
         guard let data = document?.dataRepresentation() else {
-            return false
+            return SaveCompletion(didWrite: false, epoch: epoch, documentID: identity, sequence: lastAppliedWrite)
         }
-
-        let targetURL = url
-        let log = logger
-
-        // File I/O on background thread. Serialization stays on MainActor to avoid PDFKit races.
-        let result = await Task.detached(priority: .userInitiated) {
-            do {
-                try data.write(to: targetURL, options: .atomic)
-                return true
-            } catch {
-                log.error("Save As failed: \(error.localizedDescription)")
-                return false
-            }
-        }.value
-
-        // Update state on main thread
-        if result {
-            stopAccessingCurrentResource()
-            documentURL = url
-            isDirty = false
-        }
-
-        return result
+        let ticket = fileSession.admit(data: data, target: target, epoch: epoch, revision: editRevision)
+        pendingWrites += 1
+        defer { pendingWrites -= 1 }
+        let session = fileSession
+        scheduleWrite { _ = session.drain(through: ticket.sequence) }
+        let outcome = await ticket.value()
+        applySaved(outcome.saved)
+        return SaveCompletion(didWrite: outcome.didWrite, epoch: epoch, documentID: identity, sequence: ticket.sequence)
     }
 
+    /// Modal save claims older admitted work before writing the latest snapshot.
+    func saveSync() -> Bool {
+        prepareSavingIdentity()
+        guard let data = document?.dataRepresentation() else { return false }
+        let ticket = fileSession.admit(data: data, target: .current, epoch: documentEpoch, revision: editRevision)
+        applySaved(fileSession.drain(through: ticket.sequence))
+        return ticket.completed?.didWrite == true
+    }
+
+    // Direct document assignment is used by document construction as well as
+    // tests. Treat a different PDF object as an identity boundary too.
+    private func prepareSavingIdentity() {
+        let identity = document.map(ObjectIdentifier.init)
+        guard savingDocumentID != identity else { return }
+        finishPendingWrites()
+        documentEpoch &+= 1
+        savingDocumentID = identity
+        if fileAccess?.url != documentURL { fileAccess = documentURL.map { PDFFileAccess(url: $0) } }
+        fileSession.reset(access: fileAccess)
+    }
+
+    func finishPendingWrites() { applySaved(fileSession.drain()) }
+
+    private func applySaved(_ saved: PDFFileSession.Saved?) {
+        guard let saved, saved.epoch == documentEpoch, saved.sequence > lastAppliedWrite,
+              savingDocumentID == document.map(ObjectIdentifier.init) else { return }
+        lastAppliedWrite = saved.sequence
+        fileAccess = saved.access
+        documentURL = saved.access.url
+        if saved.revision == editRevision { isDirty = false }
+    }
 }

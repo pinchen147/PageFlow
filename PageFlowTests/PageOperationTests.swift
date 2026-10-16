@@ -58,8 +58,8 @@ struct PageOperationTests {
 
     @Test
     func deletePageBeforeCurrentShiftsCurrentIndex() {
-        let (manager, _) = makeManager(pages: 4, current: 3)
-        manager.deletePage(at: 1)
+        let (manager, undo) = makeManager(pages: 4, current: 3)
+        grouped(undo) { manager.deletePage(at: 1) }
         #expect(manager.currentPageIndex == 2)
     }
 
@@ -140,8 +140,8 @@ struct PageOperationTests {
 
     @Test
     func moveFollowsTheCurrentPage() {
-        let (manager, _) = makeManager(pages: 4, current: 0)
-        manager.movePage(from: 0, to: 2)
+        let (manager, undo) = makeManager(pages: 4, current: 0)
+        grouped(undo) { manager.movePage(from: 0, to: 2) }
         #expect(manager.currentPageIndex == 2)
     }
 

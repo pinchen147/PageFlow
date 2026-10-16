@@ -27,16 +27,13 @@ struct SidebarView: View {
     @FocusState private var isEditingBookmarkFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
+        GlassSidebarShell {
             SidebarHeaderView(
                 mode: $mode,
                 isEditingPages: $isEditingPages,
                 onClose: onClose
             )
-                .padding(.leading, DesignTokens.spacingMD)
-                .padding(.trailing, DesignTokens.spacingSM)
-                .padding(.top, DesignTokens.spacingSM)
-
+        } content: {
             Group {
                 switch mode {
                 case .outline:
@@ -55,33 +52,18 @@ struct SidebarView: View {
             }
             .animation(.easeInOut(duration: DesignTokens.animationFast), value: mode)
         }
-        .padding(.horizontal, DesignTokens.spacingXS)
-        .padding(.vertical, DesignTokens.spacingXS)
-        .frame(width: DesignTokens.sidebarWidth)
-        .pageFlowLiquidGlassPanel(.sidebar)
     }
-    
+
     private var outlineView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if items.isEmpty {
-                     Text("No Outline Available")
-                        .font(.caption)
-                        .foregroundStyle(DesignTokens.sidebarSecondaryText)
-                        .pageFlowGlassControlLabel()
-                        .padding(DesignTokens.spacingMD)
-                } else {
-                    OutlineGroup(items, children: \.children) { item in
-                        outlineItemRow(item)
-                    }
+        GlassSidebarList {
+            if items.isEmpty {
+                GlassSidebarEmptyState(text: "No Outline Available")
+            } else {
+                OutlineGroup(items, children: \.children) { item in
+                    outlineItemRow(item)
                 }
             }
-            .padding(.horizontal, DesignTokens.spacingMD + DesignTokens.spacingSM)
-            .padding(.bottom, DesignTokens.spacingMD)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.clear)
-        .scrollContentBackground(.hidden)
     }
     
     private func outlineItemRow(_ item: OutlineItem) -> some View {
@@ -114,7 +96,7 @@ struct SidebarView: View {
             }
         }
         .contextMenu {
-            if item.pageIndex != nil {
+            if item.pageIndex != nil, pdfManager.permissions.copy {
                 Button("Copy Section as Markdown") {
                     copySectionAsMarkdown(item)
                 }
@@ -123,7 +105,7 @@ struct SidebarView: View {
     }
 
     private func copySectionAsMarkdown(_ item: OutlineItem) {
-        guard let document = pdfManager.document else { return }
+        guard pdfManager.permissions.copy, let document = pdfManager.document else { return }
 
         let markdown = MarkdownExporter.export(
             scope: .outlineSection(item),
@@ -137,26 +119,15 @@ struct SidebarView: View {
     // MARK: - Bookmarks View
 
     private var bookmarksView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if bookmarkManager.bookmarks.isEmpty {
-                    Text("No Bookmarks")
-                        .font(.caption)
-                        .foregroundStyle(DesignTokens.sidebarSecondaryText)
-                        .pageFlowGlassControlLabel()
-                        .padding(DesignTokens.spacingMD)
-                } else {
-                    ForEach(bookmarkManager.sortedBookmarks) { bookmark in
-                        bookmarkRow(bookmark)
-                    }
+        GlassSidebarList {
+            if bookmarkManager.bookmarks.isEmpty {
+                GlassSidebarEmptyState(text: "No Bookmarks")
+            } else {
+                ForEach(bookmarkManager.sortedBookmarks) { bookmark in
+                    bookmarkRow(bookmark)
                 }
             }
-            .padding(.horizontal, DesignTokens.spacingMD + DesignTokens.spacingSM)
-            .padding(.bottom, DesignTokens.spacingMD)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.clear)
-        .scrollContentBackground(.hidden)
     }
 
     private func bookmarkRow(_ bookmark: BookmarkModel) -> some View {

@@ -109,4 +109,25 @@ struct MultiDropTests {
         #expect(tabManager.tabs.first?.documentURL?.pageFlowCanonicalDocumentURL
                 == good.pageFlowCanonicalDocumentURL)
     }
+
+    @Test
+    func savingADroppedSymlinkedNoteWritesItsTarget() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { cleanup([directory]) }
+        let target = directory.appendingPathComponent("vault-note.md")
+        let link = directory.appendingPathComponent("linked-note.md")
+        try Data("v1\n".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+
+        let tabManager = TabManager()
+        #expect(tabManager.openDroppedDocuments([link]) == 0)
+        let content = try #require(tabManager.activeSession?.content.markdown)
+        content.documentManager.text = "v2\n"
+        _ = await tabManager.saveActiveDocument()
+
+        let linkAttributes = try FileManager.default.attributesOfItem(atPath: link.path)
+        #expect(linkAttributes[.type] as? FileAttributeType == .typeSymbolicLink)
+        #expect(try String(contentsOf: target, encoding: .utf8) == "v2\n")
+    }
 }
