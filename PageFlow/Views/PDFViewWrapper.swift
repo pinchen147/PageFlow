@@ -29,6 +29,8 @@ struct PDFViewWrapper: NSViewRepresentable {
     @Bindable var bookmarkManager: BookmarkManager
     var tabUndoManager: UndoManager
     var isActive: Bool
+    var isDisplayed: Bool
+    var onRequestFocus: () -> Void = {}
 
     func makeNSView(context: Context) -> PDFViewHost {
         let pdfView = StablePDFView()
@@ -113,6 +115,8 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     private func configureZoomCallbacks(_ pdfView: StablePDFView, context: Context) {
+        pdfView.onRequestFocus = onRequestFocus
+
         pdfView.onControlScroll = { [weak pdfView, weak coordinator = context.coordinator] event in
             guard let pdfView = pdfView,
                   let coordinator = coordinator else { return false }
@@ -126,7 +130,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     private func configureContextMenuCallbacks(_ pdfView: StablePDFView) {
         pdfView.onCopyPageAsMarkdown = { [weak pdfManager, weak commentManager] in
-            guard let pdfManager = pdfManager,
+            guard let pdfManager = pdfManager, pdfManager.permissions.copy,
                   let document = pdfManager.document else { return }
 
             let markdown = MarkdownExporter.export(
@@ -139,7 +143,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         pdfView.onCopyDocumentAsMarkdown = { [weak pdfManager, weak commentManager] in
-            guard let pdfManager = pdfManager,
+            guard let pdfManager = pdfManager, pdfManager.permissions.copy,
                   let document = pdfManager.document else { return }
 
             let markdown = MarkdownExporter.export(
@@ -228,27 +232,23 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     func updateNSView(_ hostView: PDFViewHost, context: Context) {
-        // Hidden, not just transparent: AppKit skips hidden views for BOTH
-        // hit-testing and layout/draw, so an inactive warm tab can't receive
-        // events through an empty active tab, and live resize doesn't lay out
-        // the whole warm set. (SwiftUI's opacity(0)/allowsHitTesting(false)
-        // don't reach AppKit-backed views.)
-        let shouldHide = !isActive
-        if hostView.isHidden != shouldHide { hostView.isHidden = shouldHide }
+        // Gate native input now and defer AppKit hiding until this update
+        // finishes, so key-view traversal cannot re-enter SwiftUI focus layout.
+        hostView.setContentActive(isDisplayed)
 
         let pdfView = hostView.pdfView
+        pdfView.onRequestFocus = onRequestFocus
         let coordinator = context.coordinator
-        coordinator.setActive(isActive, pdfView: pdfView)
+        coordinator.setActive(isFocused: isActive, isDisplayed: isDisplayed, pdfView: pdfView)
 
         // Structural: load/replace the document and its markup.
         let documentDidChange = pdfView.document !== pdfManager.document
         if documentDidChange {
             pdfView.document = pdfManager.document
+            annotationManager.resetSelection()
             if let document = pdfManager.document {
-                annotationManager.loadAnnotations(from: document)
                 commentManager.loadComments(from: document)
             } else {
-                annotationManager.clearAnnotations()
                 commentManager.clearComments()
             }
         }
@@ -279,6 +279,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                resultIndex != coord.lastNavigatedSearchIndex || resultCount != coord.lastSearchResultCount {
                 coord.lastNavigatedSearchIndex = resultIndex
                 coord.lastSearchResultCount = resultCount
+                coord.invalidateDeferredProjection()
                 pdfView.go(to: currentSelection)
                 pdfView.setCurrentSelection(currentSelection, animate: true)
             }
@@ -306,6 +307,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     static func dismantleNSView(_ hostView: PDFViewHost, coordinator: Coordinator) {
         let pdfView = hostView.pdfView
+        coordinator.invalidateDeferredProjection(dismantled: true)
         NotificationCenter.default.removeObserver(
             coordinator,
             name: .PDFViewPageChanged,
@@ -335,6 +337,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.onCopyPageAsMarkdown = nil
         pdfView.onCopyDocumentAsMarkdown = nil
         pdfView.onToggleBookmark = nil
+        pdfView.onRequestFocus = nil
 
         // The live view is gone; persistence must fall back to manager state.
         // Guarded by owner: after a cross-window tab move the destination's
@@ -395,6 +398,38 @@ struct PDFViewWrapper: NSViewRepresentable {
         fileprivate var lastAppliedSearchHighlightSignature: SearchHighlightSignature?
         var searchHighlightsAreClear = true
         private var zoomQualityRestore: DispatchWorkItem?
+        private var deferredProjectionGeneration: UInt64 = 0
+        private var isDismantled = false
+
+        private struct DeferredProjection {
+            let generation: UInt64
+            let intentRevision: UInt64
+            let documentID: ObjectIdentifier?
+        }
+
+        func invalidateDeferredProjection(dismantled: Bool = false) {
+            deferredProjectionGeneration &+= 1
+            isDismantled = isDismantled || dismantled
+            scrollApplyToken &+= 1
+        }
+
+        private func deferredProjection(for pdfView: PDFView) -> DeferredProjection {
+            DeferredProjection(
+                generation: deferredProjectionGeneration,
+                intentRevision: pdfManager.viewIntentRevision,
+                documentID: pdfView.document.map(ObjectIdentifier.init)
+            )
+        }
+
+        private func accepts(_ work: DeferredProjection, from pdfView: PDFView, requiresDisplayed: Bool = true) -> Bool {
+            !isDismantled && (!requiresDisplayed || lastDisplayed != false)
+                && work.generation == deferredProjectionGeneration
+                && work.intentRevision == pdfManager.viewIntentRevision
+                && work.documentID == pdfView.document.map(ObjectIdentifier.init)
+                && pdfView.document === pdfManager.document
+                && (pdfManager.liveDestinationProviderOwner == nil
+                    || pdfManager.liveDestinationProviderOwner == ObjectIdentifier(self))
+        }
 
         init(pdfManager: PDFManager, annotationManager: AnnotationManager, commentManager: CommentManager, isActive: Bool) {
             self.pdfManager = pdfManager
@@ -414,39 +449,51 @@ struct PDFViewWrapper: NSViewRepresentable {
             removeScrollMonitor()
         }
 
-        /// Installs/removes the window-wide event monitors for this tab based on
-        /// whether it is the active tab. Only the active tab keeps its scroll-zoom
-        /// and right-click monitors, so kept-warm inactive tabs add no per-event
-        /// cost — the accumulation that made long multi-tab sessions lag. Idempotent.
-        /// The last activity state actually applied, so monitor + responder work
-        /// runs only on genuine transitions (updateNSView calls this every pass).
-        private var lastAppliedActive: Bool?
+        /// Reconciles event monitors and keyboard focus along two axes:
+        /// - Monitors (scroll-zoom, right-click) track **visibility**: the on-screen
+        ///   view keeps its own, routing to itself via its own hit-test. Hidden warm
+        ///   tabs install none (the long-session accumulation guard).
+        /// - First responder tracks **focus**: the focused, on-screen view takes the
+        ///   keyboard (so tab switching gives arrows to it without a click). Both run
+        ///   only on genuine transitions.
+        ///
+        /// The warm stack displays only the active tab, so today `isDisplayed ==
+        /// isFocused`: the active tab installs monitors + takes focus; a hidden warm
+        /// tab does neither and hands focus back.
+        private var lastDisplayed: Bool?
+        private var lastFocused: Bool?
 
-        func setActive(_ active: Bool, pdfView: StablePDFView) {
-            isActive = active
-            guard lastAppliedActive != active else { return }
-            lastAppliedActive = active
-            if active {
-                setupScrollMonitor(for: pdfView)
-                pdfView.setupRightClickMonitor()
-                // Deterministic keyboard routing on tab switch: without this,
-                // the hidden previous tab keeps first responder and swallows
-                // arrow/space scrolling until the user clicks. Deferred a turn —
-                // responder changes inside a SwiftUI update re-enter AppKit.
-                DispatchQueue.main.async { [weak pdfView] in
-                    guard let pdfView, let window = pdfView.window,
-                          !pdfView.isHiddenOrHasHiddenAncestor else { return }
-                    window.makeFirstResponder(pdfView)
+        func setActive(isFocused: Bool, isDisplayed: Bool, pdfView: StablePDFView) {
+            isActive = isFocused
+
+            if lastDisplayed != isDisplayed {
+                invalidateDeferredProjection()
+                lastDisplayed = isDisplayed
+                if isDisplayed {
+                    setupScrollMonitor(for: pdfView)
+                    pdfView.setupRightClickMonitor()
+                } else {
+                    removeScrollMonitor()
+                    pdfView.removeRightClickMonitor()
+                    // A pane going hidden hands the keyboard back if it still holds it.
+                    DispatchQueue.main.async { [weak pdfView] in
+                        guard let pdfView, let window = pdfView.window,
+                              let responder = window.firstResponder as? NSView,
+                              responder === pdfView || responder.isDescendant(of: pdfView) else { return }
+                        window.makeFirstResponder(nil)
+                    }
                 }
-            } else {
-                removeScrollMonitor()
-                pdfView.removeRightClickMonitor()
-                // Hand the keyboard back if this (now hidden) view still holds it.
-                DispatchQueue.main.async { [weak pdfView] in
-                    guard let pdfView, let window = pdfView.window,
-                          let responder = window.firstResponder as? NSView,
-                          responder === pdfView || responder.isDescendant(of: pdfView) else { return }
-                    window.makeFirstResponder(nil)
+            }
+
+            if lastFocused != isFocused {
+                lastFocused = isFocused
+                // Deferred a turn — responder changes inside a SwiftUI update re-enter AppKit.
+                if isFocused, isDisplayed {
+                    DispatchQueue.main.async { [weak pdfView] in
+                        guard let pdfView, let window = pdfView.window,
+                              !pdfView.isHiddenOrHasHiddenAncestor else { return }
+                        window.makeFirstResponder(pdfView)
+                    }
                 }
             }
         }
@@ -541,17 +588,21 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         /// Runs `work` now when safe, or on the next runloop turn if a projector
         /// write is in flight (so we never mutate @Observable state mid view-update).
-        private func ingestOrDefer(_ work: @escaping () -> Void) {
-            if isProjecting {
-                DispatchQueue.main.async(execute: work)
-            } else {
+        private func ingestOrDefer(from pdfView: PDFView, _ work: @escaping () -> Void) {
+            let state = deferredProjection(for: pdfView)
+            let ingest = { [weak self, weak pdfView] in
+                guard let self, let pdfView, self.accepts(state, from: pdfView, requiresDisplayed: false) else { return }
                 work()
             }
+            if isProjecting { DispatchQueue.main.async(execute: ingest) }
+            else { ingest() }
         }
 
         func processControlScroll(event: NSEvent, pdfView: StablePDFView) -> Bool {
-            guard isActive,
-                  event.modifierFlags.contains(.control),
+            // No focus gate: the cursor-bounds check routes ctrl-scroll to the view the
+            // pointer is over. Monitors only exist on the visible tab, so a hidden tab
+            // never reaches here.
+            guard event.modifierFlags.contains(.control),
                   let pointInView = convertEventPoint(event, in: pdfView),
                   pdfView.bounds.contains(pointInView) else {
                 return false
@@ -590,17 +641,17 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             let pointInViewAfterZoom = pdfView.convert(pointInPage, from: page)
 
-            let offsetX = pointInViewAfterZoom.x - pointInView.x
-            let offsetY = pointInViewAfterZoom.y - pointInView.y
-
             if let scrollView = pdfView.documentScrollView,
                let documentView = scrollView.documentView {
                 let visibleRect = scrollView.documentVisibleRect
                 let docBounds = documentView.bounds
+                // In the document's own coordinates, whichever way they run.
+                let offset = PDFDocumentScroll.zoomAnchorDelta(pointer: pointInView, pageAfterZoom: pointInViewAfterZoom,
+                                                               in: pdfView, documentView: documentView)
 
                 var newOrigin = NSPoint(
-                    x: visibleRect.origin.x + offsetX,
-                    y: visibleRect.origin.y + offsetY
+                    x: visibleRect.origin.x + offset.x,
+                    y: visibleRect.origin.y + offset.y
                 )
 
                 // Center horizontally if document is narrower than view
@@ -666,7 +717,9 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
             let pageIndex = document.index(for: currentPage)
             guard pageIndex != NSNotFound else { return }
-            ingestOrDefer { [weak self] in
+            scrollApplyToken &+= 1
+            ingestOrDefer(from: pdfView) { [weak self, weak pdfView] in
+                guard pdfView?.currentPage === currentPage else { return }
                 self?.pdfManager.ingestPageChange(index: pageIndex, page: currentPage)
             }
         }
@@ -676,7 +729,8 @@ struct PDFViewWrapper: NSViewRepresentable {
             let viewScale = pdfView.scaleFactor
             // Ignore the echo of our own projector write.
             guard PDFViewWrapper.scalesDiffer(viewScale, pdfManager.scaleFactor) else { return }
-            ingestOrDefer { [weak self] in
+            ingestOrDefer(from: pdfView) { [weak self, weak pdfView] in
+                guard let pdfView, !PDFViewWrapper.scalesDiffer(pdfView.scaleFactor, viewScale) else { return }
                 self?.pdfManager.ingestScaleChange(viewScale)
             }
         }
@@ -687,7 +741,7 @@ struct PDFViewWrapper: NSViewRepresentable {
             // Ignore the echo of our own projector write (view already matches intent).
             guard viewMode != pdfManager.displayMode else { return }
             // User changed mode via PDFKit's own context menu: adopt it and re-fit.
-            ingestOrDefer { [weak self] in
+            ingestOrDefer(from: pdfView) { [weak self] in
                 self?.pdfManager.ingestDisplayModeChange(viewMode)
             }
             scheduleFitForDisplayModeChange(on: pdfView)
@@ -698,8 +752,9 @@ struct PDFViewWrapper: NSViewRepresentable {
         /// Resolves a one-shot `FitRequest` once the view is laid out, writes the
         /// scale through the single projector path, then clears the request.
         private func performFit(on pdfView: StablePDFView, request: FitRequest, retryCount: Int) {
+            let state = deferredProjection(for: pdfView)
             DispatchQueue.main.async { [weak self, weak pdfView] in
-                guard let self, let pdfView else { return }
+                guard let self, let pdfView, self.accepts(state, from: pdfView) else { return }
                 // Bail if a newer command (zoom, mode change) superseded this fit.
                 guard self.pdfManager.pendingFit == request else { return }
 
@@ -707,7 +762,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 if (pdfView.bounds.isEmpty || pdfView.document == nil),
                    retryCount < DesignTokens.maxReadinessRetries {
                     DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) { [weak self, weak pdfView] in
-                        guard let self, let pdfView else { return }
+                        guard let self, let pdfView, self.accepts(state, from: pdfView) else { return }
                         self.performFit(on: pdfView, request: request, retryCount: retryCount + 1)
                     }
                     return
@@ -747,8 +802,9 @@ struct PDFViewWrapper: NSViewRepresentable {
                               on pdfView: StablePDFView,
                               retryCount: Int,
                               oneShot: ReferenceWritableKeyPath<PDFManager, PDFDestination?>) {
+            let state = deferredProjection(for: pdfView)
             DispatchQueue.main.async { [weak self, weak pdfView] in
-                guard let self, let pdfView else { return }
+                guard let self, let pdfView, self.accepts(state, from: pdfView) else { return }
                 // Bail if a newer request superseded this one.
                 guard self.pdfManager[keyPath: oneShot] === destination else { return }
 
@@ -756,7 +812,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 if (pdfView.bounds.isEmpty || pdfView.document == nil),
                    retryCount < DesignTokens.maxReadinessRetries {
                     DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) { [weak self, weak pdfView] in
-                        guard let self, let pdfView else { return }
+                        guard let self, let pdfView, self.accepts(state, from: pdfView) else { return }
                         self.scrollTo(destination, on: pdfView, retryCount: retryCount + 1, oneShot: oneShot)
                     }
                     return
@@ -766,13 +822,15 @@ struct PDFViewWrapper: NSViewRepresentable {
                 self.pdfManager[keyPath: oneShot] = nil
                 self.scrollApplyToken &+= 1
                 let token = self.scrollApplyToken
+                let settledState = self.deferredProjection(for: pdfView)
 
                 // Re-apply after the layout settles; PDFKit can reset scroll mid-relayout.
                 // Skip if a newer scroll superseded this one, so a stale delayed reapply
                 // can't yank the user back after they've navigated elsewhere.
                 DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak self, weak pdfView] in
-                    guard let self, self.scrollApplyToken == token else { return }
-                    pdfView?.go(to: destination)
+                    guard let self, let pdfView, self.scrollApplyToken == token,
+                          self.accepts(settledState, from: pdfView) else { return }
+                    pdfView.go(to: destination)
                 }
             }
         }
@@ -780,9 +838,10 @@ struct PDFViewWrapper: NSViewRepresentable {
         /// Re-fits after a display-mode change. PDFKit reflows asynchronously, so we
         /// wait for the settle delay before measuring, then scroll to the page top.
         private func scheduleFitForDisplayModeChange(on pdfView: StablePDFView) {
+            let state = deferredProjection(for: pdfView)
             DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfDisplayModeSettleDelay) { [weak self, weak pdfView] in
                 guard let self,
-                      let pdfView,
+                      let pdfView, self.accepts(state, from: pdfView),
                       let currentPage = pdfView.currentPage ?? self.pdfManager.currentPage else {
                     return
                 }
@@ -799,17 +858,19 @@ struct PDFViewWrapper: NSViewRepresentable {
                 let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)
                 pdfView.go(to: PDFDestination(page: currentPage, at: topLeft))
 
+                let settledState = self.deferredProjection(for: pdfView)
                 DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak self, weak pdfView] in
-                    guard let self, let pdfView else { return }
+                    guard let self, let pdfView, self.accepts(settledState, from: pdfView) else { return }
                     self.centerContentAfterFit(in: pdfView)
                 }
             }
         }
 
         private func scheduleCenterContent(in pdfView: StablePDFView, scrollToTop: Bool) {
+            let state = deferredProjection(for: pdfView)
             // Delay: PDFKit needs a layout pass before scroll/center position is meaningful.
             DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak self, weak pdfView] in
-                guard let self, let pdfView else { return }
+                guard let self, let pdfView, self.accepts(state, from: pdfView) else { return }
                 self.centerContent(in: pdfView, scrollToTop: scrollToTop)
             }
         }
@@ -832,7 +893,8 @@ struct PDFViewWrapper: NSViewRepresentable {
 
             let targetY: CGFloat
             if scrollToTop {
-                targetY = max(0, docHeight - clipHeight)
+                targetY = PDFDocumentScroll.topOriginY(documentHeight: docHeight, clipHeight: clipHeight,
+                                                       isFlipped: documentView.isFlipped)
             } else {
                 targetY = scrollView.contentView.bounds.origin.y
             }

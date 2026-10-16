@@ -14,9 +14,7 @@ struct SidebarHeaderView: View {
 
     var body: some View {
         HStack {
-            Text(headerTitle)
-                .font(.headline)
-                .pageFlowGlassControlLabel()
+            GlassSidebarTitle(text: headerTitle)
 
             Spacer()
 
@@ -25,7 +23,10 @@ struct SidebarHeaderView: View {
             }
 
             modeToggle
-            closeButton
+            GlassSidebarCloseButton {
+                isEditingPages = false
+                onClose()
+            }
         }
     }
 
@@ -72,23 +73,6 @@ struct SidebarHeaderView: View {
         }
         .buttonStyle(.plain)
         .help(modeHelpText)
-    }
-
-    private var closeButton: some View {
-        Button {
-            isEditingPages = false
-            onClose()
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.secondary)
-                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-                .pageFlowGlassControlLabel()
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
     }
 
     private var nextMode: SidebarMode {

@@ -43,7 +43,32 @@ final class WindowRegistry {
 
     private var entries: [ObjectIdentifier: Entry] = [:]
     private var mainWindowObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
+    private var closeCoordinators: [ObjectIdentifier: WindowCloseCoordinator] = [:]
     private weak var lastActiveTabManager: TabManager?
+
+    /// Holds a chosen destination until Save As publishes its committed identity.
+    /// The weak source follows a transfer without retaining a retired document.
+    @MainActor
+    private final class PendingSaveAs {
+        let token = UUID()
+        weak var session: TabSession?
+        weak var document: (any TabDocument)?
+        weak var originalOwner: TabManager?
+        var users = 1
+
+        init(session: TabSession, owner: TabManager) {
+            self.session = session
+            self.document = session.content.document
+            self.originalOwner = owner
+        }
+    }
+
+    struct SaveAsClaim {
+        fileprivate let canonicalURL: URL
+        fileprivate let token: UUID
+    }
+
+    private var pendingSaveAs: [URL: PendingSaveAs] = [:]
 
     private var pendingTransientPlaceholderDismissals = 0
     private var transientPlaceholderDismissalLowerBound: Date?
@@ -54,6 +79,8 @@ final class WindowRegistry {
     // MARK: - Registration
 
     func register(_ tabManager: TabManager, window: NSWindow?) {
+        if entries[ObjectIdentifier(tabManager)]?.window === window, window != nil { return }
+        unregister(tabManager)
         entries[ObjectIdentifier(tabManager)] = Entry(
             tabManager: tabManager,
             window: window,
@@ -65,6 +92,7 @@ final class WindowRegistry {
         }
 
         if let window {
+            closeCoordinators[ObjectIdentifier(tabManager)] = WindowCloseCoordinator(window: window, manager: tabManager)
             // One-turn-deferred front-most tracking is harmless (see helper doc).
             let token = NotificationCenter.default.addMainActorObserver(
                 forName: NSWindow.didBecomeMainNotification,
@@ -88,6 +116,7 @@ final class WindowRegistry {
     }
 
     func unregister(_ tabManager: TabManager) {
+        closeCoordinators.removeValue(forKey: ObjectIdentifier(tabManager))?.detach()
         entries.removeValue(forKey: ObjectIdentifier(tabManager))
         if lastActiveTabManager === tabManager {
             lastActiveTabManager = nil
@@ -97,6 +126,14 @@ final class WindowRegistry {
             NotificationCenter.default.removeObserver(token)
         }
         publishActiveWindow()
+    }
+
+    /// Native close is the commit point; Cancel never reaches this path.
+    func finishClose(of tabManager: TabManager, window: NSWindow) {
+        guard self.window(for: tabManager) === window else { return }
+        tabManager.finishWindowClose()
+        unregister(tabManager)
+        if AppDelegate.shared?.terminationApproved != true { scheduleSessionSave() }
     }
 
     /// Mirrors the resolved frontmost manager onto `ActiveWindowModel`, the
@@ -110,10 +147,27 @@ final class WindowRegistry {
 
     // MARK: - Lookups
 
-    func allDirtyPDFManagers() -> [(UUID, PDFManager)] {
-        entries.values
+    /// The window hosting this TabManager, if registered and still alive.
+    /// Used by the edit-mode key monitor to scope app-wide key events to its
+    /// own window.
+    func window(for tabManager: TabManager) -> NSWindow? {
+        entries[ObjectIdentifier(tabManager)]?.window
+    }
+
+    /// Content-agnostic dirty aggregation across every open window — the PDF +
+    /// Markdown superset of the former `allDirtyPDFManagers()`, used by the quit
+    /// save prompt (`applicationShouldTerminate`).
+    /// Windows front to back (then in the order they opened), each in tab order,
+    /// so the prompts follow what the user sees instead of dictionary order.
+    func allDirtyDocuments() -> [DirtyDoc] {
+        let stacking = NSApp.orderedWindows
+        func rank(_ entry: Entry) -> Int {
+            entry.window.flatMap { window in stacking.firstIndex { $0 === window } } ?? stacking.count
+        }
+        return entries.values
             .filter { $0.window != nil }
-            .flatMap { $0.tabManager.dirtyPDFManagers() }
+            .sorted { (rank($0), $0.registeredAt) < (rank($1), $1.registeredAt) }
+            .flatMap { $0.tabManager.dirtyDocuments() }
     }
 
     /// Persists every open window's active-tab reading position to the store.
@@ -122,6 +176,64 @@ final class WindowRegistry {
         for entry in entries.values where entry.window != nil {
             entry.tabManager.flushActiveTabViewState()
         }
+    }
+
+    /// Reconciles every open window's markdown editors into their durable text
+    /// (fork P1) — the app-wide peer of `flushAllViewState`. Called at the TOP of
+    /// `applicationShouldTerminate`, BEFORE `allDirtyDocuments()`, so a tab edited
+    /// moments before ⌘Q is judged dirty on its live text rather than the engine's
+    /// not-yet-drained ~1s deferred binding write (the quit data-loss fix).
+    func flushAllEditors() {
+        for entry in entries.values where entry.window != nil {
+            entry.tabManager.flushMarkdownEditors()
+        }
+    }
+
+    /// Lands every admitted save in every window before quit judges dirty state:
+    /// approving termination must never cut a background write short.
+    func finishAllPendingWrites() {
+        for entry in entries.values where entry.window != nil {
+            for session in entry.tabManager.sessions.values {
+                session.content.document.finishPendingWrites()
+            }
+        }
+    }
+
+    // MARK: - Session Restore (S8 P1)
+
+    private var sessionSaveScheduled = false
+
+    /// Coalesced persist of the app's file-backed tab layout. A burst of tab
+    /// mutations (opening a document opens a tab AND stamps its identity, etc.)
+    /// writes the store once, on the next main-runloop turn. A no-op under tests —
+    /// the layout is a live-window concern and the test host registers none.
+    func scheduleSessionSave() {
+        guard !TestEnvironment.isRunningTests else { return }
+        guard !sessionSaveScheduled else { return }
+        sessionSaveScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sessionSaveScheduled = false
+            guard AppDelegate.shared?.terminationApproved != true else { return }
+            self.persistSessionNow()
+        }
+    }
+
+    /// Synchronous capture + write. Used at quit (views still live) and by the
+    /// coalesced schedule above.
+    func persistSessionNow() {
+        SessionRestoreStore.shared.save(captureSession())
+    }
+
+    /// The app's current file-backed session across every live window, in
+    /// registration order. Untitled windows contribute nothing (`captureWindowSession`
+    /// returns nil for an all-untitled window).
+    func captureSession() -> SessionRestoreState {
+        let windows = entries.values
+            .filter { $0.window != nil }
+            .sorted { $0.registeredAt < $1.registeredAt }
+            .compactMap { $0.tabManager.captureWindowSession() }
+        return SessionRestoreState(windows: windows)
     }
 
     /// TabManager whose window was most recently main. Stays correct even
@@ -160,6 +272,7 @@ final class WindowRegistry {
     /// read-only counterpart to `activateExistingDocument` — it never changes focus.
     func isDocumentOpen(_ url: URL) -> Bool {
         let canonicalURL = url.pageFlowCanonicalDocumentURL
+        if pendingSaveAsOwner(for: canonicalURL) != nil { return true }
         for entry in entries.values where entry.window != nil {
             if entry.tabManager.tabID(for: canonicalURL) != nil { return true }
         }
@@ -170,6 +283,11 @@ final class WindowRegistry {
     /// `true` if handled (caller should not create a new tab/window).
     func activateExistingDocument(for url: URL) -> Bool {
         let canonicalURL = url.pageFlowCanonicalDocumentURL
+        if let (owner, session) = pendingSaveAsOwner(for: canonicalURL) {
+            owner.selectTab(session.id)
+            bringToFront(for: owner)
+            return true
+        }
         let match: (TabManager, UUID, NSWindow?)? = {
             for entry in entries.values {
                 guard let window = entry.window else { continue }
@@ -183,6 +301,62 @@ final class WindowRegistry {
         guard let (tabManager, tabID, _) = match else { return false }
         activate(tabID, in: tabManager)
         return true
+    }
+
+    /// Resolve exact content ownership again after a modal panel or window move.
+    /// The fallback keeps the same boundary usable by a not-yet-hosted manager.
+    func owner(of session: TabSession, document: any TabDocument, fallback: TabManager? = nil) -> TabManager? {
+        guard session.content.document === document else { return nil }
+        if let markdown = session.content.markdown, markdown.documentManager.isClosed { return nil }
+        @MainActor func owns(_ manager: TabManager) -> Bool {
+            manager.sessions[session.id] === session && manager.tabs.contains { $0.id == session.id }
+        }
+        if let fallback, owns(fallback) { return fallback }
+        return entries.values.first { $0.window != nil && owns($0.tabManager) }?.tabManager
+    }
+
+    /// Canonical admission happens before either synchronous or asynchronous I/O.
+    /// A conflicting destination only changes focus; neither draft is written.
+    func claimSaveAs(to url: URL, session: TabSession, document: any TabDocument, owner: TabManager) -> SaveAsClaim? {
+        guard self.owner(of: session, document: document, fallback: owner) === owner else { return nil }
+        let canonicalURL = url.pageFlowCanonicalDocumentURL
+        if let (existingOwner, existingSession) = pendingSaveAsOwner(for: canonicalURL),
+           let pending = pendingSaveAs[canonicalURL] {
+            guard existingSession === session else {
+                existingOwner.selectTab(existingSession.id)
+                bringToFront(for: existingOwner)
+                return nil
+            }
+            pending.users += 1
+            return SaveAsClaim(canonicalURL: canonicalURL, token: pending.token)
+        }
+        let managers = [owner] + entries.values.filter { $0.window != nil }.map(\.tabManager)
+        for manager in managers {
+            if let id = manager.tabID(for: canonicalURL), manager.sessions[id] !== session {
+                manager.selectTab(id)
+                bringToFront(for: manager)
+                return nil
+            }
+        }
+        let pending = PendingSaveAs(session: session, owner: owner)
+        pendingSaveAs[canonicalURL] = pending
+        return SaveAsClaim(canonicalURL: canonicalURL, token: pending.token)
+    }
+
+    func releaseSaveAs(_ claim: SaveAsClaim) {
+        guard let pending = pendingSaveAs[claim.canonicalURL], pending.token == claim.token else { return }
+        pending.users -= 1
+        if pending.users == 0 { pendingSaveAs.removeValue(forKey: claim.canonicalURL) }
+    }
+
+    private func pendingSaveAsOwner(for canonicalURL: URL) -> (TabManager, TabSession)? {
+        guard let pending = pendingSaveAs[canonicalURL] else { return nil }
+        guard let session = pending.session, let document = pending.document,
+              let owner = owner(of: session, document: document, fallback: pending.originalOwner) else {
+            pendingSaveAs.removeValue(forKey: canonicalURL)
+            return nil
+        }
+        return (owner, session)
     }
 
     // MARK: - Tab Switcher (cross-window)
@@ -235,10 +409,24 @@ final class WindowRegistry {
 
     // MARK: - Window Front/Close
 
-    func closeWindow(for tabManager: TabManager) {
-        let window = entries[ObjectIdentifier(tabManager)]?.window
-        DispatchQueue.main.async {
-            window?.close()
+    func closeWindow(for tabManager: TabManager, onlyIfEmpty: Bool = false) {
+        scheduleWindowClose(for: tabManager) { !onlyIfEmpty || $0.tabs.isEmpty }
+    }
+
+    func closePlaceholderWindow(for tabManager: TabManager) {
+        scheduleWindowClose(for: tabManager) { $0.hasOnlyPlaceholderTab }
+    }
+
+    /// A queued dismissal loses authority if its owner moves to another window
+    /// or its empty/placeholder state changes before AppKit receives the close.
+    private func scheduleWindowClose(
+        for tabManager: TabManager, when shouldClose: @escaping @MainActor (TabManager) -> Bool
+    ) {
+        guard let window = self.window(for: tabManager) else { return }
+        DispatchQueue.main.async { [weak self, weak tabManager, weak window] in
+            guard let self, let tabManager, let window,
+                  self.window(for: tabManager) === window, shouldClose(tabManager) else { return }
+            window.close()
         }
     }
 

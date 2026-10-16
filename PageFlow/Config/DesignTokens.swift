@@ -124,6 +124,18 @@ struct DesignTokens {
     static let animationFast: Double = 0.15
     static let animationNormal: Double = 0.25
 
+    /// The chrome's spring: the Deck's cards sliding. Reduce Motion swaps it
+    /// for a short ease.
+    static func chromeAnimation(reduceMotion: Bool) -> Animation {
+        reduceMotion ? .easeInOut(duration: animationFast) : .spring(duration: 0.45, bounce: 0.1)
+    }
+
+    /// The toolbar folding into its sphere and springing open: quicker than
+    /// the Deck, since it answers the pointer directly.
+    static func toolbarFoldAnimation(reduceMotion: Bool) -> Animation {
+        reduceMotion ? .easeInOut(duration: animationFast) : .spring(duration: 0.3, bounce: 0.1)
+    }
+
     // MARK: - Autoscroll (Thumbnail Drag)
 
     static let autoscrollEdgeZone: CGFloat = 60        // Edge detection zone from viewport edge
@@ -142,6 +154,23 @@ struct DesignTokens {
     static let pdfFitZoomBump: CGFloat = 0.05
     static let pdfTwoPageGap: CGFloat = 10
     static let pdfControlScrollZoomFactor: CGFloat = 1.1
+
+    /// Markdown visual zoom (NSScrollView magnification, PDF-style). 50%–400%,
+    /// with ⌘+/⌘− stepping multiplicatively.
+    static let markdownMinZoom: CGFloat = 0.5
+    static let markdownMaxZoom: CGFloat = 4.0
+    static let markdownZoomStepFactor: CGFloat = 1.25
+
+    // MARK: - Markdown Reading
+
+    /// Default left/right margin of the Markdown editor. The LIVE value is the
+    /// user setting `SettingsManager.markdownSideMargin`; this is its default.
+    static let markdownReadingGutter: CGFloat = 24
+    /// Page look (doc 18 §4.3 D6): the reading column's measure in ems of the
+    /// body font; the side-margin slider adds gutter on top.
+    static let markdownPageMeasureEm: CGFloat = 42
+    /// Breathing room between the floating top chrome and the document's first line.
+    static let markdownFirstLineGap: CGFloat = 24
 
     // MARK: - Search
 
@@ -176,6 +205,9 @@ struct DesignTokens {
     /// The opaque content-card surface, shared by comment bubbles, the thumbnail
     /// letterbox fill, and the tab drag pill so they all read as the same card.
     static let contentCardSurface = Color.white
+    /// The chrome's porcelain in dark mode (`GlassStyle.porcelainInDark`): the
+    /// opacity of the Deck's unfocused tab cards.
+    static let chromePorcelainOpacity: Double = 0.88
     static let commentCardBackground = contentCardSurface
     static let commentCardStroke = Color.black.opacity(0.08)
     static let commentCardStrokeSelected = Color(nsColor: .controlAccentColor)
@@ -211,6 +243,10 @@ struct DesignTokens {
     static let tabBarLeftMargin: CGFloat = 80
     static let tabCloseButtonSize: CGFloat = 14
     static let tabDirtyIndicatorSize: CGFloat = 6
+    /// How much of a tucked-away tab shows in the compact tab strip (the Deck).
+    static let tabDeckSliverWidth: CGFloat = 18
+    /// The round glass icon buttons in the chrome (new tab, tab switcher).
+    static let chromeIconSize: CGFloat = 24
 
     // MARK: - Timing (PDFKit workaround delays)
 

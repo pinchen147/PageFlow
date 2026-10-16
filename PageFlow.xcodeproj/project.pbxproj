@@ -7,8 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0013A9AA2FE6801F00C44F8F /* MarkdownEngine in Frameworks */ = {isa = PBXBuildFile; productRef = 0013A9A92FE6801F00C44F8F /* MarkdownEngine */; };
+		0013A9AC2FE6801F00C44F8F /* MarkdownEngineLatex in Frameworks */ = {isa = PBXBuildFile; productRef = 0013A9AB2FE6801F00C44F8F /* MarkdownEngineLatex */; };
+		0013A9AE2FE6801F00C44F8F /* MarkdownEngineCodeBlocks in Frameworks */ = {isa = PBXBuildFile; productRef = 0013A9AD2FE6801F00C44F8F /* MarkdownEngineCodeBlocks */; };
+		0013A9B02FE6801F00C44F8F /* MarkdownEngineMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = 0013A9AF2FE6801F00C44F8F /* MarkdownEngineMermaid */; };
 		0040E81B2F19446D000B1D33 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 00MATH0012F1A00000000002 /* SwiftMath */; };
-		009AE84F2F1F6F6100D6D2B1 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 003A1B282EEE770400F7E0FD /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,7 +74,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				009AE84F2F1F6F6100D6D2B1 /* Sparkle in Frameworks */,
+				0013A9AA2FE6801F00C44F8F /* MarkdownEngine in Frameworks */,
+				0013A9AC2FE6801F00C44F8F /* MarkdownEngineLatex in Frameworks */,
+				0013A9AE2FE6801F00C44F8F /* MarkdownEngineCodeBlocks in Frameworks */,
+				0013A9B02FE6801F00C44F8F /* MarkdownEngineMermaid in Frameworks */,
 				0040E81B2F19446D000B1D33 /* SwiftMath in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -134,7 +140,10 @@
 			name = PageFlow;
 			packageProductDependencies = (
 				00MATH0012F1A00000000002 /* SwiftMath */,
-				003A1B282EEE770400F7E0FD /* Sparkle */,
+				0013A9A92FE6801F00C44F8F /* MarkdownEngine */,
+				0013A9AB2FE6801F00C44F8F /* MarkdownEngineLatex */,
+				0013A9AD2FE6801F00C44F8F /* MarkdownEngineCodeBlocks */,
+				0013A9AF2FE6801F00C44F8F /* MarkdownEngineMermaid */,
 			);
 			productName = PageFlow;
 			productReference = 00985C642EE4A10500E48813 /* PageFlow.app */;
@@ -219,8 +228,8 @@
 			mainGroup = 00985C5B2EE4A10500E48813;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				003A1B272EEE770400F7E0FD /* XCRemoteSwiftPackageReference "Sparkle" */,
 				00MATH0012F1A00000000001 /* XCRemoteSwiftPackageReference "SwiftMath" */,
+				0013A9A82FE6801F00C44F8F /* XCLocalSwiftPackageReference "Vendor/swift-markdown-engine" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 00985C652EE4A10500E48813 /* Products */;
@@ -428,7 +437,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -443,7 +452,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.3;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -464,7 +473,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -479,7 +488,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.3;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -643,7 +652,7 @@
 				CODE_SIGN_ENTITLEMENTS = "PageFlow/PageFlow-Direct.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = NO;
@@ -658,12 +667,12 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.3;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "ENABLE_SPARKLE $(inherited)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -759,15 +768,14 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCRemoteSwiftPackageReference section */
-		003A1B272EEE770400F7E0FD /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.8.1;
-			};
+/* Begin XCLocalSwiftPackageReference section */
+		0013A9A82FE6801F00C44F8F /* XCLocalSwiftPackageReference "Vendor/swift-markdown-engine" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Vendor/swift-markdown-engine";
 		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
 		00MATH0012F1A00000000001 /* XCRemoteSwiftPackageReference "SwiftMath" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/mgriebling/SwiftMath";
@@ -779,10 +787,21 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		003A1B282EEE770400F7E0FD /* Sparkle */ = {
+		0013A9A92FE6801F00C44F8F /* MarkdownEngine */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 003A1B272EEE770400F7E0FD /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
+			productName = MarkdownEngine;
+		};
+		0013A9AB2FE6801F00C44F8F /* MarkdownEngineLatex */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownEngineLatex;
+		};
+		0013A9AD2FE6801F00C44F8F /* MarkdownEngineCodeBlocks */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownEngineCodeBlocks;
+		};
+		0013A9AF2FE6801F00C44F8F /* MarkdownEngineMermaid */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownEngineMermaid;
 		};
 		00MATH0012F1A00000000002 /* SwiftMath */ = {
 			isa = XCSwiftPackageProductDependency;
