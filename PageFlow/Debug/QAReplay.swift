@@ -12,7 +12,7 @@
 //  Environment:
 //    PAGEFLOW_QA_SCENARIO  scroll-read | click-sweep | zoom-steps | switch-restore
 //                          | type-burst | math-edit | format-burst | undo-check
-//                          | table-nav | table-wrap-type | selection-bar | all
+//                          | table-nav | table-wrap-type | selection-bar | image-select | all
 //    PAGEFLOW_QA_DOC       document to open (must be readable by the sandboxed app,
 //                          e.g. inside the container's tmp directory)
 //    PAGEFLOW_QA_EXIT      "1" exits 0 on pass, 1 on failure
@@ -56,6 +56,10 @@ enum QAReplay {
         var openMilliseconds: Double?
         var footprintMB: Double?
         var perKeyMilliseconds: Double?
+        /// Callback/whole-gesture elapsed times; these are not per-frame timings.
+        var hoverCallbackMilliseconds: Double?
+        var resizeGestureMilliseconds: Double?
+        var cropGestureMilliseconds: Double?
         var notes: [String] = []
         var failures: [String] = []
         var measuredSamples = 0
@@ -67,6 +71,12 @@ enum QAReplay {
             for (label, value) in [("idle drift", maxIdleDrift), ("interaction shift", maxInteractionShift)] {
                 if !value.isFinite || value < 0 || value >= 1 {
                     failures.append("\(label) must be finite and below 1pt; measured \(value)")
+                }
+            }
+            for (label, value) in [("hover callback", hoverCallbackMilliseconds),
+                                   ("resize gesture", resizeGestureMilliseconds), ("crop gesture", cropGestureMilliseconds)] {
+                if let value, !value.isFinite || value < 0 {
+                    failures.append("Invalid \(label): \(value)")
                 }
             }
             for (label, value) in [("open time", openMilliseconds), ("footprint", footprintMB), ("key time", perKeyMilliseconds)] {
@@ -106,8 +116,14 @@ enum QAReplay {
             finish(scenarios: scenarios, results: [], failures: ["Invalid or duplicate scenario: \(requested)"])
             return
         }
+        QAPresentation.prepare()
+        let foregroundScenarios: Set<String> = ["selection-bar", "image-select", "image-controls", "shortcuts", "checklist", "hover", "comments", "click-sweep", "table-chrome", "table-nav", "table-wrap-type", "type-burst", "math-edit", "format-burst", "undo-check"]
+        if QAPresentation.runsInBackground, !foregroundScenarios.isDisjoint(with: scenarios) {
+            finish(scenarios: scenarios, results: [], failures: ["Deferred: requested scenarios require an explicitly approved foreground session"])
+            return
+        }
         let documentPath = env["PAGEFLOW_QA_DOC"]
-        NSApp.activate(ignoringOtherApps: true)
+        QAPresentation.activateIfAllowed()
 
         guard let tabManager = await waitForTabManager() else {
             finish(scenarios: scenarios, results: [], failures: ["No window/TabManager appeared"])
@@ -121,6 +137,7 @@ enum QAReplay {
                 return
             }
         }
+        await sleep(0.5)
         guard let content = tabManager.activeMarkdownContent,
               let textView = liveEditor(in: tabManager),
               let window = textView.window,
@@ -128,7 +145,6 @@ enum QAReplay {
             finish(scenarios: scenarios, results: [], failures: ["No live-preview editor found in the target window"])
             return
         }
-        await sleep(0.5)
 
         let documentName = content.documentManager.documentTitle
         let context = Context(tabManager: tabManager, content: content, window: window, textView: textView, scrollView: scrollView, documentName: documentName)
@@ -158,6 +174,32 @@ enum QAReplay {
             case "hover": await hover(context, &result)
             case "checklist": await checklist(context, &result)
             case "shortcuts": await shortcuts(context, &result)
+            case "image-select": await imageSelect(context, &result)
+            case "image-drop": await imageDrop(context, &result)
+            case "block-move": await blockMove(context, &result)
+            case "image-controls":
+                let check = await ImageControlsQA.run(textView: context.textView, window: context.window, lineY: { screenY(of: $0, in: context.textView).map(Double.init) })
+                result.failures += check.failures
+                result.gestures += check.gestures
+                result.measuredSamples += check.samples
+                result.maxInteractionShift = max(result.maxInteractionShift, CGFloat(check.maxShift))
+                result.hoverCallbackMilliseconds = check.hoverMilliseconds
+                result.resizeGestureMilliseconds = check.resizeGestureMilliseconds
+                result.cropGestureMilliseconds = check.cropGestureMilliseconds
+                result.notes.append(String(format: "Bounded native image controls; slowest control %.1f ms", check.slowestMilliseconds))
+                for (label, elapsed) in [("hover callback", check.hoverMilliseconds),
+                                         ("resize gesture including commit", check.resizeGestureMilliseconds),
+                                         ("crop gesture", check.cropGestureMilliseconds)] {
+                    if let elapsed {
+                        guard elapsed.isFinite, elapsed >= 0 else {
+                            result.failures.append("Invalid timing for \(label)")
+                            continue
+                        }
+                        result.notes.append(String(format: "%@: %.2f ms (whole callback/gesture, not a frame measurement)", label, elapsed))
+                    }
+                }
+                result.notes += check.notes
+                result.notes += check.manualCases.map { "Pending separate qualification: \($0)" }
             default: result.failures.append("Unknown scenario")
             }
             let trace = ScrollTrace.snapshot()
@@ -289,7 +331,7 @@ enum QAReplay {
             }
             let originBefore = c.scrollView.contentView.bounds.origin.y
             r.notes.append("click @\(location) fixedMousePoint=\(NSStringFromPoint(windowPoint)) line=\(NSStringFromRange(targetBefore.lineRange)) lineTopWindowY=\(targetYBefore)")
-            c.window.makeKeyAndOrderFront(nil)
+            QAPresentation.show(c.window)
             NSApp.postEvent(down, atStart: false)
             NSApp.postEvent(up, atStart: false)
             r.gestures += 1
@@ -403,12 +445,26 @@ enum QAReplay {
     /// Neither the scroll position nor the top visible line may move; per-key
     /// cost is the O(edit) guard.
     private static func typeBurst(_ c: Context, _ r: inout ScenarioResult) async {
-        let visible = visibleFragmentStarts(in: c.textView, limit: 4)
-        guard let location = visible.last, let top = visible.first else {
-            r.failures.append("No visible line to type into")
+        // The first prose line below the top one: typing on a rendered image's
+        // line replaces the selected image (doc 26 §3.1), and tables, code,
+        // math and diagrams are edited as blocks. A note that opens on blocks
+        // (images-240k.md) is scrolled to its first prose line.
+        var visible = visibleFragmentStarts(in: c.textView, limit: 40)
+        var prose = proseLineStarts(visible, in: c.textView)
+        if prose.isEmpty, let first = visible.first,
+           let line = proseLineStarts(paragraphStarts(from: first, count: 400, in: c.textView), in: c.textView).first {
+            ScrollTrace.stamp("qa.scrollToProse")
+            c.textView.scrollRangeToVisible(NSRange(location: line, length: 0))
+            await sleep(0.3)
+            visible = visibleFragmentStarts(in: c.textView, limit: 40)
+            prose = proseLineStarts(visible, in: c.textView)
+        }
+        guard let top = visible.first, let location = prose.first(where: { $0 > top }) ?? prose.first else {
+            r.failures.append("No visible prose line to type into")
             return
         }
-        let original = c.textView.string
+        // A copy: in an optimized build the bridged `string` can alias the live storage.
+        let original = Array(c.textView.string.utf16)
         c.textView.setSelectedRange(NSRange(location: location, length: 0))
         await sleep(0.1)
         let topBefore = screenY(of: top, in: c.textView)
@@ -433,14 +489,22 @@ enum QAReplay {
             if moved >= 1 { r.notes.append("typing @\(location): top line @\(top) moved \(String(format: "%.1f", moved))pt") }
             r.maxInteractionShift = max(r.maxInteractionShift, moved)
         }
-        let expected = (original as NSString).replacingCharacters(in: NSRange(location: location, length: 0),
-                                                                  with: String(repeating: "x", count: 30))
-        guard c.textView.string.utf16.elementsEqual(expected.utf16) else {
+        var expected = original
+        expected.insert(contentsOf: Array(repeating: 0x78, count: 30), at: location)
+        let typed = Array(c.textView.string.utf16)
+        guard typed == expected else {
+            let first = zip(typed, expected).enumerated().first { $0.element.0 != $0.element.1 }?.offset
+                ?? min(typed.count, expected.count)
+            let context = { (units: [UInt16]) in
+                String(decoding: units[max(0, first - 20)..<min(units.count, first + 40)], as: UTF16.self)
+            }
+            r.notes.append("typing @\(location): source differs from \(first): got \(String(reflecting: context(typed))), "
+                           + "expected \(String(reflecting: context(expected)))")
             r.failures.append("Typing did not insert the exact requested source")
             return
         }
         c.textView.insertText("", replacementRange: NSRange(location: location, length: 30))
-        if !c.textView.string.utf16.elementsEqual(original.utf16) { r.failures.append("Typing cleanup changed the original source") }
+        if Array(c.textView.string.utf16) != original { r.failures.append("Typing cleanup changed the original source") }
         await sleep(0.1)
         let drift = await idleDrift(c.textView)
         r.maxIdleDrift = max(r.maxIdleDrift, measurement(drift, label: "idle probe", result: &r))
@@ -642,8 +706,8 @@ enum QAReplay {
             }
             cursor = next
         }
-        NSApp.activate(ignoringOtherApps: true)
-        c.window.makeKeyAndOrderFront(nil)
+        QAPresentation.activateIfAllowed()
+        QAPresentation.show(c.window)
         // A narrow table: the editor re-hovers at the REAL pointer after any
         // layout change, which a wide table's scroller triggers mid-replay
         // (WideTableHoverTests covers a wide table's hover, grip and z-order).
@@ -865,8 +929,8 @@ enum QAReplay {
             bar()?.subviews.first { $0.accessibilityLabel() == label }
         }
         // The bar shows only in the key window (the reference editor hides it on blur).
-        NSApp.activate(ignoringOtherApps: true)
-        c.window.makeKeyAndOrderFront(nil)
+        QAPresentation.activateIfAllowed()
+        QAPresentation.show(c.window)
         for _ in 0..<40 where !c.window.isKeyWindow { await sleep(0.05) }
         guard c.window.isKeyWindow else {
             r.failures.append("The replay window never became key; the bar cannot show (another app kept focus)")
@@ -880,8 +944,8 @@ enum QAReplay {
             // Another app may take focus while the replay runs: take it back,
             // and do not judge a round the window spent in the background.
             if !c.window.isKeyWindow {
-                NSApp.activate(ignoringOtherApps: true)
-                c.window.makeKeyAndOrderFront(nil)
+                QAPresentation.activateIfAllowed()
+                QAPresentation.show(c.window)
                 await sleep(0.1)
             }
             guard c.window.isKeyWindow else {
@@ -964,6 +1028,198 @@ enum QAReplay {
         c.textView.undoManager?.undo()
         await sleep(0.1)
         if !c.textView.string.utf16.elementsEqual(original.utf16) { r.failures.append("Undo did not restore the source") }
+        let drift = await idleDrift(c.textView)
+        r.maxIdleDrift = max(r.maxIdleDrift, measurement(drift, label: "idle probe", result: &r))
+    }
+
+    /// Images selected as a whole (doc 26 §13.2): click each visible image
+    /// ×20 through the window's own event dispatch, ↓ then ↑ through the first
+    /// 10 images ×20, and a Find-style selection of alt text. Each must select
+    /// the image without showing its Markdown or moving the line below it, the
+    /// source must not change, and no gesture may hold the main thread 100 ms.
+    private static func imageSelect(_ c: Context, _ r: inout ScenarioResult) async {
+        let original = c.textView.string
+        let ns = original as NSString
+        guard let storage = c.textView.textStorage else {
+            r.failures.append("No native text storage")
+            return
+        }
+        let renderedKey = NSAttributedString.Key("RenderedBlockImage")
+        let sourceKey = NSAttributedString.Key("MarkdownBlockSourceRange")
+        let kindKey = NSAttributedString.Key("MarkdownBlockKind")
+        let revealedKey = NSAttributedString.Key("LatexBlockOffsetY")
+        /// Rendered images anchored in `range`: the anchor and its token
+        /// (the anchor-relative payload: how far the token starts before it).
+        func images(in range: NSRange) -> [(anchor: Int, token: NSRange)] {
+            var found: [(Int, NSRange)] = []
+            let scope = NSIntersectionRange(range, NSRange(location: 0, length: storage.length))
+            storage.enumerateAttribute(sourceKey, in: scope) { value, run, _ in
+                guard let value = value as? NSValue,
+                      storage.attribute(kindKey, at: run.location, effectiveRange: nil) as? String == "image",
+                      storage.attribute(renderedKey, at: run.location, effectiveRange: nil) != nil else { return }
+                let relative = value.rangeValue
+                found.append((run.location, NSRange(location: run.location - relative.location, length: relative.length)))
+            }
+            return found
+        }
+        func revealed(_ token: NSRange) -> Bool {
+            NSMaxRange(token) <= storage.length && storage.attribute(revealedKey, at: token.location, effectiveRange: nil) != nil
+        }
+        func lineBelow(_ token: NSRange) -> Int? {
+            let next = NSMaxRange(ns.paragraphRange(for: token))
+            return next < ns.length ? next : nil
+        }
+        func ringShown() -> Bool {
+            c.textView.subviews.contains { String(describing: type(of: $0)) == "ImageChromeView" && !$0.isHidden }
+        }
+        var slowest = 0.0
+        func timed(_ gesture: () -> Void) {
+            let start = CFAbsoluteTimeGetCurrent()
+            gesture()
+            slowest = max(slowest, (CFAbsoluteTimeGetCurrent() - start) * 1000)
+            r.gestures += 1
+        }
+        /// After a gesture that should select `token`: selected, still drawn, line below in place.
+        func check(_ label: String, token: NSRange, belowY: CGFloat?, below: Int?) {
+            if c.textView.selectedRange() != token {
+                r.failures.append("\(label): selection \(NSStringFromRange(c.textView.selectedRange())) is not the image \(NSStringFromRange(token))")
+            }
+            if revealed(token) { r.failures.append("\(label): the image's Markdown shows") }
+            if !ringShown() { r.failures.append("\(label): no ring") }
+            if let below, let belowY {
+                let moved = measurement(viewY(of: below, in: c.textView).map { abs($0 - belowY) }, label: "\(label) line below", result: &r)
+                if moved >= 1 { r.notes.append(String(format: "%@: the line below moved %.1f pt", label, moved)) }
+                r.maxInteractionShift = max(r.maxInteractionShift, moved)
+            }
+        }
+
+        QAPresentation.activateIfAllowed()
+        // Tall enough for several images at once.
+        if let screen = c.window.screen?.visibleFrame {
+            c.window.setFrame(NSRect(x: screen.minX + 20, y: screen.minY + 20, width: min(1200, screen.width - 40),
+                                     height: min(1100, screen.height - 40)), display: true)
+        }
+        QAPresentation.show(c.window)
+        for _ in 0..<40 where !c.window.isKeyWindow { await sleep(0.05) }
+        c.window.makeFirstResponder(c.textView)
+        c.textView.setSelectedRange(NSRange(location: 0, length: 0))
+        c.textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        await sleep(0.3)
+        let meter = StallMeter()
+        meter.start()
+
+        // 1. Clicks, through NSWindow.sendEvent: the press reaches the text view
+        //    the way a real one does and is tracked to its queued mouse-up.
+        let viewport = c.textView.textLayoutManager?.textViewportLayoutController.viewportRange.flatMap { range -> NSRange? in
+            guard let tcm = c.textView.textLayoutManager?.textContentManager else { return nil }
+            let start = tcm.offset(from: tcm.documentRange.location, to: range.location)
+            return NSRange(location: start, length: tcm.offset(from: range.location, to: range.endLocation))
+        } ?? NSRange(location: 0, length: min(ns.length, 20_000))
+        let clip = c.scrollView.contentView.convert(c.scrollView.contentView.bounds, to: nil)
+        // Where each image draws: the engine's ring around it, 5 pt out, once selected.
+        var targets: [(anchor: Int, token: NSRange, point: NSPoint)] = []
+        for image in images(in: viewport) {
+            c.textView.setSelectedRange(image.token)
+            guard let ring = c.textView.subviews.first(where: { String(describing: type(of: $0)) == "ImageChromeView" && !$0.isHidden })
+            else {
+                r.notes.append("image @\(image.anchor): no ring after selecting it")
+                continue
+            }
+            // The visible part of the image, clear of the window's chrome.
+            let rect = c.textView.convert(ring.frame.insetBy(dx: 5, dy: 5), to: nil).intersection(clip.insetBy(dx: 0, dy: 60))
+            guard rect.width > 40, rect.height > 40 else {
+                r.notes.append("image @\(image.anchor): too little of it is visible to click")
+                continue
+            }
+            targets.append((image.anchor, image.token, NSPoint(x: rect.midX, y: rect.midY)))
+        }
+        c.textView.setSelectedRange(NSRange(location: 0, length: 0))
+        await sleep(0.05)
+        r.notes.append("click targets: \(targets.count) visible rendered images")
+        if targets.isEmpty { r.failures.append("No fully visible rendered image to click; use an image fixture") }
+        let belowTops = targets.map { target in lineBelow(target.token).flatMap { viewY(of: $0, in: c.textView) } }
+        for round in 0..<20 {
+            for (index, target) in targets.enumerated() {
+                guard let down = NSEvent.mouseEvent(with: .leftMouseDown, location: target.point, modifierFlags: [],
+                                                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: c.window.windowNumber,
+                                                    context: nil, eventNumber: 0, clickCount: 1, pressure: 1),
+                      let up = NSEvent.mouseEvent(with: .leftMouseUp, location: target.point, modifierFlags: [],
+                                                  timestamp: ProcessInfo.processInfo.systemUptime + 0.001, windowNumber: c.window.windowNumber,
+                                                  context: nil, eventNumber: 0, clickCount: 1, pressure: 0) else {
+                    r.failures.append("Could not create mouse events")
+                    return
+                }
+                NSApp.postEvent(up, atStart: false)
+                timed { c.window.sendEvent(down) }
+                await sleep(0.03)
+                check("click round \(round) image @\(target.anchor)", token: target.token, belowY: belowTops[index], below: lineBelow(target.token))
+            }
+        }
+
+        // 2. ↓ from the top of the note through the first 10 images, then ↑ back.
+        var downs: [Double] = []
+        for round in 0..<20 {
+            c.textView.setSelectedRange(NSRange(location: 0, length: 0))
+            c.textView.scrollRangeToVisible(NSRange(location: 0, length: 0))
+            await sleep(0.05)
+            var selected = 0
+            var presses = 0
+            var forward = true
+            while presses < 600 {
+                let before = c.textView.selectedRange()
+                // The line below the image the caret is heading into, in document coordinates.
+                let probe = images(in: NSRange(location: before.location, length: min(4_000, ns.length - before.location)))
+                    .first { $0.token.location > before.location }
+                let probeLine = probe.flatMap { lineBelow($0.token) }
+                let probeY = probeLine.flatMap { viewY(of: $0, in: c.textView) }
+                let start = CFAbsoluteTimeGetCurrent()
+                timed { c.textView.doCommand(by: forward ? #selector(NSResponder.moveDown(_:)) : #selector(NSResponder.moveUp(_:))) }
+                if forward { downs.append((CFAbsoluteTimeGetCurrent() - start) * 1000) }
+                presses += 1
+                await sleep(0.008)
+                let selection = c.textView.selectedRange()
+                if selection == before { break }
+                if let image = images(in: ns.paragraphRange(for: NSRange(location: min(selection.location, ns.length), length: 0)))
+                    .first(where: { $0.token == selection }) {
+                    if forward {
+                        selected += 1
+                        check("↓ round \(round) image @\(image.anchor)", token: image.token,
+                              belowY: probe?.token == image.token ? probeY : nil, below: probeLine)
+                        if selected == 10 { forward = false }
+                    }
+                } else if revealed(ns.paragraphRange(for: NSRange(location: min(selection.location, ns.length), length: 0))) {
+                    r.failures.append("Arrow round \(round): a caret sits in a revealed image line")
+                }
+                if !forward, selection.location == 0 { break }
+            }
+            if selected < 10 { r.failures.append("Arrow round \(round): ↓ selected \(selected) of 10 images in \(presses) presses") }
+        }
+        if !downs.isEmpty {
+            let sorted = downs.sorted()
+            r.notes.append(String(format: "↓ ms: median %.2f, p95 %.2f, max %.2f over %d presses",
+                                  sorted[sorted.count / 2], sorted[sorted.count * 95 / 100], sorted.last ?? 0, sorted.count))
+        }
+
+        // 3. Find selects a match in an image's alt text: the image is selected.
+        if let target = targets.first {
+            let token = target.token
+            let alt = NSRange(location: token.location + 2, length: min(4, max(1, token.length - 4)))
+            c.textView.scrollRangeToVisible(token)
+            await sleep(0.05)
+            let belowY = lineBelow(token).flatMap { viewY(of: $0, in: c.textView) }
+            timed { c.textView.setSelectedRange(alt) }
+            await sleep(0.05)
+            check("find in alt text", token: token, belowY: belowY, below: lineBelow(token))
+        }
+
+        meter.stop()
+        r.notes.append(String(format: "slowest gesture %.1f ms; main thread longest stall %.1f ms, %d stalls over 16 ms", slowest,
+                              meter.longest, meter.stalls))
+        if slowest > 100 { r.failures.append(String(format: "A gesture held the main thread %.0f ms (bar: 100 ms)", slowest)) }
+        let shown = images(in: NSRange(location: 0, length: storage.length)).filter { revealed($0.token) }
+        if !shown.isEmpty { r.failures.append("\(shown.count) images show their Markdown at the end") }
+        if !c.textView.string.utf16.elementsEqual(original.utf16) { r.failures.append("The gestures changed the source") }
+        c.textView.setSelectedRange(NSRange(location: 0, length: 0))
         let drift = await idleDrift(c.textView)
         r.maxIdleDrift = max(r.maxIdleDrift, measurement(drift, label: "idle probe", result: &r))
     }
@@ -1453,8 +1709,8 @@ enum QAReplay {
     /// the new key works through AppKit's own key dispatch and the old one no
     /// longer does. Needs a Markdown note with a line saying "Click a box".
     private static func shortcuts(_ c: Context, _ r: inout ScenarioResult) async {
-        NSApp.activate(ignoringOtherApps: true)
-        c.window.makeKeyAndOrderFront(nil)
+        QAPresentation.activateIfAllowed()
+        QAPresentation.show(c.window)
         for _ in 0..<40 where !c.window.isKeyWindow { await sleep(0.05) }
         let settings = SettingsManager.shared
         let saved = settings.customShortcuts
@@ -1593,8 +1849,8 @@ enum QAReplay {
     /// caret's line into a task; inside a table cell it must not silently do
     /// nothing. Needs a note with "- [ ] Buy milk" and a table.
     private static func checklist(_ c: Context, _ r: inout ScenarioResult) async {
-        NSApp.activate(ignoringOtherApps: true)
-        c.window.makeKeyAndOrderFront(nil)
+        QAPresentation.activateIfAllowed()
+        QAPresentation.show(c.window)
         for _ in 0..<40 where !c.window.isKeyWindow { await sleep(0.05) }
         let settings = SettingsManager.shared
         let pinned = (settings.isTopBarAlwaysVisible, settings.isFloatingToolbarAlwaysVisible)
@@ -1708,11 +1964,11 @@ enum QAReplay {
     /// highlights, cards). Each zone reports the main thread's longest stall
     /// while the pointer moves at 120 Hz; PerfTrace dumps what ran.
     private static func hover(_ c: Context, _ r: inout ScenarioResult) async {
-        NSApp.activate(ignoringOtherApps: true)
+        QAPresentation.activateIfAllowed()
         if let screen = c.window.screen?.visibleFrame {
             c.window.setFrame(NSRect(x: screen.minX + 20, y: screen.maxY - 900, width: min(1320, screen.width - 40), height: 880), display: true)
         }
-        c.window.makeKeyAndOrderFront(nil)
+        QAPresentation.show(c.window)
         for _ in 0..<40 where !c.window.isKeyWindow { await sleep(0.05) }
         // Comments on the first prose lines, loaded (not posted, so nothing is written).
         let ns = c.textView.string as NSString
@@ -1836,6 +2092,211 @@ enum QAReplay {
         c.content.editorController.commentThreads = []
     }
 
+    /// Image drops (doc 26 §9, Phase 7): five fixture PNGs imported at five
+    /// visible drop slots through the import entry a real drop uses (a
+    /// replay cannot start a Finder drag), bottom slot first. Text is typed at
+    /// the top while the first copy runs, so that image must land at its slot
+    /// mapped past the typing. The main thread must never stall 100 ms; the
+    /// note is undone back to its bytes and the copies are removed.
+    /// One move and one undo per kind on the supplied image fixture. The destination,
+    /// rather than a potentially tall source, is scrolled into view before measuring the transaction.
+    private static func blockMove(_ c: Context, _ r: inout ScenarioResult) async {
+        let controller = c.content.editorController
+        guard let original = controller.currentDisplayText else { r.failures.append("No active editor"); return }
+        let patterns: [(String, String)] = [
+            ("image", #"(?m)^[ \t]*!\[[^\n]*\]\([^\n]*\)[ \t]*$"#),
+            ("equation", #"(?ms)^\$\$[^\n]*\n.*?^\$\$[ \t]*$"#),
+            ("diagram", #"(?ms)^```mermaid[^\n]*\n.*?^```[ \t]*$"#),
+            ("code", #"(?ms)^```(?!mermaid)[^\n]*\n.*?^```[ \t]*$"#),
+            ("table", #"(?m)^\|[^\n]*\n\|[ :|\-]+\n(?:\|[^\n]*(?:\n|$))+"#),
+        ]
+        let text = original as NSString
+        guard let proseDestinations = try? NSRegularExpression(pattern: #"(?m)^[A-Za-z][^\r\n]{120,}$"#) else {
+            r.failures.append("Invalid prose destination pattern"); return
+        }
+        // Focus can enqueue the old caret's reveal. Finish that setup before
+        // seating a drop point; a nonempty marker range may skip native reveal.
+        _ = c.window.makeFirstResponder(c.textView)
+        await sleep(0.1)
+        for (kind, pattern) in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern),
+                  let match = expression.firstMatch(in: original, range: NSRange(location: 0, length: original.utf16.count)) else {
+                r.failures.append("No \(kind) block in the fixture")
+                continue
+            }
+            let sourceRange = match.range
+            let end = NSMaxRange(sourceRange)
+            // A long prose paragraph makes the drop point and readable witness the
+            // same visible content. Intervening content excludes the source's own
+            // adjacent separator; the engine still validates the prepared slot.
+            var target: Int?
+            proseDestinations.enumerateMatches(in: original, range: NSRange(location: end, length: text.length - end)) { match, _, stop in
+                guard let match else { return }
+                let between = NSRange(location: end, length: match.range.location - end)
+                guard !text.substring(with: between).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                target = match.range.location
+                stop.pointee = true
+            }
+            guard let target else {
+                r.failures.append("No later nonadjacent prose destination after \(kind)"); continue
+            }
+            await sleep(0.08)
+            c.textView.scrollRangeToVisible(NSRange(location: target, length: 0))
+            c.textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+            await sleep(0.16)
+            guard controller.dropSlotsNearViewport.contains(target) else {
+                r.failures.append("Prepared destination @\(target) is not a viewport drop slot for \(kind); selection=\(c.textView.selectedRange()), viewport=\(String(describing: c.textView.textLayoutManager?.textViewportLayoutController.viewportRange))"); continue
+            }
+            guard let witness = ReadableTextLineProbe.capture(in: c.textView, minimumLocation: target) else {
+                r.failures.append("No fully visible readable witness after \(kind) destination @\(target)"); continue
+            }
+            let targetScreen = screenY(of: target, in: c.textView)
+            PerfTrace.dump("block move before \(kind)")
+            let start = CFAbsoluteTimeGetCurrent()
+            var moved = false
+            asOneEvent(c.content.undoManager) {
+                moved = controller.moveBlock(kind: kind, sourceRange: sourceRange, to: target)
+            }
+            guard moved else { r.failures.append("\(kind) move refused"); continue }
+            let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+            PerfTrace.dump("block move \(kind)")
+            r.gestures += 1
+            r.notes.append(String(format: "\(kind) move apply %.1f ms", elapsed))
+            if elapsed > 100 { r.failures.append("\(kind) move exceeded 100 ms") }
+            await sleep(0.1)
+            // The same target source follows a removal from above and an insertion immediately before it.
+            let changed = controller.currentDisplayText ?? ""
+            let removedDelta = changed.utf16.count - original.utf16.count
+            if let after = witness.resample(in: c.textView, offsetDelta: removedDelta) {
+                r.measuredSamples += 1
+                r.maxInteractionShift = max(r.maxInteractionShift, abs(after.windowY - witness.windowY))
+            } else { r.failures.append("The mapped readable witness is unavailable after \(kind) move") }
+            let mappedTarget = target + removedDelta
+            if let targetScreen, let after = screenY(of: mappedTarget, in: c.textView) {
+                r.notes.append(String(format: "\(kind) destination paragraph fragment shift %.2f pt (diagnostic)", abs(after - targetScreen)))
+            }
+            c.content.undoManager.undo()
+            r.gestures += 1
+            await sleep(0.1)
+            if controller.currentDisplayText?.utf16.elementsEqual(original.utf16) != true {
+                r.failures.append("\(kind) undo did not restore exact source"); return
+            }
+        }
+    }
+
+    private static func imageDrop(_ c: Context, _ r: inout ScenarioResult) async {
+        // Everything goes through the active tab's own editor: the harness's
+        // text view is the first editor in the window, which can be a warm tab's.
+        let controller = c.content.editorController
+        let undo = c.content.undoManager
+        func source() -> NSString { NSString(string: controller.currentDisplayText ?? "") }
+        guard let noteFolder = c.content.documentManager.documentURL?.deletingLastPathComponent() else {
+            r.failures.append("image-drop needs a saved note (PAGEFLOW_QA_DOC)")
+            return
+        }
+        // The copies go to the note's attachments folder; a folder the app may
+        // not write would open the access panel and stall the replay.
+        let attachments = noteFolder.appendingPathComponent(PastedImageStore.attachmentsFolderName, isDirectory: true)
+        let hadAttachments = FileManager.default.fileExists(atPath: attachments.path)
+        let writable = FolderAccessStore.shared.withAccess(to: attachments) { () -> Bool in
+            let probe = attachments.appendingPathComponent(".qa-probe-\(UUID().uuidString)")
+            guard (try? FileManager.default.createDirectory(at: attachments, withIntermediateDirectories: true)) != nil,
+                  (try? Data().write(to: probe)) != nil else { return false }
+            try? FileManager.default.removeItem(at: probe)
+            return true
+        }
+        guard writable else {
+            r.failures.append("Allow PageFlow to write \(attachments.path) first (paste an image into the note once)")
+            return
+        }
+        let tag = "qa-drop-\(UUID().uuidString.prefix(8))"
+        let fixtures = FileManager.default.temporaryDirectory.appendingPathComponent(tag, isDirectory: true)
+        try? FileManager.default.createDirectory(at: fixtures, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: fixtures)
+            let made = (try? FileManager.default.contentsOfDirectory(atPath: attachments.path)) ?? []
+            for name in made where name.hasPrefix(tag) {
+                try? FileManager.default.removeItem(at: attachments.appendingPathComponent(name))
+            }
+            if !hadAttachments, (try? FileManager.default.contentsOfDirectory(atPath: attachments.path))?.isEmpty == true {
+                try? FileManager.default.removeItem(at: attachments)
+            }
+        }
+        var files: [URL] = []
+        for index in 0..<5 {
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 48, bitsPerSample: 8,
+                                             samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                             bytesPerRow: 0, bitsPerPixel: 0),
+                  let png = rep.representation(using: .png, properties: [:]) else { continue }
+            let url = fixtures.appendingPathComponent("\(tag)-\(index).png")
+            if (try? png.write(to: url)) != nil { files.append(url) }
+        }
+        let slots = Array(Set(controller.dropSlotsNearViewport).filter { $0 > 0 }).sorted().suffix(5).reversed()
+        guard files.count == 5, slots.count >= 2 else {
+            r.failures.append("Need 5 fixtures and 2 visible drop slots; have \(files.count) and \(slots.count)")
+            return
+        }
+        // A copy: the text view's string can be its storage's live buffer.
+        let original = source() as String
+        r.notes.append("image-drop: slots \(Array(slots)) in \((original as NSString).length) characters")
+        let meter = StallMeter()
+        meter.start()
+        var shift = 0
+        for (index, listed) in slots.enumerated() {
+            // Every slot below the first sits after the text typed at the top.
+            let slot = listed + shift
+            let before = source()
+            let stem = "\(tag)-\(index)"
+            controller.importImages(MarkdownImageDrop(fileURLs: [files[index]]), at: slot)
+            r.gestures += 1
+            var typed = 0
+            if index == 0 {
+                // An edit above the slot while the copy runs.
+                asOneEvent(undo) {
+                    if controller.replaceCharacters(in: [NSRange(location: 0, length: 0)], with: "QA ",
+                                                    expectedSource: source() as String, actionName: "Typing") { typed = 3 }
+                }
+                shift = typed
+            }
+            var landed: NSRange?
+            for _ in 0..<60 {
+                await sleep(0.05)
+                let found = source().range(of: "![\(stem)](")
+                if found.location != NSNotFound { landed = found; break }
+            }
+            guard let landed else {
+                r.failures.append("Image \(index) at slot \(slot) never landed")
+                continue
+            }
+            let after = source()
+            let expectedPrefix = (typed > 0 ? "QA " : "") + before.substring(to: slot)
+            let prefixKept = after.length >= slot + typed && after.substring(to: slot + typed) == expectedPrefix
+            r.measuredSamples += 1
+            r.notes.append("image \(index): slot \(slot)\(typed > 0 ? " (+\(typed) typed above)" : ""), link at \(landed.location)")
+            if !prefixKept {
+                let got = after.substring(to: min(after.length, slot + typed)) as NSString
+                let want = expectedPrefix as NSString
+                var first = 0
+                while first < min(got.length, want.length), got.character(at: first) == want.character(at: first) { first += 1 }
+                r.notes.append("image \(index): text before the slot differs at \(first) of \(want.length): got \(got.substring(from: first).prefix(40).debugDescription), want \(want.substring(from: first).prefix(40).debugDescription)")
+            }
+            if !prefixKept || landed.location < slot + typed {
+                r.failures.append("Image \(index) did not land at its mapped slot \(slot + typed) (link at \(landed.location))")
+            }
+        }
+        meter.stop()
+        r.notes.append(String(format: "image-drop: longest main-thread stall %.1f ms, %d stalls over 16 ms", meter.longest, meter.stalls))
+        if meter.longest >= 100 { r.failures.append(String(format: "Main thread stalled %.0f ms during the drops", meter.longest)) }
+        var undos = 0
+        while !(source() as String).utf16.elementsEqual(original.utf16), undo.canUndo, undos < 40 {
+            undo.undo()
+            undos += 1
+        }
+        if !(source() as String).utf16.elementsEqual(original.utf16) {
+            r.failures.append("Undo did not restore the note's bytes after \(undos) steps")
+        }
+    }
+
     /// The main run loop's longest gap between 1 ms ticks: how long the
     /// pointer would have waited for the app.
     @MainActor
@@ -1938,12 +2399,12 @@ enum QAReplay {
             r.failures.append("No visible prose line to comment on")
             return
         }
-        NSApp.activate(ignoringOtherApps: true)
+        QAPresentation.activateIfAllowed()
         // Wide enough for the rail beside the reading column.
         if let screen = c.window.screen?.visibleFrame {
             c.window.setFrame(NSRect(x: screen.minX + 20, y: screen.maxY - 900, width: min(1320, screen.width - 40), height: 880), display: true)
         }
-        c.window.makeKeyAndOrderFront(nil)
+        QAPresentation.show(c.window)
         for _ in 0..<40 where !c.window.isKeyWindow { await sleep(0.05) }
         await sleep(0.3)
         let output = ProcessInfo.processInfo.environment["PAGEFLOW_QA_OUTPUT_DIR"].map { URL(fileURLWithPath: $0) }
@@ -2140,6 +2601,56 @@ enum QAReplay {
         return result
     }
 
+    /// The starts of up to `count` paragraphs from `location`'s paragraph on.
+    private static func paragraphStarts(from location: Int, count: Int, in textView: NSTextView) -> [Int] {
+        let ns = textView.string as NSString
+        var starts: [Int] = []
+        var cursor = ns.paragraphRange(for: NSRange(location: min(location, ns.length), length: 0)).location
+        while starts.count < count, cursor < ns.length {
+            starts.append(cursor)
+            cursor = NSMaxRange(ns.paragraphRange(for: NSRange(location: cursor, length: 0)))
+        }
+        return starts
+    }
+
+    /// The `starts` that begin a plain prose line: not an image, table, code,
+    /// `$$` math or diagram line, and not inside a fenced or `$$` block.
+    private static func proseLineStarts(_ starts: [Int], in textView: NSTextView) -> [Int] {
+        let ns = textView.string as NSString
+        guard let storage = textView.textStorage, let last = starts.max(), last < ns.length else { return [] }
+        let blockKind = NSAttributedString.Key("MarkdownBlockKind")
+        let tableSource = NSAttributedString.Key("MarkdownTableSourceRange")
+        let wanted = Set(starts)
+        var insideBlock = Set<Int>()
+        var fence: String?
+        var cursor = 0
+        while cursor <= last, cursor < ns.length {
+            let line = ns.lineRange(for: NSRange(location: cursor, length: 0))
+            let text = ns.substring(with: line).trimmingCharacters(in: .whitespacesAndNewlines)
+            let opener = ["```", "~~~", "$$"].first { text.hasPrefix($0) }
+            if wanted.contains(line.location), fence != nil || opener != nil { insideBlock.insert(line.location) }
+            if let open = fence {
+                if open == "$$" ? text.contains("$$") : text.hasPrefix(open) { fence = nil }
+            } else if let opener, !(opener == "$$" && text.count > 2 && text.hasSuffix("$$")) {
+                fence = opener
+            }
+            cursor = NSMaxRange(line)
+        }
+        return starts.filter { start in
+            guard !insideBlock.contains(start) else { return false }
+            let line = ns.lineRange(for: NSRange(location: start, length: 0))
+            let text = ns.substring(with: line).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard text.count >= 20, !["|", "!", "<", "#"].contains(where: text.hasPrefix) else { return false }
+            var object = false
+            storage.enumerateAttributes(in: line) { attributes, _, stop in
+                if attributes[blockKind] != nil || attributes[tableSource] != nil {
+                    object = true
+                    stop.pointee = true
+                }
+            }
+            return !object
+        }
+    }
 
     /// A paragraph's identity across a format toggle: its text with the inline
     /// markers a toggle adds or removes stripped, so the same line is found
@@ -2302,13 +2813,16 @@ enum QAReplay {
     private static func liveEditor(in tabManager: TabManager) -> NSTextView? {
         guard let window = WindowRegistry.shared.window(for: tabManager), window.isVisible,
               let contentView = window.contentView else { return nil }
-        return findEditor(in: contentView)
+        guard let source = tabManager.activeMarkdownContent?.editorController.currentDisplayText else { return nil }
+        return findEditor(in: contentView, matching: source)
     }
 
-    private static func findEditor(in view: NSView) -> NSTextView? {
-        if let textView = view as? NSTextView, String(describing: type(of: textView)).contains("NativeTextView") { return textView }
+    private static func findEditor(in view: NSView, matching source: String) -> NSTextView? {
+        guard !view.isHiddenOrHasHiddenAncestor else { return nil }
+        if let textView = view as? NSTextView, String(describing: type(of: textView)).contains("NativeTextView"),
+           (textView.string as NSString).isEqual(to: source) { return textView }
         for subview in view.subviews {
-            if let found = findEditor(in: subview) { return found }
+            if let found = findEditor(in: subview, matching: source) { return found }
         }
         return nil
     }
@@ -2324,12 +2838,16 @@ enum QAReplay {
     private static func asOneEvent(_ undo: UndoManager?, _ gesture: () -> Void) {
         guard let undo else { gesture(); return }
         let automatic = undo.groupsByEvent
-        undo.groupsByEvent = false
-        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
-        undo.beginUndoGrouping()
-        gesture()
-        undo.endUndoGrouping()
-        undo.groupsByEvent = automatic
+        PerfTrace.time("event.prepare") {
+            undo.groupsByEvent = false
+            while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+            undo.beginUndoGrouping()
+        }
+        PerfTrace.time("event.gesture", gesture)
+        PerfTrace.time("event.close") {
+            undo.endUndoGrouping()
+            undo.groupsByEvent = automatic
+        }
     }
 
     private static func physicalFootprintMB() -> Double {
@@ -2346,7 +2864,8 @@ enum QAReplay {
 
     static let supportedScenarios = ["scroll-read", "click-sweep", "zoom-steps", "type-burst",
                                      "math-edit", "format-burst", "undo-check", "switch-restore", "table-nav",
-                                     "table-wrap-type", "selection-bar", "table-chrome", "comments", "hover", "checklist", "shortcuts"]
+                                     "table-wrap-type", "selection-bar", "table-chrome", "comments", "hover", "checklist", "shortcuts",
+                                     "image-select", "image-drop", "block-move", "image-controls"]
 
     private struct RunReport: Codable {
         let runID: String

@@ -72,11 +72,11 @@ final class PDFFileSession: @unchecked Sendable {
         }
     }
     private struct Request {
-        let ticket: Ticket
-        let data: Data
+        var tickets: [Ticket]
+        var data: Data
         let target: Target
         let epoch: UInt64
-        let revision: UInt64
+        var revision: UInt64
     }
     private let admissionLock = NSLock()
     private let executionLock = NSLock()
@@ -95,20 +95,30 @@ final class PDFFileSession: @unchecked Sendable {
         defer { admissionLock.unlock() }
         nextSequence += 1
         let ticket = Ticket(sequence: nextSequence)
-        pending.append(Request(ticket: ticket, data: data, target: target, epoch: epoch, revision: revision))
+        // Only redundant queued Save commands merge. Save As remains an explicit
+        // destination boundary, including the current-file identity it establishes.
+        if case .current = target, let last = pending.indices.last,
+           case .current = pending[last].target, pending[last].epoch == epoch {
+            pending[last].tickets.append(ticket)
+            pending[last].data = data
+            pending[last].revision = revision
+        } else {
+            pending.append(Request(tickets: [ticket], data: data, target: target, epoch: epoch, revision: revision))
+        }
         return ticket
     }
     private func takeNext(through sequence: UInt64) -> Request? {
         admissionLock.lock()
         defer { admissionLock.unlock() }
-        guard let first = pending.first, first.ticket.sequence <= sequence else { return nil }
+        guard let first = pending.first, first.tickets[0].sequence <= sequence else { return nil }
         return pending.removeFirst()
     }
     func drain(through sequence: UInt64 = .max) -> Saved? {
         executionLock.lock()
         defer { executionLock.unlock() }
         while let request = takeNext(through: sequence) {
-            request.ticket.finish(write(request))
+            let outcome = write(request)
+            request.tickets.forEach { $0.finish(outcome) }
         }
         return lastSaved
     }
@@ -129,7 +139,7 @@ final class PDFFileSession: @unchecked Sendable {
         do {
             try writer(request.data, destination.url)
             access = destination
-            let saved = Saved(sequence: request.ticket.sequence, epoch: request.epoch,
+            let saved = Saved(sequence: request.tickets.last!.sequence, epoch: request.epoch,
                               revision: request.revision, access: destination)
             lastSaved = saved
             return Outcome(didWrite: true, saved: saved)

@@ -52,6 +52,7 @@ struct SidebarHeaderView: View {
         }
         .foregroundStyle(.primary)
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
     }
 
     private var modeToggle: some View {
@@ -72,6 +73,7 @@ struct SidebarHeaderView: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .help(modeHelpText)
     }
 

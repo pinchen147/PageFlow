@@ -14,6 +14,7 @@ extension MarkdownEditorConfiguration {
             && safeAreaInsets == other.safeAreaInsets && scrollers == other.scrollers
             && textInsets == other.textInsets && readingWidth == other.readingWidth
             && centersZoomedOutColumn == other.centersZoomedOutColumn
+            && showsHiddenContentRow == other.showsHiddenContentRow
     }
 
     func hasSameBus(as other: Self) -> Bool {

@@ -43,7 +43,7 @@ struct PlaceholderDismissalTests {
         try targetBytes.write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
         let target = TabManager()
-        target.openDocument(url: url, isSecurityScoped: false)
+        await target.openDocument(url: url, isSecurityScoped: false)?.value
         let targetSession = try #require(target.activeSession)
         let targetWindow = window(for: target)
         let source = TabManager()
@@ -84,7 +84,7 @@ struct PlaceholderDismissalTests {
             try #require(content.undoManager.canUndo)
         }
 
-        source.openDocument(url: url, isSecurityScoped: false)
+        await source.openDocument(url: url, isSecurityScoped: false)?.value
         await drainMainQueue()
 
         #expect(sourceWindow.closes == 0)

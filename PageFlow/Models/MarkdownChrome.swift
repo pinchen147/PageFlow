@@ -200,7 +200,7 @@ struct MarkdownOutlineItem: Identifiable, Equatable, Sendable {
 /// Pure markdown heading extraction for the sidebar outline. Scans `#`..`######`
 /// ATX headings, ignoring `#` that appear inside fenced code blocks (``` or ~~~)
 /// so a `# comment` inside a shell snippet never becomes a fake outline entry.
-enum MarkdownOutline {
+nonisolated enum MarkdownOutline {
     /// UTF-16 location where the zero-based source line starts. Markdown
     /// lines use LF, CRLF or CR, including a final empty line after a terminator.
     static func lineStartLocation(ofLine lineIndex: Int, in text: String) -> Int? {
@@ -224,15 +224,32 @@ enum MarkdownOutline {
     /// Visits source content ranges without allocating substrings or a line
     /// array. The next start permits navigation to stop before scanning the
     /// requested line's contents; nil identifies the final line at EOF.
-    private static func enumerateSourceLines(_ source: NSString, visit: (Int, NSRange, Int?) -> Bool) {
+    private static func enumerateSourceLines(_ source: NSString, shouldCancel: () -> Bool = { false }, visit: (Int, NSRange, Int?) -> Bool) {
+        let length = source.length
+        var buffer = [UInt16](repeating: 0, count: 4096)
+        var bufferStart = 0
+        var bufferLength = 0
+        func unit(at offset: Int) -> UInt16 {
+            if offset < bufferStart || offset >= bufferStart + bufferLength {
+                bufferStart = offset
+                bufferLength = min(buffer.count, length - offset)
+                source.getCharacters(&buffer, range: NSRange(location: offset, length: bufferLength))
+            }
+            return buffer[offset - bufferStart]
+        }
         var start = 0
         var offset = 0
         var index = 0
-        while offset < source.length {
-            let unit = source.character(at: offset)
-            guard unit == 0x0A || unit == 0x0D else { offset += 1; continue }
+        var nextCancellationCheck = 0
+        while offset < length {
+            if offset >= nextCancellationCheck {
+                guard !shouldCancel() else { return }
+                nextCancellationCheck = offset + 4096
+            }
+            let current = unit(at: offset)
+            guard current == 0x0A || current == 0x0D else { offset += 1; continue }
             let range = NSRange(location: start, length: offset - start)
-            if unit == 0x0D, offset + 1 < source.length, source.character(at: offset + 1) == 0x0A {
+            if current == 0x0D, offset + 1 < length, unit(at: offset + 1) == 0x0A {
                 offset += 1
             }
             offset += 1
@@ -240,7 +257,7 @@ enum MarkdownOutline {
             start = offset
             index += 1
         }
-        _ = visit(index, NSRange(location: start, length: source.length - start), nil)
+        _ = visit(index, NSRange(location: start, length: length - start), nil)
     }
 
     /// Parses `text` into outline items in document order. A heading is a line
@@ -248,17 +265,25 @@ enum MarkdownOutline {
     /// outside any fenced code block. Setext headings (=== / ---) are not parsed
     /// in v1 — noted as a deferral.
     static func parse(_ text: String) -> [MarkdownOutlineItem] {
+        parse(text, shouldCancel: { false })!
+    }
+
+    static func parse(_ text: String, shouldCancel: () -> Bool) -> [MarkdownOutlineItem]? {
         var items: [MarkdownOutlineItem] = []
         var ordinal = 0
         var inFence = false
         var fenceMarker: Character = "`"   // which marker opened the current fence
 
         let source = text as NSString
-        enumerateSourceLines(source) { lineIndex, range, _ in
+        guard !shouldCancel() else { return nil }
+        enumerateSourceLines(source, shouldCancel: shouldCancel) { lineIndex, range, _ in
             // Only a heading (`#`) or a fence (`` ` `` / `~`) matters; skip every
             // other line before allocating its text.
             var start = range.location
-            while start < NSMaxRange(range), [0x20, 0x09].contains(source.character(at: start)) { start += 1 }
+            while start < NSMaxRange(range), [0x20, 0x09].contains(source.character(at: start)) {
+                if (start - range.location).isMultiple(of: 4096), shouldCancel() { return false }
+                start += 1
+            }
             guard start < NSMaxRange(range), [0x23, 0x60, 0x7E].contains(source.character(at: start)) else { return true }
             let line = source.substring(with: range)
             let trimmed = line.drop { $0 == " " || $0 == "\t" }
@@ -288,7 +313,7 @@ enum MarkdownOutline {
             ordinal += 1
             return true
         }
-        return items
+        return shouldCancel() ? nil : items
     }
 
     /// If `line` opens or closes a fence, returns the marker character (`` ` ``
@@ -333,7 +358,7 @@ enum MarkdownOutline {
 
 /// Words + characters for the Markdown bottom-bar chip. Pure so the count is
 /// unit-testable; the chip view just formats `WordCount`.
-struct WordCount: Equatable, Sendable {
+nonisolated struct WordCount: Equatable, Sendable {
     let words: Int
     let characters: Int
 
@@ -342,21 +367,54 @@ struct WordCount: Equatable, Sendable {
     /// whitespace-only inputs are zero words; characters count every code point
     /// the user sees, including spaces and newlines.
     static func count(_ text: String) -> WordCount {
-        // One pass, no allocation: a word starts at each non-whitespace
-        // character after whitespace (which `isWhitespace` says includes newlines).
+        count(text, shouldCancel: { false })!
+    }
+
+    static func count(_ text: String, shouldCancel: () -> Bool) -> WordCount? {
+        guard !shouldCancel() else { return nil }
+        var source = text
+        // AppKit-backed strings transcode faster through Foundation's UTF-8
+        // export than through Swift's foreign-string character traversal.
+        if !source.isContiguousUTF8,
+           let data = (source as NSString).data(using: String.Encoding.utf8.rawValue) {
+            source = String(decoding: data, as: UTF8.self)
+        } else {
+            source.makeContiguousUTF8()
+        }
+        guard !shouldCancel() else { return nil }
+        let bytes = Array(source.utf8)
+        var offset = 0
         var words = 0
         var characters = 0
         var inWord = false
-        for character in text {
+        var nextCancellationCheck = 0
+        while offset < bytes.count {
+            if offset >= nextCancellationCheck {
+                guard !shouldCancel() else { return nil }
+                nextCancellationCheck = offset + 4096
+            }
+            let byte = bytes[offset]
+            let isWhitespace: Bool
+            // Adjacent ASCII cannot combine, except CRLF. Before any non-ASCII
+            // byte, let Swift consume the complete grapheme (including combining
+            // marks, Prepend characters, keycaps and joined emoji).
+            if byte < 0x80, offset + 1 == bytes.count || bytes[offset + 1] < 0x80 {
+                isWhitespace = byte == 0x20 || (0x09...0x0D).contains(byte)
+                offset += byte == 0x0D && offset + 1 < bytes.count && bytes[offset + 1] == 0x0A ? 2 : 1
+            } else {
+                let index = source.utf8.index(source.utf8.startIndex, offsetBy: offset)
+                isWhitespace = source[index].isWhitespace
+                offset = source.utf8.distance(from: source.utf8.startIndex, to: source.index(after: index))
+            }
             characters += 1
-            if character.isWhitespace {
+            if isWhitespace {
                 inWord = false
             } else if !inWord {
                 inWord = true
                 words += 1
             }
         }
-        return WordCount(words: words, characters: characters)
+        return shouldCancel() ? nil : WordCount(words: words, characters: characters)
     }
 
     /// Compact label for the chip, e.g. "128 words · 742 chars".

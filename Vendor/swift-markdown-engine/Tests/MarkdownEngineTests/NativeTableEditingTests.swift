@@ -289,6 +289,108 @@ struct NativeTableEditingTests {
         #expect(editor.main.string.contains("wide words !"))
     }
 
+    @Test("editing preserves the header fill without an inset input box", arguments: [NSAppearance.Name.aqua, .darkAqua])
+    func activeCellPreservesHeaderFill(appearanceName: NSAppearance.Name) async throws {
+        let source = "Intro\n\n| 观察 | B |\n| --- | --- |\n| a long body value to keep the first column generous | 2 |\n\nAfter"
+        let editor = try MountedTableEditor(source: source)
+        defer { editor.close() }
+        await editor.settle()
+        editor.main.appearance = NSAppearance(named: appearanceName)
+        _ = try editor.focusCell(inTableContaining: "| 观察", row: 0, column: 0)
+        let session = editor.coordinator.tableEditingSession
+        let grid = try #require(session.editor.enclosingScrollView?.superview as? MarkdownTableGridView)
+        let cell = grid.geometry.cellRects[0][0]
+        let image = try #require(grid.bitmapImageRepForCachingDisplay(in: grid.bounds))
+        grid.cacheDisplay(in: grid.bounds, to: image)
+        let scale = CGFloat(image.pixelsWide) / grid.bounds.width
+        func color(_ x: CGFloat) throws -> NSColor {
+            try #require(image.colorAt(x: Int(x * scale), y: Int(cell.midY * scale))?.usingColorSpace(.sRGB))
+        }
+        let padding = try color(cell.maxX - 3)
+        let input = try color(cell.maxX - MarkdownTableLayout.horizontalPadding - 3)
+        let difference = abs(padding.redComponent - input.redComponent)
+            + abs(padding.greenComponent - input.greenComponent) + abs(padding.blueComponent - input.blueComponent)
+        #expect(difference < 0.02, "the editable content and header padding must paint the same surface")
+        #expect(editor.main.string == source)
+        // Clearing the live editor must also erase the raster text beneath it.
+        // Sample beyond the caret, including the former CJK glyphs, before the
+        // 300 ms raster timer can fire.
+        editor.replaceCell(session.editor, with: "")
+        let cleared = try #require(grid.bitmapImageRepForCachingDisplay(in: grid.bounds))
+        grid.cacheDisplay(in: grid.bounds, to: cleared)
+        var largestDifference: CGFloat = 0
+        for x in stride(from: Int(20 * scale), to: Int((cell.maxX - 12) * scale), by: 2) {
+            for y in stride(from: Int((cell.minY + 8) * scale), to: Int((cell.maxY - 8) * scale), by: 2) {
+                let color = try #require(cleared.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+                largestDifference = max(largestDifference,
+                    abs(color.redComponent - padding.redComponent) + abs(color.greenComponent - padding.greenComponent)
+                    + abs(color.blueComponent - padding.blueComponent))
+            }
+        }
+        #expect(largestDifference < 0.02, "clearing a cell must leave no duplicate glyphs from its raster")
+    }
+
+    @Test("shrinking a column removes old border lines before the deferred render")
+    func shrinkingColumnDoesNotLeaveOldRasterBorders() async throws {
+        let source = "Intro\n\n| Longest heading that sets the width |\n| --- |\n| x |\n\nAfter"
+        let editor = try MountedTableEditor(source: source)
+        defer { editor.close() }
+        await editor.settle()
+        let cell = try editor.focusCell(inTableContaining: "| Longest", row: 0, column: 0)
+        let anchor = (editor.main.string as NSString).range(of: "| Longest").location
+        let oldImage = try #require(editor.main.textStorage?.attribute(.renderedBlockImage, at: anchor, effectiveRange: nil) as? NSImage)
+        editor.replaceCell(cell, with: "观察")
+        let grid = try #require(cell.enclosingScrollView?.superview as? MarkdownTableGridView)
+        try #require(grid.geometry.size.width < oldImage.size.width)
+        let image = try #require(editor.main.textStorage?.attribute(.renderedBlockImage, at: anchor, effectiveRange: nil) as? NSImage)
+        #expect(image.size.width == grid.geometry.size.width,
+                "a narrower live grid must not expose the old raster's column borders")
+        #expect(editor.main.string == source.replacingOccurrences(of: "Longest heading that sets the width", with: "观察"))
+    }
+
+    @Test("a live table preserves input through scrolling after its column shrinks", arguments: [false, true])
+    func editedTableSurvivesScrollOutAndBack(composing: Bool) async throws {
+        let source = "Intro\n\n| Longest heading that sets the width |\n| --- |\n| x |\n\n" + String(repeating: "Ordinary prose after the table.\n\n", count: 100)
+        let editor = try MountedTableEditor(source: source)
+        defer { editor.close() }
+        await editor.settle()
+        let cell = try editor.focusCell(inTableContaining: "| Longest", row: 0, column: 0)
+        editor.replaceCell(cell, with: "观察")
+        let committed = source.replacingOccurrences(of: "Longest heading that sets the width", with: "观察")
+        if composing {
+            cell.setMarkedText("候選", selectedRange: NSRange(location: 1, length: 1),
+                               replacementRange: NSRange(location: NSNotFound, length: 0))
+            try #require(cell.hasMarkedText())
+        }
+        let selection = cell.selectedRange()
+        let input = cell.string
+        let session = editor.coordinator.tableEditingSession
+        let origin = editor.scroll.contentView.bounds.origin
+        for offset: CGFloat in [30, 700, 0] {
+            editor.scroll.contentView.scroll(to: NSPoint(x: origin.x, y: origin.y + offset))
+            editor.scroll.reflectScrolledClipView(editor.scroll.contentView)
+            await editor.settle()
+            #expect(abs(editor.scroll.contentView.bounds.origin.y - (origin.y + offset)) < 1,
+                    "remounting the cell must not undo the user's scroll")
+            #expect(cell.hasMarkedText() == composing)
+            #expect(cell.selectedRange() == selection)
+            #expect(cell.string == input)
+            #expect(editor.main.string == committed, "scrolling must not commit provisional input")
+        }
+        try #require(session.isActive)
+        let grid = try #require(session.editor.enclosingScrollView?.superview as? MarkdownTableGridView)
+        #expect(grid.visibleRect.height > 0)
+        let anchor = (editor.main.string as NSString).range(of: "| 观察").location
+        let image = try #require(editor.main.textStorage?.attribute(.renderedBlockImage, at: anchor, effectiveRange: nil) as? NSImage)
+        #expect(image.size == grid.geometry.size)
+        if composing { session.editor.insertText("確認", replacementRange: NSRange(location: NSNotFound, length: 0)) }
+        session.editor.insertText("!", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(!cell.hasMarkedText())
+        #expect(editor.main.string == source.replacingOccurrences(
+            of: "Longest heading that sets the width", with: composing ? "观察確認!" : "观察!"
+        ))
+    }
+
     @Test("the grid draws nothing outside its bounds")
     func gridDrawsInsideItsBounds() async throws {
         let source = "Intro\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\nAfter"

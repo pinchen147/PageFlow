@@ -89,12 +89,8 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .disabled(item.pageIndex == nil)
-        .onHover { hovering in
-            if item.pageIndex != nil {
-                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-            }
-        }
         .contextMenu {
             if item.pageIndex != nil, pdfManager.permissions.copy {
                 Button("Copy Section as Markdown") {
@@ -105,15 +101,7 @@ struct SidebarView: View {
     }
 
     private func copySectionAsMarkdown(_ item: OutlineItem) {
-        guard pdfManager.permissions.copy, let document = pdfManager.document else { return }
-
-        let markdown = MarkdownExporter.export(
-            scope: .outlineSection(item),
-            document: document
-        )
-
-        guard !markdown.isEmpty else { return }
-        MarkdownExporter.copyToClipboard(markdown)
+        pdfManager.copyMarkdown(scope: .outlineSection(item))
     }
 
     // MARK: - Bookmarks View
@@ -165,9 +153,7 @@ struct SidebarView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .onHover { hovering in
-                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-            }
+            .pageFlowClickCursor(when: editingBookmarkID == nil)
 
             Button {
                 bookmarkManager.removeBookmark(bookmark.id)
@@ -179,10 +165,8 @@ struct SidebarView: View {
                     .pageFlowGlassControlLabel()
             }
             .buttonStyle(.plain)
+            .pageFlowClickCursor()
             .opacity(0.6)
-            .onHover { hovering in
-                (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-            }
         }
     }
 

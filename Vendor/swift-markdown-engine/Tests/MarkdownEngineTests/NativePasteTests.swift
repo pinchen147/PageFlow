@@ -71,13 +71,17 @@ struct NativePasteTests {
         view.setSelectedRange(NSRange(location: 4, length: 0))
         let file = URL(fileURLWithPath: "/tmp/dropped-\(UUID().uuidString).md")
         var opened: [URL] = []
+        view.opensDroppedFile = { $0.pathExtension == "md" }
         view.onDropDocuments = { urls in opened = urls; return true }
         let board = NSPasteboard(name: NSPasteboard.Name("PageFlowDrop-" + UUID().uuidString))
         defer { board.releaseGlobally() }
         board.clearContents()
         board.writeObjects([file as NSURL])
+        let info = MockDraggingInfo(pasteboard: board, location: NSPoint(x: 10, y: 10), window: nil)
 
-        #expect(view.readSelection(from: board, type: .fileURL))
+        #expect(view.draggingEntered(info) == .copy)
+        #expect(view.performDragOperation(info))
+        view.concludeDragOperation(info)
         #expect(view.string == "note")
         #expect(opened == [file])
     }

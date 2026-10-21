@@ -222,7 +222,10 @@ enum WindowCloseQA {
               !QAReplay.isRequested else {
             finish(kind: kindName, cases: [], errors: ["Use markdown or pdf in a standalone app without QAReplay/XCTest"])
         }
-        NSApp.activate(ignoringOtherApps: true)
+        guard !QAPresentation.runsInBackground else {
+            finish(kind: kindName, cases: [], errors: ["Deferred: native close-button and sheet routing require a foreground key/main window; background policy forbids activation"])
+        }
+        QAPresentation.activateIfAllowed()
         guard let initial = await initialWindow(), let delegate = AppDelegate.shared else {
             finish(kind: kindName, cases: [], errors: ["No initial WindowGroup registration or app delegate"])
         }
@@ -299,7 +302,7 @@ enum WindowCloseQA {
             } else {
                 manager.openDocument(url: url, isSecurityScoped: false)
             }
-            window.makeKeyAndOrderFront(nil)
+            QAPresentation.show(window)
             guard await loaded(kind, url: scenario == .saveAsCancel ? nil : url, manager: manager, window: window),
                   let session = manager.activeSession else { throw ProbeError("Scratch document did not mount") }
             report.diagnostics["beforeActivation"] = diagnose(window)
@@ -503,10 +506,11 @@ enum WindowCloseQA {
     }
 
     private static func activateAndWait(_ window: NSWindow) async -> Bool {
+        guard !QAPresentation.runsInBackground else { return false }
         for index in 0..<250 {
             if index % 25 == 0 {
-                NSApp.activate(ignoringOtherApps: true)
-                window.makeKeyAndOrderFront(nil)
+                QAPresentation.activateIfAllowed()
+                QAPresentation.show(window)
                 window.makeMain()
                 WindowChromeController.attached(to: window)?.setTrafficLightsVisible(true, animated: false)
             }

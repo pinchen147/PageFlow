@@ -46,6 +46,7 @@ enum BlockParser {
     private static let cacheLock = NSLock()
     private static var cachedChars: [unichar]?     // UTF-16 buffer of the last parse
     private static var cachedBlocks: [Block]?
+    private static var cachedUnclosedMath = false
     /// The length of the text the memo holds (tests).
     static var memoizedLength: Int? { cacheLock.withLock { cachedChars?.count } }
 
@@ -60,6 +61,7 @@ enum BlockParser {
         cacheLock.lock()
         let prevChars = cachedChars
         let prevBlocks = cachedBlocks
+        let prevUnclosedMath = cachedUnclosedMath
         cacheLock.unlock()
 
         let newChars = copiedUTF16(of: textNS)
@@ -74,14 +76,129 @@ enum BlockParser {
 
         // Incremental: reparse only the affected block window, else fall back to a full reparse.
         if let prevChars, let prevBlocks,
-           let (incr, _) = incrementalParse(oldChars: prevChars, oldBlocks: prevBlocks, newChars: newChars, newNS: contiguous) {
-            cacheLock.lock(); cachedChars = newChars; cachedBlocks = incr; cacheLock.unlock()
+           let (incr, _, newUnclosedMath) = incrementalParse(oldChars: prevChars, oldBlocks: prevBlocks, newChars: newChars, newNS: contiguous) {
+            cacheLock.lock(); cachedChars = newChars; cachedBlocks = incr; cachedUnclosedMath = prevUnclosedMath || newUnclosedMath; cacheLock.unlock()
             return incr
         }
 
-        let blocks = computeBlocks(contiguous as String)
-        cacheLock.lock(); cachedChars = newChars; cachedBlocks = blocks; cacheLock.unlock()
+        var unclosedMath = false
+        let blocks = computeBlocks(contiguous as String, unclosedMath: &unclosedMath)
+        cacheLock.lock(); cachedChars = newChars; cachedBlocks = blocks; cachedUnclosedMath = unclosedMath; cacheLock.unlock()
         return blocks
+    }
+
+    struct Snapshot {
+        let characters: [UInt16]
+        let blocks: [Block]
+        let hasUnclosedMath: Bool
+    }
+
+    static func snapshot(for source: NSString) -> Snapshot? {
+        cacheLock.lock()
+        let chars = cachedChars, blocks = cachedBlocks, unclosed = cachedUnclosedMath
+        cacheLock.unlock()
+        guard let chars, let blocks, utf16(chars, equals: source) else { return nil }
+        return Snapshot(characters: chars, blocks: blocks, hasUnclosedMath: unclosed)
+    }
+
+    /// An editor retains its own receipt even when another document replaces
+    /// the shared parser memo between background parsing and native installation.
+    static func snapshot(parsing source: NSString, reusing previous: Snapshot? = nil) -> Snapshot {
+        let characters = copiedUTF16(of: source)
+        if let previous {
+            if previous.characters == characters { return previous }
+            if let result = incrementalParse(oldChars: previous.characters, oldBlocks: previous.blocks,
+                                             newChars: characters, newNS: source) {
+                return Snapshot(characters: characters, blocks: result.blocks,
+                                hasUnclosedMath: previous.hasUnclosedMath || result.unclosedMath)
+            }
+        }
+        var unclosedMath = false
+        let blocks = computeBlocks(source as String, unclosedMath: &unclosedMath)
+        return Snapshot(characters: characters, blocks: blocks, hasUnclosedMath: unclosedMath)
+    }
+
+    struct StandaloneEdit {
+        let oldWindow: NSRange
+        let newWindow: NSRange
+        let snapshot: Snapshot
+        var characters: [UInt16] { snapshot.characters }
+    }
+
+    /// Reparse a validated complete block edit plus its neighboring seams. The
+    /// returned windows are the only source the token layer must tokenize.
+    /// Cache identity, opaque cuts and both seams must agree before reuse.
+    static func prepareStandaloneEdit(in source: NSString, range: NSRange, replacement: String,
+                                      snapshot receipt: Snapshot? = nil) -> StandaloneEdit? {
+        guard let receipt = receipt ?? snapshot(for: source), !receipt.hasUnclosedMath else { return nil }
+        let oldChars = receipt.characters, oldBlocks = receipt.blocks
+        guard !oldBlocks.isEmpty,
+              range.location >= 0, range.length >= 0, NSMaxRange(range) <= source.length,
+              utf16(oldChars, equals: source) else { return nil }
+        func index(at offset: Int) -> Int {
+            var low = 0, high = oldBlocks.count
+            while low < high {
+                let middle = (low + high) / 2
+                if oldBlocks[middle].range.location <= offset { low = middle + 1 } else { high = middle }
+            }
+            return max(0, low - 1)
+        }
+        let first = index(at: range.location), last = index(at: NSMaxRange(range))
+        for block in oldBlocks[first...last] where block.kind == .fencedCode || block.kind == .blockLatex {
+            if range.location > block.range.location && range.location < NSMaxRange(block.range) { return nil }
+            if NSMaxRange(range) > block.range.location && NSMaxRange(range) < NSMaxRange(block.range) { return nil }
+        }
+        let delta = replacement.utf16.count - range.length
+        var lower = max(0, first - 1), upper = min(oldBlocks.count - 1, last + 1)
+        for _ in 0..<4 {
+            let start = oldBlocks[lower].range.location
+            let end = NSMaxRange(oldBlocks[upper].range)
+            let oldWindow = NSRange(location: start, length: end - start)
+            let fragment = (source.substring(with: oldWindow) as NSString).replacingCharacters(
+                in: NSRange(location: range.location - start, length: range.length), with: replacement)
+            let local = fragment as NSString
+            var unclosedMath = false
+            let parsed = computeBlocks(fragment, unclosedMath: &unclosedMath)
+            guard !unclosedMath else { return nil }
+            // A truncated or newly unclosed fence can absorb the untouched suffix.
+            guard !parsed.contains(where: { block in
+                block.kind == .fencedCode && FencedCode.scan(in: local, range: block.range)?.isClosed != true
+            }) else { return nil }
+            let reparsed = parsed.map { $0.shifted(by: start) }
+            // Seam checks use only the neighboring complete blocks, in a local
+            // coordinate system; they never construct the whole changed document.
+            func stable(_ left: Block, _ right: Block, leftText: String, rightText: String) -> Bool {
+                let joined = computeBlocks(leftText + rightText)
+                return joined == [Block(kind: left.kind, range: NSRange(location: 0, length: left.range.length)),
+                                  Block(kind: right.kind, range: NSRange(location: left.range.length, length: right.range.length))]
+            }
+            var expandLeft = false, expandRight = false
+            if lower > 0, let firstNew = reparsed.first {
+                let left = oldBlocks[lower - 1]
+                expandLeft = !stable(left, firstNew, leftText: source.substring(with: left.range),
+                    rightText: local.substring(with: NSRange(location: 0, length: firstNew.range.length)))
+            }
+            if upper + 1 < oldBlocks.count, let lastNew = reparsed.last {
+                let right = oldBlocks[upper + 1]
+                expandRight = !stable(lastNew, right,
+                    leftText: local.substring(with: NSRange(location: lastNew.range.location - start, length: lastNew.range.length)),
+                    rightText: source.substring(with: right.range))
+            }
+            if expandLeft || expandRight {
+                if expandLeft { lower = max(0, lower - 1) }
+                if expandRight { upper = min(oldBlocks.count - 1, upper + 1) }
+                continue
+            }
+            var blocks = Array(oldBlocks[..<lower])
+            blocks.append(contentsOf: reparsed)
+            blocks.append(contentsOf: oldBlocks[(upper + 1)...].map { $0.shifted(by: delta) })
+            let units = replacingUTF16(oldChars, range: range, with: Array(replacement.utf16))
+            cacheLock.lock(); cachedChars = units; cachedBlocks = blocks; cachedUnclosedMath = false; cacheLock.unlock()
+            return StandaloneEdit(oldWindow: oldWindow,
+                newWindow: NSRange(location: start, length: oldWindow.length + delta),
+                snapshot: Snapshot(characters: units, blocks: blocks, hasUnclosedMath: false))
+        }
+        return nil
     }
 
     /// Does `[lo, hi)` (± margin for an edit-boundary delimiter) contain a `$$` or ``` that can ripple?
@@ -134,7 +251,7 @@ enum BlockParser {
     }
 
     /// Diff old→new, reparse the affected window, splice between untouched prefix/suffix; nil to fall back to full.
-    private static func incrementalParse(oldChars o: [unichar], oldBlocks: [Block], newChars n: [unichar], newNS: NSString) -> (blocks: [Block], window: Int)? {
+    private static func incrementalParse(oldChars o: [unichar], oldBlocks: [Block], newChars n: [unichar], newNS: NSString) -> (blocks: [Block], window: Int, unclosedMath: Bool)? {
         guard !oldBlocks.isEmpty else { return nil }
         let oldLen = o.count, newLen = n.count
         guard oldLen > 0, newLen > 0 else { return nil }
@@ -179,7 +296,7 @@ enum BlockParser {
             result.append(Block(kind: containing.kind,
                                 range: NSRange(location: containing.range.location, length: containing.range.length + delta)))
             result.append(contentsOf: oldBlocks[(firstIdx + 1)...].map { $0.shifted(by: delta) })
-            return (result, 1)
+            return (result, 1, false)
         }
 
         // 4. Otherwise bail on opaque multi-line blocks — fences / block LaTeX can ripple.
@@ -194,7 +311,8 @@ enum BlockParser {
 
         // 6. Reparse just the window substring, shift to absolute new coords.
         let windowText = newNS.substring(with: NSRange(location: winStart, length: winEndNew - winStart))
-        let reparsed = computeBlocks(windowText).map { $0.shifted(by: winStart) }
+        var unclosedMath = false
+        let reparsed = computeBlocks(windowText, unclosedMath: &unclosedMath).map { $0.shifted(by: winStart) }
         // A trailing fence/latex reaching the window end might continue past it.
         if let last = reparsed.last, last.kind == .fencedCode || last.kind == .blockLatex,
            NSMaxRange(last.range) >= winEndNew {
@@ -227,7 +345,7 @@ enum BlockParser {
             cursor = NSMaxRange(b.range)
         }
         guard cursor == newLen else { return nil }
-        return (result, reparsed.count)
+        return (result, reparsed.count, unclosedMath)
     }
 
     private static func seamIsStable(_ left: Block, _ right: Block, in source: NSString) -> Bool {
@@ -238,6 +356,11 @@ enum BlockParser {
     }
 
     private static func computeBlocks(_ text: String) -> [Block] {
+        var unclosedMath = false
+        return computeBlocks(text, unclosedMath: &unclosedMath)
+    }
+
+    private static func computeBlocks(_ text: String, unclosedMath: inout Bool) -> [Block] {
         let nsText = text as NSString
         let length = nsText.length
         guard length > 0 else { return [] }
@@ -321,6 +444,9 @@ enum BlockParser {
                 i = end + 1
 
             } else {
+                // An unmatched opener can pair with a future inserted block across blank
+                // lines. Retain this proof with the document parse, not a per-move scan.
+                if isBlockLatexOpen(line) { unclosedMath = true }
                 // Paragraph: merge consecutive plain (non-blank, non-special) lines.
                 var end = i
                 while end + 1 < lines.count {
@@ -329,7 +455,10 @@ enum BlockParser {
                         || isHeading(next) || isBlockquote(next) || isListItem(next) { break }
                     // A table (row + separator) or a block-LaTeX run interrupts it.
                     if end + 2 < lines.count, MarkdownTableScanner.isTableStart(header: next, separator: lineText(end + 2)) { break }
-                    if isBlockLatexOpen(next), blockLatexCloseIndex(from: end + 1) != nil { break }
+                    if isBlockLatexOpen(next) {
+                        if blockLatexCloseIndex(from: end + 1) != nil { break }
+                        unclosedMath = true
+                    }
                     end += 1
                 }
                 blocks.append(Block(kind: .paragraph, range: union(lines[i...end])))

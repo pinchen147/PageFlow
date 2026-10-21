@@ -91,8 +91,6 @@ struct GlassSidebarCloseButton: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
+        .pageFlowClickCursor()
     }
 }

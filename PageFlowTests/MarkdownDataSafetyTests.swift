@@ -57,11 +57,11 @@ struct MarkdownDataSafetyTests {
     }
 
     @Test
-    func closeAndQuitBoundariesNoticeAVanishedFile() throws {
+    func closeAndQuitBoundariesNoticeAVanishedFile() async throws {
         let url = try temporaryNote("only copy\n")
         defer { cleanUp(url) }
         let manager = TabManager()
-        manager.openDocument(url: url, isSecurityScoped: false)
+        await manager.openDocument(url: url, isSecurityScoped: false)?.value
         let session = try #require(manager.activeSession)
         try FileManager.default.removeItem(at: url)
         #expect(!session.isDirty)
@@ -85,6 +85,47 @@ struct MarkdownDataSafetyTests {
 
         #expect(manager.diskChange() == .unchanged)
         #expect(!manager.isDirty)
+    }
+
+    @Test(arguments: [false, true])
+    func saveCannotInferEqualityFromAnUnreadableFileWithAnOlderDate(synchronous: Bool) async throws {
+        let url = try temporaryNote("Original file\n")
+        defer { cleanUp(url) }
+        let owner = TabManager()
+        await owner.openDocument(url: url, isSecurityScoped: false, bringsToFront: false)?.value
+        let content = try #require(owner.activeMarkdownContent)
+        defer { for session in owner.sessions.values { session.cleanup() } }
+        let date = try #require(content.documentManager.contentModificationDate)
+        content.documentManager.text = "Local draft must survive"
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        let child = url.appendingPathComponent("preserve.txt")
+        try Data("Separate contents".utf8).write(to: child)
+        try FileManager.default.setAttributes([.modificationDate: date.addingTimeInterval(-60)], ofItemAtPath: url.path)
+        if synchronous {
+            let session = try #require(owner.activeSession)
+            #expect(!DirtyDoc(session: session, owner: owner).saveSync())
+        } else {
+            let result = await owner.saveActiveDocument()
+            if case .cancelled = result {} else { Issue.record("An unreadable backing file must not authorize an overwrite") }
+        }
+        #expect((try? Data(contentsOf: child)) == Data("Separate contents".utf8))
+        #expect(content.documentManager.text == "Local draft must survive" && content.documentManager.isDirty)
+    }
+
+    @Test(arguments: [false, true])
+    func commandSaveAllowsReadableEmptyAndMissingFiles(fileMissing: Bool) async throws {
+        let url = try temporaryNote("")
+        defer { cleanUp(url) }
+        let owner = TabManager()
+        await owner.openDocument(url: url, isSecurityScoped: false, bringsToFront: false)?.value
+        let content = try #require(owner.activeMarkdownContent)
+        defer { for session in owner.sessions.values { session.cleanup() } }
+        content.documentManager.text = "Saved local draft\n"
+        if fileMissing { try FileManager.default.removeItem(at: url) }
+        if case .success = await owner.saveActiveDocument() {} else { Issue.record("The draft could not be saved") }
+        #expect(try Data(contentsOf: url) == Data("Saved local draft\n".utf8))
+        #expect(!content.documentManager.isDirty)
     }
 
     @Test
@@ -114,7 +155,7 @@ struct MarkdownDataSafetyTests {
         try bytes.write(to: url)
 
         let manager = TabManager()
-        manager.openDocument(url: url, isSecurityScoped: false)
+        await manager.openDocument(url: url, isSecurityScoped: false)?.value
         let content = try #require(manager.activeSession?.content.markdown)
         #expect(content.documentManager.hasInvalidUTF8)
         content.documentManager.text += "more\n"
@@ -138,20 +179,46 @@ struct MarkdownDataSafetyTests {
     }
 
     @Test
-    func aBinaryFileNamedMarkdownNeverOpens() throws {
+    func aBinaryFileNamedMarkdownNeverOpens() async throws {
         let url = try temporaryNote("")
         defer { cleanUp(url) }
         try Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x00, 0x0D, 0x0A]).write(to: url)
         let manager = TabManager()
 
-        manager.openDocument(url: url, isSecurityScoped: false)
+        await manager.openDocument(url: url, isSecurityScoped: false)?.value
 
         #expect(manager.tabID(for: url) == nil)
         #expect(try Data(contentsOf: url).count == 8, "the file is never rewritten")
     }
 
     @Test
-    func aUTF16NoteWithItsByteOrderMarkStillOpens() throws {
+    func anEditInsideTheDamagedEncodingPromptRevokesTheSave() async throws {
+        let url = try temporaryNote("")
+        defer { cleanUp(url) }
+        var bytes = Data("café\n".utf8)
+        bytes.append(0xFF)
+        try bytes.write(to: url)
+        let owner = TabManager()
+        await owner.openDocument(url: url, isSecurityScoped: false, bringsToFront: false)?.value
+        let content = try #require(owner.activeMarkdownContent)
+        defer { for session in owner.sessions.values { session.cleanup() } }
+        try #require(content.documentManager.hasInvalidUTF8)
+        content.documentManager.text = "Approved draft"
+        var prompts = 0
+        owner.invalidUTF8SavePrompt = { _ in
+            prompts += 1
+            content.documentManager.text = "Changed while the prompt was open"
+            return true
+        }
+        let result = await owner.saveActiveDocument()
+        #expect(prompts == 1)
+        if case .cancelled = result {} else { Issue.record("A changed draft must revoke encoding replacement approval") }
+        #expect(try Data(contentsOf: url) == bytes)
+        #expect(content.documentManager.text == "Changed while the prompt was open" && content.documentManager.isDirty)
+    }
+
+    @Test
+    func aUTF16NoteWithItsByteOrderMarkStillOpens() async throws {
         let url = try temporaryNote("")
         defer { cleanUp(url) }
         var bytes = Data([0xFF, 0xFE])
@@ -159,13 +226,13 @@ struct MarkdownDataSafetyTests {
         try bytes.write(to: url)
         let manager = TabManager()
 
-        manager.openDocument(url: url, isSecurityScoped: false)
+        await manager.openDocument(url: url, isSecurityScoped: false)?.value
 
         #expect(manager.tabID(for: url) != nil)
     }
 
     @Test
-    func aLargeNoteAsksBeforeOpening() throws {
+    func aLargeNoteAsksBeforeOpening() async throws {
         let url = try temporaryNote(String(repeating: "a", count: TabManager.largeNoteWarningBytes + 1))
         defer { cleanUp(url) }
         let manager = TabManager()
@@ -177,11 +244,11 @@ struct MarkdownDataSafetyTests {
             return answer
         }
 
-        manager.openDocument(url: url, isSecurityScoped: false)
+        await manager.openDocument(url: url, isSecurityScoped: false)?.value
         #expect(manager.tabID(for: url) == nil)
 
         answer = true
-        manager.openDocument(url: url, isSecurityScoped: false)
+        await manager.openDocument(url: url, isSecurityScoped: false)?.value
         #expect(manager.tabID(for: url) != nil)
         #expect(asked == 2)
     }

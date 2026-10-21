@@ -38,6 +38,7 @@ struct SearchBar: View {
                         .frame(width: 16, height: 20)
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .accessibilityLabel(replacementDriver.showsReplacement ? "Hide replacement" : "Show replacement")
                 .help("Show or hide replacement controls")
             }
@@ -51,7 +52,7 @@ struct SearchBar: View {
                 .focused($isSearchFieldFocused)
                 .accessibilityLabel("Find text")
                 .onSubmit { driver.next() }
-                .onChange(of: driver.query) { _, _ in driver.runSearch() }
+                .onChange(of: driver.query) { _, _ in driver.scheduleSearch() }
 
             if !driver.query.isEmpty {
                 Text(driver.hasResults ? "\(driver.currentMatch) of \(driver.resultCount)" : "No results")
@@ -70,6 +71,7 @@ struct SearchBar: View {
                     .pageFlowGlassControlLabel()
             }
             .buttonStyle(.plain)
+            .pageFlowClickCursor()
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Close Find")
         }
@@ -83,6 +85,7 @@ struct SearchBar: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .accessibilityLabel(label)
         .help(label)
     }
@@ -101,9 +104,11 @@ struct SearchBar: View {
             .accessibilityLabel("Replacement text")
             .onSubmit { replacement.replaceCurrent() }
             Button("Replace") { replacement.replaceCurrent() }
+                .pageFlowClickCursor()
                 .disabled(driver.query.isEmpty)
                 .help("Replace the current match and find the next")
             Button("Replace All") { replacement.replaceAll() }
+                .pageFlowClickCursor()
                 .disabled(driver.query.isEmpty)
                 .help("Replace every current match in this document")
         }

@@ -13,6 +13,8 @@ final class CommentHighlightView: NSView {
         var resolved = false
         /// A whole table: a 2 pt outline instead of a fill.
         var outline: NSColor?
+        var outlineOffset: CGFloat = 0
+        var cornerRadius: CGFloat = 0
         /// Inside a rendered table: painted over its raster, blended.
         var overTable = false
     }
@@ -80,7 +82,8 @@ final class CommentHighlightView: NSView {
             for (index, rect) in paint.rects.enumerated() {
                 let layer = thread.fills[index]
                 // An outline sits 2 pt outside the table, as CSS `outline` does.
-                layer.frame = outline == nil ? rect : rect.insetBy(dx: -2, dy: -2)
+                layer.frame = outline == nil ? rect : rect.insetBy(dx: -(2 + paint.outlineOffset), dy: -(2 + paint.outlineOffset))
+                layer.cornerRadius = paint.cornerRadius
                 layer.borderWidth = outline == nil ? 0 : 2
                 layer.borderColor = outline
                 if previous == nil || !fades { layer.backgroundColor = fill }

@@ -23,6 +23,15 @@ struct TableCellSelection: Equatable {
     /// Every cell in the range, row by row.
     var cells: [CellCoord] { rows.flatMap { row in columns.map { CellCoord(row: row, column: $0) } } }
 
+    /// Follow a structural edit to the nearest surviving cells, preserving drag direction.
+    func clamped(to table: MarkdownTableSource) -> Self {
+        func clamp(_ cell: CellCoord) -> CellCoord {
+            CellCoord(row: min(max(0, cell.row), table.rowCount - 1),
+                      column: min(max(0, cell.column), table.columnCount - 1))
+        }
+        return Self(anchor: clamp(anchor), head: clamp(head))
+    }
+
     func contains(_ cell: CellCoord) -> Bool { rows.contains(cell.row) && columns.contains(cell.column) }
     func isFullRows(columnCount: Int) -> Bool { columns == 0...(columnCount - 1) }
     func isFullColumns(rowCount: Int) -> Bool { rows == 0...(rowCount - 1) }

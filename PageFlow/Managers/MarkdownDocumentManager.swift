@@ -39,10 +39,52 @@ final class MarkdownDocumentManager {
     private(set) var outline: [MarkdownOutlineItem] = []
     private(set) var wordCount = WordCount(words: 0, characters: 0)
 
+    @ObservationIgnored private var derivedTextTask: Task<Void, Never>?
+    @ObservationIgnored private var derivedTextGeneration: UInt64 = 0
+
     private func refreshDerivedText() {
-        outline = MarkdownOutline.parse(text)
-        wordCount = WordCount.count(text)
+        derivedTextGeneration &+= 1
+        derivedTextTask?.cancel()
+        derivedTextTask = nil
+        let source = text
+        guard source.utf8.count >= 65_536 else {
+            (outline, wordCount) = Self.deriveText(source, shouldCancel: { false })!
+            return
+        }
+        let generation = derivedTextGeneration
+        derivedTextTask = Task { [weak self] in
+            guard !Task.isCancelled else { return }
+            let worker = Task.detached(priority: .userInitiated) { Self.deriveText(source, shouldCancel: { Task.isCancelled }) }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled, let result, let self, !self.isClosed,
+                  self.derivedTextGeneration == generation else { return }
+            self.outline = result.0
+            self.wordCount = result.1
+            self.derivedTextTask = nil
+        }
     }
+
+    private nonisolated static func deriveText(_ source: String, shouldCancel: () -> Bool) -> ([MarkdownOutlineItem], WordCount)? {
+        #if DEBUG
+        let outlineStart = CFAbsoluteTimeGetCurrent()
+        #endif
+        guard let outline = MarkdownOutline.parse(source, shouldCancel: shouldCancel) else { return nil }
+        #if DEBUG
+        PerfTrace.add("document.derive.outline", since: outlineStart)
+        let wordsStart = CFAbsoluteTimeGetCurrent()
+        #endif
+        guard let count = WordCount.count(source, shouldCancel: shouldCancel) else { return nil }
+        #if DEBUG
+        PerfTrace.add("document.derive.words", since: wordsStart)
+        #endif
+        return (outline, count)
+    }
+
+    deinit { derivedTextTask?.cancel() }
 
     /// The note's comments (doc 25): the hidden block at the end of the file,
     /// split off at load so the editor never sees it; empty when it has none.
@@ -70,12 +112,16 @@ final class MarkdownDocumentManager {
     /// Keep My Version requires a write even if the buffer still equals savedText.
     private var hasPendingExternalOverwrite = false
     @ObservationIgnored private var externalOverwriteGeneration: UInt64 = 0
+    @ObservationIgnored private var reloadGeneration: UInt64 = 0
     @ObservationIgnored private var pendingOverwriteURL: URL?
     @ObservationIgnored private var documentEpoch: UInt64 = 0
     @ObservationIgnored private var lastAppliedWrite: UInt64 = 0
     @ObservationIgnored private var pendingWrites = 0
+    @ObservationIgnored private var writeWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private var pendingSaveAsWrites = 0
     private(set) var isClosed = false
+    private var recoveredTitle: String?
+    private var hasRecoveredChanges = false
 
     /// True for local edits or a retained version that still needs saving. An empty,
     /// never-edited untitled document is therefore *not* dirty (ADR-0012 D6).
@@ -84,7 +130,7 @@ final class MarkdownDocumentManager {
     // Dirty compares against what disk will hold once queued writes land, so
     // undoing back to the old saved text mid-save still reads as unsaved.
     var isDirty: Bool {
-        hasPendingExternalOverwrite || isBackingFileMissing
+        hasRecoveredChanges || hasPendingExternalOverwrite || isBackingFileMissing
             || !source.hasSameSource(as: queuedWrite?.text ?? savedText)
     }
 
@@ -157,7 +203,7 @@ final class MarkdownDocumentManager {
 
     /// Display title for menus/dialogs (e.g. the unsaved-changes prompt).
     var documentTitle: String {
-        documentURL?.deletingPathExtension().lastPathComponent ?? "Untitled"
+        documentURL?.deletingPathExtension().lastPathComponent ?? recoveredTitle ?? "Untitled"
     }
 
     var hasDocumentURL: Bool { documentURL != nil }
@@ -174,40 +220,68 @@ final class MarkdownDocumentManager {
         var errorDescription: String? { "It isn't a text file." }
     }
 
-    /// Reads `url`, detecting and storing its encoding/EOL/BOM, and normalizes the
-    /// in-memory buffer to `\n`. Holds the security scope for the document's
-    /// lifetime (released by `close()`/deinit), mirroring PDFManager.
+    /// A decoded candidate holds its scope until delivery accepts or discards it.
+    struct PreparedOpen: Sendable {
+        let access: MarkdownFileAccess
+        let decoded: TextFileCodec.Decoded
+        let body: String
+        let comments: String
+        let modificationDate: Date?
+        let byteCount: Int
+    }
+
+    /// Acquire the grant before a bookmark caller releases its temporary access.
+    /// The worker owns it through the read, even if tab close revokes delivery.
+    static func prepareOpen(access: MarkdownFileAccess) -> Task<PreparedOpen, Error> {
+        return Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            let result = try readForOpen(access)
+            try Task.checkCancellation()
+            return result
+        }
+    }
+
+    private nonisolated static func readForOpen(_ access: MarkdownFileAccess) throws -> PreparedOpen {
+        PerfTrace.stamp("load.start")
+        let data = try Data(contentsOf: access.url)
+        guard !TextFileCodec.looksBinary(data) else { throw LoadError.notText }
+        let decoded = TextFileCodec.decode(data)
+        let parts = MarkdownCommentBlock.split(decoded.text)
+        let date = (try? FileManager.default.attributesOfItem(atPath: access.url.path))?[.modificationDate] as? Date
+        PerfTrace.stamp("load.decoded")
+        return PreparedOpen(access: access, decoded: decoded, body: parts.body, comments: parts.block,
+                            modificationDate: date, byteCount: data.count)
+    }
+
+    /// Synchronous load for explicit model boundaries. Interactive opens prepare
+    /// the same snapshot on a worker and apply it only after ownership checks.
     func load(from url: URL, isSecurityScoped: Bool = false) throws {
         let access = MarkdownFileAccess(url: url, requestSecurityScope: isSecurityScoped)
         finishPendingWrites()
-        do {
-            PerfTrace.stamp("load.start")
-            let data = try Data(contentsOf: url)
-            guard !TextFileCodec.looksBinary(data) else { throw LoadError.notText }
-            let decoded = TextFileCodec.decode(data)
-            PerfTrace.stamp("load.decoded")
+        applyPreparedOpen(try Self.readForOpen(access))
+    }
 
-            documentEpoch &+= 1
-            queuedWrite = nil
-            isBackingFileMissing = false
-            isClosed = false
-            fileAccess = access
-            fileSession.reset(access: access, fidelity: decoded.fidelity)
-            let parts = MarkdownCommentBlock.split(decoded.text)
-            text = parts.body
-            commentBlock = parts.block
-            savedText = decoded.text
-            acknowledgedDiskSource = decoded.text
-            fidelity = decoded.fidelity
-            documentURL = url
-            encodingWasDowngraded = decoded.fidelity.savedAsDowngradedUTF8
-            contentModificationDate = modificationDate(of: url)
-            hasPendingExternalOverwrite = false
-            pendingOverwriteURL = nil
-        } catch {
-            logger.error("Markdown load failed: \(error.localizedDescription)")
-            throw error
-        }
+    /// Only the owner of an accepted open installs the prepared snapshot.
+    /// Native reads, decoding, comment splitting and stat already finished off main.
+    func applyPreparedOpen(_ prepared: PreparedOpen) {
+        documentEpoch &+= 1
+        queuedWrite = nil
+        isBackingFileMissing = false
+        isClosed = false
+        hasRecoveredChanges = false
+        recoveredTitle = nil
+        fileAccess = prepared.access
+        fileSession.reset(access: prepared.access, fidelity: prepared.decoded.fidelity)
+        text = prepared.body
+        commentBlock = prepared.comments
+        savedText = prepared.decoded.text
+        acknowledgedDiskSource = prepared.decoded.text
+        fidelity = prepared.decoded.fidelity
+        documentURL = prepared.access.url
+        encodingWasDowngraded = prepared.decoded.fidelity.savedAsDowngradedUTF8
+        contentModificationDate = prepared.modificationDate
+        hasPendingExternalOverwrite = false
+        pendingOverwriteURL = nil
     }
 
     // MARK: - Save
@@ -262,8 +336,23 @@ final class MarkdownDocumentManager {
         savedText = seed
     }
 
+    /// Recovery always creates an unsaved copy. Even an empty recovered
+    /// draft must remain dirty until the owner saves or explicitly discards it.
+    func recoverUnsavedSource(_ source: String, title: String, commentBlock: String? = nil) {
+        guard documentURL == nil, !isClosed, !hasPendingWrites else { return }
+        let parts = commentBlock.map { (body: source, block: $0) } ?? MarkdownCommentBlock.split(source)
+        text = parts.body
+        self.commentBlock = parts.block
+        savedText = ""
+        recoveredTitle = "Recovered — " + title
+        hasRecoveredChanges = true
+    }
+
     /// Releases the security scope. Call from the owning session's teardown.
     func close() {
+        derivedTextGeneration &+= 1
+        derivedTextTask?.cancel()
+        derivedTextTask = nil
         finishPendingWrites()
         documentEpoch &+= 1
         queuedWrite = nil
@@ -298,6 +387,52 @@ final class MarkdownDocumentManager {
     struct DiskObservation: Sendable {
         fileprivate let change: DiskChange
         fileprivate let modificationDate: Date?
+        fileprivate var source: String? = nil
+
+        var hasReadableSourceOrMissingFile: Bool { change == .missing || source != nil }
+    }
+
+    struct DiskCheck: Sendable {
+        let observation: DiskObservation
+        let probe: DiskProbe
+    }
+
+    /// Returns a current observation, including read failures. Callers must check
+    /// hasReadableSourceOrMissingFile before resolving or authorizing an overwrite.
+    /// Nil means the request was cancelled or no longer has a live file identity.
+    func observeDiskForSave() async -> DiskCheck? {
+        let epoch = documentEpoch
+        while !Task.isCancelled, !isClosed, documentEpoch == epoch {
+            // A command Save can follow an accepted Save As. Observe its actual
+            // destination/baseline after the receipt, without draining I/O on main.
+            while hasPendingWrites {
+                await withCheckedContinuation { writeWaiters.append($0) }
+            }
+            guard !Task.isCancelled, !isClosed, documentEpoch == epoch,
+                  let probe = diskProbe() else { return nil }
+            let write = lastAppliedWrite
+            let overwrite = externalOverwriteGeneration
+            let access = fileAccess
+            let work = Task.detached(priority: .userInitiated) { [access] in
+                withExtendedLifetime(access) { Self.observe(probe) }
+            }
+            let observation = await withTaskCancellationHandler {
+                await work.value
+            } onCancel: { work.cancel() }
+            guard !Task.isCancelled, !isClosed, documentEpoch == epoch else { return nil }
+            // A save or Keep decision can land during the read. Recheck against
+            // its new baseline rather than reporting our own write as external.
+            guard !hasPendingWrites, lastAppliedWrite == write,
+                  externalOverwriteGeneration == overwrite, matchesDiskProbe(probe) else { continue }
+            return DiskCheck(observation: observation, probe: probe)
+        }
+        return nil
+    }
+
+    private func matchesDiskProbe(_ probe: DiskProbe) -> Bool {
+        guard let current = diskProbe() else { return false }
+        return current.epoch == probe.epoch && current.url == probe.url &&
+            current.baseline.hasSameSource(as: probe.baseline)
     }
 
     /// A probe for an open, file-backed document.
@@ -322,16 +457,16 @@ final class MarkdownDocumentManager {
             let newer = date.flatMap { current in probe.baselineDate.map { current > $0 } } ?? false
             return DiskObservation(change: newer ? .modified : .unchanged, modificationDate: nil)
         }
-        let same = TextFileCodec.decode(data).text.hasSameSource(as: probe.baseline)
-        return DiskObservation(change: same ? .unchanged : .modified, modificationDate: date)
+        let source = TextFileCodec.decode(data).text
+        let same = source.hasSameSource(as: probe.baseline)
+        return DiskObservation(change: same ? .unchanged : .modified, modificationDate: date, source: source)
     }
 
     /// Applies an observation on the main actor and returns what still needs
     /// the user. A stale probe, an identical rewrite (its date is adopted) and a
     /// missing file the tab already kept need nothing.
     func resolve(_ observation: DiskObservation, for probe: DiskProbe) -> DiskChange {
-        guard let current = diskProbe(), current.epoch == probe.epoch, current.url == probe.url,
-              current.baseline.hasSameSource(as: probe.baseline) else { return .unchanged }
+        guard matchesDiskProbe(probe) else { return .unchanged }
         switch observation.change {
         case .missing:
             return isBackingFileMissing ? .unchanged : .missing
@@ -395,6 +530,92 @@ final class MarkdownDocumentManager {
         isBackingFileMissing = false
     }
 
+    private struct ReloadRead: Sendable {
+        let decoded: TextFileCodec.Decoded
+        let body: String
+        let comments: String
+        let modificationDate: Date?
+    }
+
+    private nonisolated static func readForReload(_ url: URL) throws -> ReloadRead {
+        let data = try Data(contentsOf: url)
+        guard !TextFileCodec.looksBinary(data) else { throw LoadError.notText }
+        let decoded = TextFileCodec.decode(data)
+        let parts = MarkdownCommentBlock.split(decoded.text)
+        let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        return ReloadRead(decoded: decoded, body: parts.body, comments: parts.block, modificationDate: date)
+    }
+
+    /// Focus-triggered reloads never read/decode/stat on the main actor. A read
+    /// retains its access grant even if close or replacement revokes delivery.
+    @discardableResult
+    func reloadWithCompletion(whileCurrent: () -> Bool = { true }, willApply: () -> Void = {}) async throws -> Bool {
+        guard whileCurrent(), !isClosed, !hasPendingWrites, let url = documentURL else { return false }
+        reloadGeneration &+= 1
+        let generation = reloadGeneration
+        let epoch = documentEpoch
+        let lastWrite = lastAppliedWrite
+        let overwrite = externalOverwriteGeneration
+        let body = text
+        let comments = commentBlock
+        let baseline = savedText
+        let access = fileAccess
+        let work = Task.detached(priority: .userInitiated) { [access] in
+            try withExtendedLifetime(access) { try Self.readForReload(url) }
+        }
+        let read = try await withTaskCancellationHandler {
+            try await work.value
+        } onCancel: { work.cancel() }
+        try Task.checkCancellation()
+        // The caller reconciles native edits before these model comparisons.
+        guard whileCurrent(), !isClosed, !hasPendingWrites, documentURL == url,
+              generation == reloadGeneration, epoch == documentEpoch,
+              lastWrite == lastAppliedWrite, overwrite == externalOverwriteGeneration,
+              text.hasSameSource(as: body), commentBlock.hasSameSource(as: comments),
+              savedText.hasSameSource(as: baseline) else { return false }
+        willApply()
+        documentEpoch &+= 1
+        queuedWrite = nil
+        fileSession.reset(access: fileAccess, fidelity: read.decoded.fidelity)
+        text = read.body
+        commentBlock = read.comments
+        savedText = read.decoded.text
+        acknowledgedDiskSource = read.decoded.text
+        fidelity = read.decoded.fidelity
+        encodingWasDowngraded = read.decoded.fidelity.savedAsDowngradedUTF8
+        contentModificationDate = read.modificationDate
+        hasPendingExternalOverwrite = false
+        pendingOverwriteURL = nil
+        isBackingFileMissing = false
+        return true
+    }
+
+    /// Keep acknowledges exactly the observed version. A newer external write
+    /// must still prompt later; this path performs no second disk read.
+    @discardableResult
+    func keepLocalVersionIgnoringDisk(_ observation: DiskObservation, for probe: DiskProbe) -> Bool {
+        guard !hasPendingWrites else { return false }
+        return acknowledgeDiskObservation(observation, for: probe)
+    }
+
+    /// Close/quit already allow Keep before older write receipts arrive. Reuse
+    /// their captured version with the same overwrite-generation protection,
+    /// without weakening the pending-write gate used by focus and command Save.
+    func keepObservedVersionForSynchronousSave(_ checked: DiskCheck) -> Bool {
+        guard checked.observation.source != nil else { return false }
+        return acknowledgeDiskObservation(checked.observation, for: checked.probe)
+    }
+
+    private func acknowledgeDiskObservation(_ observation: DiskObservation, for probe: DiskProbe) -> Bool {
+        guard resolve(observation, for: probe) == .modified else { return false }
+        if let source = observation.source { acknowledgedDiskSource = source }
+        if let date = observation.modificationDate { contentModificationDate = date }
+        externalOverwriteGeneration &+= 1
+        pendingOverwriteURL = probe.url
+        hasPendingExternalOverwrite = true
+        return true
+    }
+
     /// Acknowledges this external change while retaining the local source. The
     /// overwrite decision stays dirty until a successful save or deliberate reload.
     func keepLocalVersionIgnoringDisk() {
@@ -420,6 +641,11 @@ final class MarkdownDocumentManager {
         defer {
             pendingWrites -= 1
             if isSaveAs { pendingSaveAsWrites -= 1 }
+            if pendingWrites == 0 {
+                let waiters = writeWaiters
+                writeWaiters.removeAll()
+                waiters.forEach { $0.resume() }
+            }
         }
         let epoch = documentEpoch
         let source = source
@@ -450,6 +676,14 @@ final class MarkdownDocumentManager {
         queuedWrite = nil
     }
 
+    /// Existing accepted writes already own their workers. Let their receipts
+    /// settle on main while native close/quit remain responsive.
+    func finishPendingWritesInBackground() async {
+        while pendingWrites > 0 {
+            await withCheckedContinuation { writeWaiters.append($0) }
+        }
+    }
+
     /// A resolved write no longer predicts disk: success moved `savedText`, and a
     /// failure leaves disk at the last saved source.
     private func resolveQueuedWrite(through sequence: UInt64) {
@@ -461,6 +695,8 @@ final class MarkdownDocumentManager {
               saved.sequence > lastAppliedWrite else { return }
         lastAppliedWrite = saved.sequence
         savedText = saved.text
+        hasRecoveredChanges = false
+        recoveredTitle = nil
         let hasNewerKeep = pendingOverwriteURL == saved.access.url &&
             saved.overwriteGeneration != externalOverwriteGeneration
         if !hasNewerKeep {

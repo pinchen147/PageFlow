@@ -23,8 +23,11 @@ Every tool stays out of sight until you reach for it.
 ## Markdown (new in 2.0)
 
 - **Live preview** — notes render as you type; the markup shows only where you are editing.
+- **Collapsible sections** — fold a heading with its chevron or ⌥⌘↩. The quiet hidden-content row can be switched off in Settings; folding leaves the Markdown file unchanged.
 - **Tables you edit as tables** — click a cell and type, Tab to move on (Tab past the last cell adds a row), right-click to insert, delete, move, sort or align. Select a range of cells to copy, paste, clear or format them.
 - **Math, diagrams, code** — `$…$` and `$$…$$` LaTeX, Mermaid flowchart, sequence, class, state, ER and XY charts, and syntax colouring for about 190 languages.
+- **Images you can edit** — select an image to change its description, size, alignment or crop, or attach a margin comment. Crops preserve the original file.
+- **Move whole blocks** — drag an image, table, code block, formula or diagram by its grip; undo restores its position.
 - **Comments in the file** — select text and press ⌥⌘M. Threads sit in the margin, can be replied to and resolved, and are saved in a hidden block at the end of the `.md`, so they travel with it.
 - **Plain files** — `.md` and `.markdown` anywhere on your Mac; line endings kept. `[next](other.md)` opens the linked note or PDF, `[see](#heading)` jumps within the note, a pasted screenshot lands in an `attachments` folder beside the note.
 - **Outline, Find and Replace, zoom, print** — a heading outline with Back and Forward, Find and Replace (⌥⌘F), PDF-style zoom, and printing that keeps math, tables and diagrams.
@@ -42,7 +45,8 @@ Every tool stays out of sight until you reach for it.
 
 - **Deck tabs and a folding toolbar** — the current tab stays full width and the rest tuck beside it; the toolbar rests as a small glass sphere until you point at it.
 - **Windows** — tear tabs off into windows and merge them back, Search Tabs across every window (⇧⌘A), undo kept per tab, and your PDFs and notes reopened on relaunch, each where you left off.
-- **80 shortcuts, all rebindable** — Settings → Shortcuts, searchable by name or by keys.
+- **Rebindable shortcuts** — Settings → Shortcuts, searchable by name or by keys.
+- **Draft recovery and safe saves** — unsaved notes can be recovered after an unexpected stop. Close and Quit wait for accepted saves, with Cancel available during slow storage waits.
 - **Private** — no analytics, no telemetry, no account, and no network requests of its own. There is no updater: get new versions from the download page.
 - **Liquid Glass** on macOS 26, a frosted look on macOS 15.
 
@@ -74,7 +78,7 @@ Requires macOS 15 (Sequoia) or later, on Apple Silicon or Intel.
 | Zoom in / out / to fit | `⌘+` / `⌘-` / `⌥⌘0` |
 | Search Tabs | `⇧⌘A` |
 
-All 80 can be changed in Settings → Shortcuts.
+Bindings can be changed in Settings → Shortcuts.
 
 ## Changelog
 

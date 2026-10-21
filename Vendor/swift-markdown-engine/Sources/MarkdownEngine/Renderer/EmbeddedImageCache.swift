@@ -8,7 +8,9 @@
 import AppKit
 import CoreGraphics
 
-/// Parsed `![[name|optional-id|optional-width]]` reference.
+/// Parsed `![[name|optional-id|tokens]]` reference. The head is the name plus
+/// an optional UUID right after it; the parts after the head follow the alt
+/// token grammar (`ImageAltTokens`): `![[shot.png|center|crop=…|420]]`.
 public struct ImageEmbedReference: Sendable {
     private static let markdownRegex = try! NSRegularExpression(
         pattern: "!\\[\\[([^\\]\\r\\n]*)\\]\\]"
@@ -17,34 +19,30 @@ public struct ImageEmbedReference: Sendable {
     public let name: String
     public let nodeID: UUID?
     public let requestedWidth: CGFloat?
+    public let alignment: ImageAltTokens.Alignment
+    /// Normalized crop of the source image (top-left origin), nil for none.
+    public let crop: CGRect?
 
-    public init(name: String, nodeID: UUID? = nil, requestedWidth: CGFloat? = nil) {
+    public init(name: String, nodeID: UUID? = nil, requestedWidth: CGFloat? = nil,
+                alignment: ImageAltTokens.Alignment = .left, crop: CGRect? = nil) {
         self.name = name
         self.nodeID = nodeID
         self.requestedWidth = requestedWidth
+        self.alignment = alignment
+        self.crop = crop
     }
 
     public init?(content: String) {
-        let parts = content
+        // Tokens are read from the right; what stops the scan (the name, the
+        // id, an unknown part) is the head and stays as written.
+        let tokens = ImageAltTokens.parse(content)
+        let head = tokens.description
             .split(separator: "|", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-        guard let name = parts.first, !name.isEmpty else { return nil }
-
-        var parsedID: UUID?
-        var parsedWidth: CGFloat?
-
-        for part in parts.dropFirst() where !part.isEmpty {
-            if parsedID == nil, let id = UUID(uuidString: part) {
-                parsedID = id
-                continue
-            }
-            if parsedWidth == nil, let value = Double(part), value > 0 {
-                parsedWidth = CGFloat(value)
-            }
-        }
-
-        self.init(name: name, nodeID: parsedID, requestedWidth: parsedWidth)
+        guard let name = head.first, !name.isEmpty else { return nil }
+        let nodeID = head.count > 1 ? UUID(uuidString: head[1]) : nil
+        self.init(name: name, nodeID: nodeID, requestedWidth: tokens.width,
+                  alignment: tokens.alignment, crop: tokens.crop)
     }
 
     public static func parse(markdown: String) -> ImageEmbedReference? {
@@ -71,15 +69,12 @@ public struct ImageEmbedReference: Sendable {
     }
 
     public var markdown: String {
-        var parts = [name]
+        var head = name
         if let nodeID {
-            parts.append(nodeID.uuidString)
+            head += "|" + nodeID.uuidString
         }
-        if let requestedWidth, requestedWidth > 0 {
-            let widthValue = Double(requestedWidth)
-            parts.append(widthValue.rounded() == widthValue ? String(Int(widthValue)) : String(widthValue))
-        }
-        return "![[\(parts.joined(separator: "|"))]]"
+        let tokens = ImageAltTokens(description: head, width: requestedWidth, alignment: alignment, crop: crop)
+        return "![[\(ImageAltTokens.format(tokens))]]"
     }
 
     /// Convert to the engine-side request shape consumed by `EmbeddedImageProvider`.

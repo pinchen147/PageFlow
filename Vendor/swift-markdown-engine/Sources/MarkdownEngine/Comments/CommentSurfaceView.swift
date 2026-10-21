@@ -121,7 +121,7 @@ final class CommentButton: NSView {
     var side: CGFloat
     var iconSize: CGFloat
     var tooltip: String { didSet { setAccessibilityLabel(tooltip) } }
-    var isEnabled = true { didSet { if isEnabled != oldValue { needsDisplay = true } } }
+    var isEnabled = true { didSet { if isEnabled != oldValue { needsDisplay = true; window?.invalidateCursorRects(for: self) } } }
     var tint: NSColor?
     var onPress: (() -> Void)?
     /// Shows and hides the shared tooltip.
@@ -161,7 +161,11 @@ final class CommentButton: NSView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
+        trackActionCursor()
     }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: isEnabled ? .pointingHand : .arrow) }
+    override func cursorUpdate(with event: NSEvent) { (isEnabled ? NSCursor.pointingHand : .arrow).set() }
 
     override func mouseEntered(with event: NSEvent) {
         isHovered = true

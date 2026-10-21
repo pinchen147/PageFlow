@@ -6,15 +6,16 @@ import UniformTypeIdentifiers
 @Observable
 final class FirstLaunchManager {
     private let hasShownDefaultPromptKey = "hasShownDefaultPDFPrompt"
+    private var isSettingDefaultPDFReader = false
 
     /// Check if PageFlow is currently the default PDF reader
     var isDefaultPDFReader: Bool {
-        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return false }
-        let pdfUTI = UTType.pdf.identifier as CFString
-        guard let currentHandler = LSCopyDefaultRoleHandlerForContentType(pdfUTI, .all)?.takeRetainedValue() as String? else {
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: UTType.pdf) else {
             return false
         }
-        return currentHandler.lowercased() == bundleIdentifier.lowercased()
+        // Bundle identifiers are shared by installed, downloaded, and development copies.
+        return applicationURL.resolvingSymlinksInPath().standardizedFileURL
+            == Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
     }
 
     /// Check if this is first launch and show default PDF reader prompt if needed
@@ -53,41 +54,48 @@ final class FirstLaunchManager {
 
     /// Set PageFlow as the default handler for PDF documents (callable from menu)
     func setAsDefaultPDFReader() {
-        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
-            showErrorAlert(message: "Could not determine app bundle identifier.")
+        guard !isSettingDefaultPDFReader else { return }
+        let applicationURL = Bundle.main.bundleURL
+        guard applicationURL.pathExtension == "app" else {
+            showErrorAlert(message: "Could not determine the running PageFlow application location.")
             return
         }
 
-        let pdfUTI = UTType.pdf.identifier as CFString
-        let status = LSSetDefaultRoleHandlerForContentType(pdfUTI, .all, bundleIdentifier as CFString)
-
-        if status == noErr {
-            // Verify it actually worked
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                if self?.isDefaultPDFReader == true {
-                    self?.showSuccessAlert()
+        isSettingDefaultPDFReader = true
+        // This API identifies this copy and waits for any macOS consent prompt.
+        NSWorkspace.shared.setDefaultApplication(at: applicationURL, toOpen: UTType.pdf) { [weak self] error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSettingDefaultPDFReader = false
+                if let error {
+                    self.showManualDefaultInstructions(reason: error.localizedDescription)
+                } else if self.isDefaultPDFReader {
+                    self.showSuccessAlert()
                 } else {
-                    self?.openSystemPreferencesForDefaultApps()
+                    let selectedApplication = NSWorkspace.shared.urlForApplication(toOpen: UTType.pdf)?.path
+                        ?? "No application"
+                    self.showManualDefaultInstructions(
+                        reason: "macOS still resolves PDF files to: \(selectedApplication)."
+                    )
                 }
             }
-        } else {
-            openSystemPreferencesForDefaultApps()
         }
     }
 
-    /// Open System Settings to let user manually set default PDF app
-    private func openSystemPreferencesForDefaultApps() {
+    private func showManualDefaultInstructions(reason: String) {
         let alert = NSAlert()
-        alert.messageText = "Set Default PDF Reader"
+        alert.messageText = "Default PDF Reader Was Not Changed"
         alert.informativeText = """
+        \(reason)
+
         To set PageFlow as your default PDF reader:
 
         1. Right-click any PDF file in Finder
         2. Select "Get Info" (or press ⌘I)
-        3. Under "Open with:", select PageFlow
+        3. Under "Open with:", select this PageFlow copy at \(Bundle.main.bundleURL.path)
         4. Click "Change All..."
 
-        This will make PageFlow open all PDF files.
+        A PDF with its own "Open with" setting may need to be changed individually.
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
@@ -97,7 +105,7 @@ final class FirstLaunchManager {
     private func showSuccessAlert() {
         let alert = NSAlert()
         alert.messageText = "Success"
-        alert.informativeText = "PageFlow is now your default PDF reader. All PDF files will open in PageFlow."
+        alert.informativeText = "PageFlow is now your default PDF reader. PDFs with an individual \"Open with\" setting may still open in another application."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()

@@ -78,6 +78,23 @@ public protocol EmbeddedImageProvider: Sendable {
     /// a different value invalidates the engine's image cache. Embedders
     /// typically combine the IDs of all known images.
     func fingerprint() -> AnyHashable
+    /// Base folder for relative image destinations. Cross-note block copies
+    /// resolve against this folder before rebasing for their destination note.
+    /// Return nil when the provider has no filesystem-relative references.
+    var baseFolderURL: URL? { get }
+    /// Uncached source pixels for copying; nil falls back to the display image.
+    func fullResolutionImage(for reference: EmbeddedImageRequest) -> NSImage?
+    /// Orientation-corrected source dimensions for the crop readout.
+    func pixelSize(for reference: EmbeddedImageRequest) -> CGSize?
+}
+
+public extension EmbeddedImageProvider {
+    /// Providers without a filesystem base do not rebase relative destinations.
+    var baseFolderURL: URL? { nil }
+    /// The default uses the display-image fallback supplied by the caller.
+    func fullResolutionImage(for reference: EmbeddedImageRequest) -> NSImage? { nil }
+    /// The default leaves source pixel dimensions unavailable.
+    func pixelSize(for reference: EmbeddedImageRequest) -> CGSize? { nil }
 }
 
 /// What the engine asks an `EmbeddedImageProvider` for.

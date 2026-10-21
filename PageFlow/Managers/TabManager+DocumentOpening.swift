@@ -24,7 +24,8 @@ private enum DocumentKind {
 
 extension TabManager {
 
-    func createNewTab(with url: URL? = nil, isSecurityScoped: Bool = false) {
+    @discardableResult
+    func createNewTab(with url: URL? = nil, isSecurityScoped: Bool = false) -> Task<Void, Never>? {
         let previousActiveTabID = activeTabID
 
         // Edit mode is ephemeral: leaving the tab exits it (ADR-0005), same
@@ -40,20 +41,20 @@ extension TabManager {
         let newTab = TabModel()
         tabs.append(newTab)
 
-        // A markdown URL builds a markdown-backed session and loads through the
-        // text document manager (never the PDF firewall). Branched before the
-        // pdf session is created so the two paths never overlap.
+        // A pending note owns a placeholder until its background read succeeds.
+        // The old content remains intact on failure or cancelled replacement.
         if let url, documentKind(for: url) == .markdown {
-            createMarkdownSession(for: newTab.id)
+            createSession(for: newTab)
             activeTabID = newTab.id
-            loadMarkdownDocument(
+            guard let session = sessions[newTab.id] else { return nil }
+            return replaceActiveContentWithMarkdown(
+                newTab.id,
+                replacing: session,
                 url: url,
-                into: newTab.id,
                 isSecurityScoped: isSecurityScoped,
                 closeTabOnFailure: true,
                 restoreTabIDOnFailure: previousActiveTabID
             )
-            return
         }
 
         createSession(for: newTab)
@@ -74,6 +75,7 @@ extension TabManager {
         // A new empty tab (⌘T / the "+" button) opens no file picker: it may
         // become a new note. Its empty state offers Open Document and New
         // Markdown.
+        return nil
     }
 
     /// Creates a new, empty, untitled Markdown tab and makes it active — the ⌘N
@@ -115,6 +117,19 @@ extension TabManager {
         }
     }
 
+    /// A recovered draft is a separate untitled document. Its original file
+    /// remains untouched and normal Save As/close confirmation still applies.
+    func restoreRecoveredMarkdown(_ record: MarkdownRecoveryStore.Record) {
+        newMarkdownDocument()
+        guard let id = activeTabID, let content = sessions[id]?.content.markdown else { return }
+        content.documentManager.recoverUnsavedSource(record.source, title: record.title, commentBlock: record.commentBlock)
+        content.loadComments()
+        content.recoverySession?.adopt(record)
+        if let index = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[index].title = content.documentManager.documentTitle
+        }
+    }
+
     /// Obsidian-style starter for a new document: a title heading matching the
     /// tab ("# Untitled"), seeded PRISTINE so an untouched tab stays clean.
     private func seedUntitledMarkdown(_ session: TabSession, title: String) {
@@ -135,27 +150,25 @@ extension TabManager {
     /// Opens `url` in this window and brings it to the front, unless
     /// `bringsToFront` is false (a download that landed after the user moved
     /// on to another app).
-    func openDocument(url: URL, isSecurityScoped: Bool, replaceCurrent: Bool = false, bringsToFront: Bool = true) {
+    @discardableResult
+    func openDocument(url: URL, isSecurityScoped: Bool, replaceCurrent: Bool = false, bringsToFront: Bool = true, pdfPageIndex: Int? = nil) -> Task<Void, Never>? {
         if let existingTabID = tabID(for: url) {
             selectTab(existingTabID)
+            followPDFPageLink(pdfPageIndex, to: url)
             if bringsToFront { WindowRegistry.shared.bringToFront(for: self) }
             dismissPlaceholderWindowIfNeeded()
-            return
+            return sessions[existingTabID]?.pendingMarkdownOpen?.task
         }
 
         // Activate existing tab if this document is already open (any window)
-        if WindowRegistry.shared.activateExistingDocument(for: url) {
+        if WindowRegistry.shared.activateExistingDocument(for: url, bringsToFront: bringsToFront, pdfPageIndex: pdfPageIndex) {
             dismissPlaceholderWindowIfNeeded()
-            return
+            return WindowRegistry.shared.pendingMarkdownOpenTask(for: url)
         }
         // A cloud-only file downloads off main and opens when it lands: reading
         // it here would hold the main thread for the whole download (TN3150).
         if isCloudOnly(url) {
-            openAfterDownloading(url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
-            return
-        }
-        if url.pageFlowIsMarkdown, !admitsLargeNote(url) {
-            return
+            return openAfterDownloading(url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent, pdfPageIndex: pdfPageIndex)
         }
 
         // Reuse the active tab only when replace was requested, or it is an empty,
@@ -169,49 +182,82 @@ extension TabManager {
         // in a mode where that deferred write never drains) is judged on current
         // text, not a stale empty buffer — otherwise the keystrokes are clobbered.
         activeSession?.content.markdown?.reconcileLiveText()
+        let pending: Task<Void, Never>?
         if let activeID = activeTabID,
            let session = sessions[activeID],
            (replaceCurrent || (session.canReplaceWithoutPrompt && !isAwaitingPassword(for: activeID))) {
-            reuseActiveTab(activeID, url: url, isSecurityScoped: isSecurityScoped)
+            pending = reuseActiveTab(activeID, url: url, isSecurityScoped: isSecurityScoped)
         } else {
             // Current tab holds content, create new tab
-            createNewTab(with: url, isSecurityScoped: isSecurityScoped)
+            pending = createNewTab(with: url, isSecurityScoped: isSecurityScoped)
         }
 
+        followPDFPageLink(pdfPageIndex, to: url)
         if bringsToFront { WindowRegistry.shared.bringToFront(for: self) }
+        return pending
+    }
+
+    /// Deliver to the matching session rather than whichever tab is active after open.
+    func followPDFPageLink(_ pageIndex: Int?, to url: URL) {
+        guard let pageIndex, let id = tabID(for: url) else { return }
+        sessions[id]?.pdfManager?.followPageLink(pageIndex, for: url)
     }
 
     /// Notes above this size ask before opening: the editor styles the whole note.
     static let largeNoteWarningBytes = 5 * 1024 * 1024
 
-    /// A note large enough to be slow opens only once the user agrees.
-    private func admitsLargeNote(_ url: URL) -> Bool {
-        guard let size = url.pageFlowFileSize, size > Self.largeNoteWarningBytes else { return true }
-        return largeNoteOpenPrompt(url.deletingPathExtension().lastPathComponent, size)
-    }
-
-    private func openAfterDownloading(_ url: URL, isSecurityScoped: Bool, replaceCurrent: Bool) {
+    @discardableResult
+    private func openAfterDownloading(_ url: URL, isSecurityScoped: Bool, replaceCurrent: Bool, pdfPageIndex: Int? = nil,
+                                      dropBatch: DroppedDocumentBatch? = nil) -> Task<Void, Never>? {
+        if let pdfPageIndex { downloadingPDFPageIndices[url] = pdfPageIndex }
         let name = url.deletingPathExtension().lastPathComponent
         guard downloadingURLs.insert(url).inserted else {
             postTransientToast("Still downloading “\(name)”…")
-            return
+            return downloadingTasks[url]
         }
         postTransientToast("Downloading “\(name)”…")
-        Task { [weak self] in
+        let task = Task { [weak self] in
             let downloaded = await Task.detached(priority: .userInitiated) {
                 url.pageFlowDownloadContents(isSecurityScoped: isSecurityScoped)
             }.value
             guard let self else { return }
             self.downloadingURLs.remove(url)
+            self.downloadingTasks.removeValue(forKey: url)
+            defer { if self.downloadingTasks.isEmpty { self.currentDropBatch = nil } }
+            let linkedPageIndex = self.downloadingPDFPageIndices.removeValue(forKey: url)
             guard downloaded, !self.isCloudOnly(url) else {
                 self.postTransientToast("Couldn’t download “\(name)”")
                 return
             }
             // A long download may land after the user moved on to another
             // app: open the file without taking the focus back.
-            self.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent,
-                              bringsToFront: NSApp.isActive)
+            let previousSelection = self.activeTabID
+            let selectionOwner = dropBatch == nil ? nil : (self.currentDropBatch ?? dropBatch)
+            let selectionChanged = selectionOwner?.selectionChanged(in: self) ?? false
+            // A re-drop can share an older batch's download. The newest batch
+            // that requested this URL owns its insertion and selection.
+            let claimedByNewest = selectionOwner?.urls.contains(url.pageFlowCanonicalDocumentURL) == true
+            let alreadyOpen = self.tabID(for: url) != nil
+            let pending = self.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent,
+                                            bringsToFront: NSApp.isActive && !selectionChanged, pdfPageIndex: linkedPageIndex)
+            if let dropBatch {
+                if !alreadyOpen, let tabID = self.tabID(for: url) {
+                    self.positionDroppedTab(tabID, url: url, in: claimedByNewest ? selectionOwner! : dropBatch)
+                }
+                if selectionChanged || !claimedByNewest {
+                    if let previousSelection { self.selectTab(previousSelection) }
+                } else {
+                    if let last = selectionOwner?.urls.reversed().compactMap({ self.tabID(for: $0) }).first {
+                        self.selectTab(last)
+                    }
+                }
+                // Other batches' automatic completions are not user navigation.
+                if !selectionChanged { selectionOwner?.rememberSelection(in: self) }
+            }
+            await pending?.value
         }
+        downloadingTasks[url] = task
+        return task
     }
 
     /// The one user-visible report for a note that failed to open.
@@ -232,11 +278,10 @@ extension TabManager {
     /// new file is loaded into a fresh content first, and only on success is the
     /// prior content torn down — through the same unsaved-changes gate `closeTab`
     /// uses. A load failure or a cancelled prompt leaves the existing tab untouched.
-    private func reuseActiveTab(_ activeID: UUID, url: URL, isSecurityScoped: Bool) {
+    private func reuseActiveTab(_ activeID: UUID, url: URL, isSecurityScoped: Bool) -> Task<Void, Never>? {
         guard let session = sessions[activeID] else {
             // No session for the active tab (should not happen) — fall back to a new tab.
-            createNewTab(with: url, isSecurityScoped: isSecurityScoped)
-            return
+            return createNewTab(with: url, isSecurityScoped: isSecurityScoped)
         }
 
         switch documentKind(for: url) {
@@ -245,6 +290,10 @@ extension TabManager {
                 // PDF → PDF (placeholder reuse or replace-current): load into the
                 // live managers in place. Byte-identical to the original PDF path.
                 let result = pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped)
+                if case .failed = result {} else {
+                    session.pendingMarkdownOpen?.cancel()
+                    session.pendingMarkdownOpen = nil
+                }
                 handleLoadResult(result, for: activeID, url: url, isSecurityScoped: isSecurityScoped)
             } else {
                 // markdown → PDF (replace-current): replace the content wholesale.
@@ -252,8 +301,9 @@ extension TabManager {
             }
         case .markdown:
             // → markdown (placeholder re-home or replace-current over any content).
-            replaceActiveContentWithMarkdown(activeID, replacing: session, url: url, isSecurityScoped: isSecurityScoped)
+            return replaceActiveContentWithMarkdown(activeID, replacing: session, url: url, isSecurityScoped: isSecurityScoped)
         }
+        return nil
     }
 
     /// Replaces the active tab's content with a Markdown document loaded from `url`.
@@ -262,43 +312,72 @@ extension TabManager {
     /// the fresh content in. A load failure (the file is missing/unreadable) returns
     /// with the existing tab/session entirely intact — no empty markdown tab left
     /// advertising the old document; a cancelled prompt likewise aborts.
+    @discardableResult
     private func replaceActiveContentWithMarkdown(
         _ tabID: UUID,
         replacing oldSession: TabSession,
         url: URL,
-        isSecurityScoped: Bool
-    ) {
-        let freshSession = TabSession.markdown(id: tabID)
-        guard let freshContent = freshSession.content.markdown else { return }
-        let documentManager = freshContent.documentManager
-
-        do {
-            try documentManager.load(from: url, isSecurityScoped: isSecurityScoped)
-            freshContent.restoreReadingPositionIfAvailable()
-            freshContent.loadComments()
-            freshContent.presentInvalidUTF8NoteIfNeeded()
-        } catch {
-            // `load` already released any scope it acquired before throwing; the
-            // unattached fresh session is discarded and the existing tab is untouched.
-            logger.error("markdown.load.failed tab=\(tabID.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            reportMarkdownLoadFailure(url, error)
-            return
+        isSecurityScoped: Bool,
+        closeTabOnFailure: Bool = false,
+        restoreTabIDOnFailure: UUID? = nil,
+        removeUnusedPlaceholderOnFailure: Bool = false
+    ) -> Task<Void, Never> {
+        oldSession.pendingMarkdownOpen?.cancel()
+        let request = TabSession.MarkdownOpen(url: url, isSecurityScoped: isSecurityScoped, owner: self)
+        oldSession.pendingMarkdownOpen = request
+        let document = oldSession.content.document
+        let task = Task { [weak self, weak oldSession] in
+            defer {
+                request.task = nil
+                if oldSession?.pendingMarkdownOpen === request { oldSession?.pendingMarkdownOpen = nil }
+            }
+            do {
+                let read = request.read
+                let prepared = try await withTaskCancellationHandler {
+                    try await read.value
+                } onCancel: { read.cancel() }
+                try Task.checkCancellation()
+                guard let oldSession, oldSession.pendingMarkdownOpen === request,
+                      let owner = WindowRegistry.shared.owner(of: oldSession, document: document, fallback: request.owner ?? self) else { return }
+                // This warning protects the editor's styling work. Its byte
+                // count comes from the background read, without a main-thread stat.
+                let acceptsSize = prepared.byteCount <= Self.largeNoteWarningBytes ||
+                    owner.largeNoteOpenPrompt(url.deletingPathExtension().lastPathComponent, prepared.byteCount)
+                guard !Task.isCancelled, oldSession.pendingMarkdownOpen === request,
+                      let currentOwner = WindowRegistry.shared.owner(of: oldSession, document: document, fallback: request.owner ?? owner) else { return }
+                guard acceptsSize else {
+                    if closeTabOnFailure || (removeUnusedPlaceholderOnFailure && currentOwner.tabs.count > 1 &&
+                        oldSession.content.document.canReplaceWithoutPrompt) {
+                        currentOwner.removeFailedTab(tabID, restoringTo: restoreTabIDOnFailure)
+                    }
+                    return
+                }
+                guard currentOwner.confirmDocumentClose(oldSession),
+                      !Task.isCancelled, oldSession.pendingMarkdownOpen === request,
+                      let finalOwner = WindowRegistry.shared.owner(of: oldSession, document: document, fallback: request.owner ?? currentOwner) else { return }
+                let fresh = TabSession.markdown(id: tabID)
+                guard let content = fresh.content.markdown else { return }
+                content.documentManager.applyPreparedOpen(prepared)
+                content.restoreReadingPositionIfAvailable()
+                content.loadComments()
+                content.presentInvalidUTF8NoteIfNeeded()
+                oldSession.pendingMarkdownOpen = nil
+                finalOwner.swapSession(fresh, for: tabID, replacing: oldSession)
+                finalOwner.applyOpenedDocument(tabID: tabID, url: url, isSecurityScoped: isSecurityScoped,
+                                               title: content.documentManager.documentTitle)
+            } catch {
+                guard !Task.isCancelled, let oldSession, oldSession.pendingMarkdownOpen === request,
+                      let owner = WindowRegistry.shared.owner(of: oldSession, document: document, fallback: request.owner ?? self) else { return }
+                oldSession.pendingMarkdownOpen = nil
+                owner.reportMarkdownLoadFailure(url, error)
+                if closeTabOnFailure || (removeUnusedPlaceholderOnFailure && owner.tabs.count > 1 &&
+                    oldSession.content.document.canReplaceWithoutPrompt) {
+                    owner.removeFailedTab(tabID, restoringTo: restoreTabIDOnFailure)
+                }
+            }
         }
-
-        // The new file loaded. Gate the prior content's teardown exactly as
-        // `closeTab` does; on cancel, release the freshly-loaded doc and abort.
-        guard confirmDocumentClose(oldSession) else {
-            freshSession.cleanup()
-            return
-        }
-
-        swapSession(freshSession, for: tabID, replacing: oldSession)
-        applyOpenedDocument(
-            tabID: tabID,
-            url: url,
-            isSecurityScoped: isSecurityScoped,
-            title: documentManager.documentTitle
-        )
+        request.task = task
+        return task
     }
 
     /// Replaces the active tab's content with a PDF loaded from `url` (the
@@ -346,37 +425,47 @@ extension TabManager {
     /// A local link clicked in a note (D8): `#heading` jumps within the note, a
     /// PDF or note opens in a tab, and any other file asks first, then opens in
     /// its own app. Apps and scripts never open from a link.
-    func openLocalLink(_ link: URL, from content: MarkdownContent) {
+    @discardableResult
+    func openLocalLink(_ link: URL, from content: MarkdownContent) -> Task<Void, Never>? {
         // A comment's Copy link: `‹note›#thread-‹id›` opens that comment (doc 25 §5.1).
         let thread = MarkdownEditorController.commentThreadID(inFragment: link.fragment)
         if !link.isFileURL, link.path(percentEncoded: false).isEmpty, let heading = link.fragment {
             if let thread { content.openCommentThread(thread) } else { content.scrollToHeading(heading) }
-            return
+            return nil
         }
         guard let target = content.localLinkTarget(link) else {
             postTransientToast("Save the note to follow its relative links")
-            return
+            return nil
         }
         guard FileManager.default.fileExists(atPath: target.path) else {
             postTransientToast("Couldn’t find “\(target.lastPathComponent)”")
-            return
+            return nil
         }
         if target.pageFlowIsOpenableDocument {
-            openDocument(url: target, isSecurityScoped: false)
-            if let thread, let opened = activeMarkdownContent,
-               opened.documentManager.documentURL?.standardizedFileURL == target.standardizedFileURL {
-                opened.openCommentThread(thread)
+            let pageIndex = target.pathExtension.lowercased() == "pdf" ? PDFPageLink.pageIndex(in: link.fragment) : nil
+            let pending = openDocument(url: target, isSecurityScoped: false, pdfPageIndex: pageIndex)
+            guard let thread else { return pending }
+            return Task { [weak self] in
+                await pending?.value
+                let managers = [self].compactMap { $0 } + WindowRegistry.shared.allOpenTabs().map(\.tabManager)
+                for manager in managers {
+                    guard let id = manager.tabID(for: target),
+                          let opened = manager.sessions[id]?.content.markdown,
+                          opened.documentManager.documentURL?.pageFlowCanonicalDocumentURL == target.pageFlowCanonicalDocumentURL else { continue }
+                    opened.openCommentThread(thread)
+                    break
+                }
             }
-            return
         }
         let type = (try? target.resourceValues(forKeys: [.contentTypeKey]))?.contentType
         let runnable: [UTType] = [.application, .applicationBundle, .executable, .script, .shellScript]
         if let type, runnable.contains(where: type.conforms(to:)) {
             postTransientToast("PageFlow doesn’t open apps or scripts from links")
-            return
+            return nil
         }
-        guard localFileLinkPrompt(target.lastPathComponent) else { return }
+        guard localFileLinkPrompt(target.lastPathComponent) else { return nil }
         NSWorkspace.shared.open(target)
+        return nil
     }
 
     /// The drop action shared by every drop surface: opens the files in this
@@ -397,16 +486,67 @@ extension TabManager {
     @discardableResult
     func openDroppedDocuments(_ urls: [URL]) -> Int {
         guard !urls.isEmpty else { return 0 }
+        let batch = DroppedDocumentBatch(urls: urls.map(\.pageFlowCanonicalDocumentURL))
+        currentDropBatch = batch
         var failures = 0
-        for url in urls.map(\.pageFlowCanonicalDocumentURL) where !openDroppedDocument(url) {
+        for url in batch.urls where !openDroppedDocument(url, batch: batch) {
             failures += 1
         }
+        batch.rememberSelection(in: self)
+        if downloadingTasks.isEmpty { currentDropBatch = nil }
         WindowRegistry.shared.bringToFront(for: self)
         return failures
     }
 
+    /// Download completion may arrive in any order. Insert only its newly
+    /// admitted tab beside the nearest already-admitted member of this drop;
+    /// never reorder the other tabs or serialize unrelated downloads.
+    final class DroppedDocumentBatch {
+        let urls: [URL]
+        let order: [URL]
+        private var selectedTabID: UUID?
+        private weak var selectedSession: TabSession?
+        private var selectedURL: URL?
+        init(urls: [URL]) {
+            self.urls = urls
+            var seen: Set<URL> = []
+            order = urls.filter { seen.insert($0).inserted }
+        }
+        func rememberSelection(in owner: TabManager) {
+            selectedTabID = owner.activeTabID
+            selectedSession = owner.activeSession
+            selectedURL = selectionURL(in: owner)
+        }
+        func selectionChanged(in owner: TabManager) -> Bool {
+            owner.activeTabID != selectedTabID || selectionURL(in: owner) != selectedURL ||
+                (selectedURL == nil && owner.activeSession !== selectedSession)
+        }
+        private func selectionURL(in owner: TabManager) -> URL? {
+            // An admitted note's placeholder becomes a fresh session on read
+            // completion. Its pending URL preserves selection identity across
+            // that controlled replacement, unlike a new untitled document.
+            (owner.activeTab?.documentURL ?? owner.activeSession?.pendingMarkdownOpen?.url)?.pageFlowCanonicalDocumentURL
+        }
+    }
+
+    private func positionDroppedTab(_ tabID: UUID, url: URL, in batch: DroppedDocumentBatch) {
+        guard let rank = batch.order.firstIndex(of: url.pageFlowCanonicalDocumentURL),
+              let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let next = batch.order.dropFirst(rank + 1).compactMap { self.tabID(for: $0) }.first
+        let previous = batch.order.prefix(rank).reversed().compactMap { self.tabID(for: $0) }.first
+        guard next != nil || previous != nil else { return }
+        let tab = tabs.remove(at: index)
+        if let next, let target = tabs.firstIndex(where: { $0.id == next }) {
+            tabs.insert(tab, at: target)
+        } else if let previous, let target = tabs.firstIndex(where: { $0.id == previous }) {
+            tabs.insert(tab, at: target + 1)
+        } else {
+            tabs.insert(tab, at: min(index, tabs.count))
+        }
+    }
+
     /// Loads one dropped `url`. Returns false only if the document failed to load.
-    private func openDroppedDocument(_ url: URL) -> Bool {
+    private func openDroppedDocument(_ url: URL, batch: DroppedDocumentBatch) -> Bool {
         // Already open in this window → focus it, no duplicate.
         if let existingTabID = tabID(for: url) {
             selectTab(existingTabID)
@@ -422,16 +562,24 @@ extension TabManager {
         // on a download or a large-note confirmation, so it never counts toward
         // the batch. The PDF reuse/rollback below is the PDF loader's protocol.
         if isCloudOnly(url) {
-            openAfterDownloading(url, isSecurityScoped: false, replaceCurrent: false)
+            openAfterDownloading(url, isSecurityScoped: false, replaceCurrent: false, dropBatch: batch)
             return true
         }
         if url.pageFlowIsMarkdown {
-            openDocument(url: url, isSecurityScoped: false)
+            activeSession?.content.markdown?.reconcileLiveText()
+            if let id = activeTabID, let session = sessions[id], session.canReplaceWithoutPrompt,
+               !isAwaitingPassword(for: id) {
+                replaceActiveContentWithMarkdown(id, replacing: session, url: url, isSecurityScoped: false,
+                                                 removeUnusedPlaceholderOnFailure: true)
+            } else {
+                openDocument(url: url, isSecurityScoped: false)
+            }
             return true
         }
         // Reuse the empty active tab if free; otherwise a fresh tab, rolled back on failure.
         if let activeID = activeTabID, let activeTab,
            !activeTab.hasDocument, !isAwaitingPassword(for: activeID),
+           sessions[activeID]?.pendingMarkdownOpen == nil,
            let pdfManager = sessions[activeID]?.pdfManager {
             let result = pdfManager.loadDocument(from: url, isSecurityScoped: false)
             return finishDroppedLoad(result, for: activeID, url: url, createdTab: false, restoreOnFailure: nil)
@@ -512,7 +660,7 @@ extension TabManager {
     /// Stamps a tab with its now-open document's identity — URL, security scope,
     /// title — and notifies the recent-files handler. The single tab-identity
     /// bookkeeping path both the PDF (`handleLoadResult`) and Markdown
-    /// (`loadMarkdownDocument`, replace-current) load successes funnel through, so
+    /// background-open/replace-current successes funnel through, so
     /// identity can't drift between content types.
     func applyOpenedDocument(tabID: UUID, url: URL, isSecurityScoped: Bool, title: String) {
         if let index = tabs.firstIndex(where: { $0.id == tabID }) {
@@ -531,10 +679,11 @@ extension TabManager {
     /// active tab, so a missing/corrupt file never leaves a stray "New Tab"
     /// behind (e.g. reopening a since-deleted Recently-Closed document).
     private func removeFailedTab(_ tabID: UUID, restoringTo restoreTabID: UUID?) {
+        let wasActive = activeTabID == tabID
         closeSession(for: tabID)
         tabs.removeAll { $0.id == tabID }
         let restore = restoreTabID.flatMap { id in tabs.contains { $0.id == id } ? id : nil }
-        activeTabID = restore ?? tabs.last?.id
+        if wasActive { activeTabID = restore ?? tabs.last?.id }
     }
 
     func createSession(for tab: TabModel) {
@@ -560,38 +709,4 @@ extension TabManager {
         url.pageFlowIsMarkdown ? .markdown : .pdf
     }
 
-    /// Loads a markdown `url` into an already-installed markdown session for
-    /// `tabID` — the text-document analogue of `pdfManager.loadDocument` +
-    /// `handleLoadResult`. Goes through `MarkdownDocumentManager` exclusively, so
-    /// the PDF firewall is never touched. On a load throw the tab is removed when
-    /// `closeTabOnFailure` is set (mirroring `removeFailedTab`), so a bad file
-    /// never leaves a half-open tab behind.
-    private func loadMarkdownDocument(
-        url: URL,
-        into tabID: UUID,
-        isSecurityScoped: Bool,
-        closeTabOnFailure: Bool = false,
-        restoreTabIDOnFailure: UUID? = nil
-    ) {
-        guard let content = sessions[tabID]?.content.markdown else { return }
-        let documentManager = content.documentManager
-        do {
-            try documentManager.load(from: url, isSecurityScoped: isSecurityScoped)
-            content.restoreReadingPositionIfAvailable()
-            content.loadComments()
-            content.presentInvalidUTF8NoteIfNeeded()
-            applyOpenedDocument(
-                tabID: tabID,
-                url: url,
-                isSecurityScoped: isSecurityScoped,
-                title: documentManager.documentTitle
-            )
-        } catch {
-            logger.error("markdown.load.failed tab=\(tabID.uuidString, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            reportMarkdownLoadFailure(url, error)
-            if closeTabOnFailure {
-                removeFailedTab(tabID, restoringTo: restoreTabIDOnFailure)
-            }
-        }
-    }
 }

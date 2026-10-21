@@ -179,6 +179,10 @@ extension MarkdownCommentsController {
     /// A `#thread-‹id›` link: an open, attached thread opens where it is (its
     /// text centred); a resolved or detached one opens in the list.
     func openLinked(_ id: String) {
+        coordinator?.performNavigationWhenInputSettles { [weak self] in self?.openLinkedNow(id) }
+    }
+
+    private func openLinkedNow(_ id: String) {
         guard let thread = store.thread(id) else { return announce("Can't open that comment here") }
         if thread.resolved || store.ranges[id] == nil {
             store.filter = .all
@@ -194,6 +198,11 @@ extension MarkdownCommentsController {
 
     /// A list row opened: the text it is on comes into view, centred.
     func revealAnchor(of id: String) {
+        coordinator?.performNavigationWhenInputSettles { [weak self] in self?.revealAnchorNow(of: id) }
+    }
+
+    private func revealAnchorNow(of id: String) {
+        if let range = store.ranges[id] { _ = coordinator?.revealFoldedSource(range) }
         guard let main = textView, let scrollView, let range = store.ranges[id], let line = main.lineFrame(at: range.location) else { return }
         let visible = main.visibleRect
         let target = line.midY - visible.height / 2
@@ -204,6 +213,11 @@ extension MarkdownCommentsController {
 
     /// The quote as the list shows it: one line, Markdown marks dropped.
     static func displayQuote(_ source: String) -> String {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let image = MarkdownTokenizer.parseTokensViaAST(in: trimmed, memoizing: false).first,
+           (image.kind == .imageLink || image.kind == .imageEmbed), image.range == NSRange(location: 0, length: (trimmed as NSString).length) {
+            return "[image]"
+        }
         var text = source.replacingOccurrences(of: "\n", with: " ")
         for mark in ["**", "__", "~~", "==", "`"] { text = text.replacingOccurrences(of: mark, with: "") }
         return text.trimmingCharacters(in: .whitespaces)

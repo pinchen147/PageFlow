@@ -18,6 +18,14 @@ final class MarkdownSelectionBarController {
     }
     /// Escape hid the bar for this selection; any other selection brings it back.
     private var escapeSuppressed: NSRange?
+    private var imageSuppressed: NSRange?
+
+    func suppressImageUntilClick() {
+        imageSuppressed = coordinator?.objectSelection?.token
+        update()
+    }
+
+    func imageClicked() { imageSuppressed = nil; update() }
     /// A right-click hid the bar until the next primary mouse-down or key-down.
     var rightClickSuppressed = false {
         didSet { if rightClickSuppressed != oldValue { setNeedsUpdate() } }
@@ -115,8 +123,10 @@ final class MarkdownSelectionBarController {
         let visible = (window?.isKeyWindow == true || !requiresKeyWindow) && focused && linkPopover == nil && !isDragSelecting && !composing
             && escapeSuppressed == nil && !rightClickSuppressed && (state.context != .codeBlock || comments)
             && main.isEditable && !coordinator.isWritingToolsActive && !zooming && !scrollView.isHiddenOrHasHiddenAncestor
+            // An image selected as a whole gets its own arrangement (doc 26 §4, Phase 3), never the text bar.
+            && coordinator.imageControls?.isInteracting != true && imageSuppressed != selection
         guard visible else { return hide() }
-        bar.arrange(inTable: session.isActive, inCode: state.context == .codeBlock && !session.isActive)
+        bar.arrange(inTable: session.isActive, inCode: state.context == .codeBlock && !session.isActive, image: coordinator.objectSelection != nil)
         applyState(maximumWidth: scrollView.bounds.width - 16)
         let appearing = !isShown
         isShown = true
@@ -162,6 +172,15 @@ final class MarkdownSelectionBarController {
 
     private func applyState(maximumWidth: CGFloat = .greatestFiniteMagnitude) {
         let buttons = bar.buttons
+        if case .image(let alignment, let hasCrop, _) = state.context {
+            buttons[.alignLeft]?.isPressed = alignment == .left
+            buttons[.alignCenter]?.isPressed = alignment == .center
+            buttons[.alignRight]?.isPressed = alignment == .right
+            for (item, value) in [(MarkdownSelectionBarView.Item.alignLeft, ImageAltTokens.Alignment.left), (.alignCenter, .center), (.alignRight, .right)] {
+                buttons[item]?.setAccessibilityValue(NSNumber(value: alignment == value))
+            }
+            buttons[.crop]?.isPressed = hasCrop
+        }
         buttons[.bold]?.isPressed = state.bold
         buttons[.italic]?.isPressed = state.italic
         buttons[.underline]?.isPressed = state.underline
@@ -256,6 +275,10 @@ final class MarkdownSelectionBarController {
     /// anchor), in top-down scroll-view points, and the head caret to dodge.
     private func anchor() -> (rect: NSRect, caret: NSRect?)? {
         guard let coordinator, let scrollView else { return nil }
+        if let object = coordinator.objectSelection, let main = coordinator.textView as? NativeTextView,
+           let rect = main.renderedImageRect(at: object.anchor) {
+            return (toTopDown(scrollView.convert(rect, from: main)), nil)
+        }
         let session = coordinator.tableEditingSession
         let view: NSTextView
         let selection: NSRange
@@ -336,6 +359,11 @@ final class MarkdownSelectionBarController {
             hide()
             MainActor.assumeIsolated { coordinator.comments?.beginComment() }
             return
+        case .alignLeft: coordinator.setImageAlignment(.left)
+        case .alignCenter: coordinator.setImageAlignment(.center)
+        case .alignRight: coordinator.setImageAlignment(.right)
+        case .crop: coordinator.imageControls?.beginCrop()
+        case .imageMore: coordinator.imageControls?.showMenu(from: button)
         case .bold: coordinator.applyInlineStyle(.bold)
         case .italic: coordinator.applyInlineStyle(.italic)
         case .underline: coordinator.applyInlineStyle(.underline)
@@ -461,6 +489,9 @@ final class MarkdownSelectionBarController {
     /// "More formatting": the folded controls, each with its chord.
     private func showMoreMenu(from button: SelectionBarButton) {
         let names: [MarkdownSelectionBarView.Item: (String, String, String?)] = [
+            .alignLeft: ("Align left", "text.alignleft", nil), .alignCenter: ("Align center", "text.aligncenter", nil),
+            .alignRight: ("Align right", "text.alignright", nil), .crop: ("Crop image", "crop", nil),
+            .imageMore: ("More actions", "ellipsis", nil),
             .textStyle: ("Text style", "textformat", nil), .bold: ("Bold", "bold", "⌘B"), .italic: ("Italic", "italic", "⌘I"),
             .underline: ("Underline", "underline", "⌘U"), .strikethrough: ("Strikethrough", "strikethrough", "⇧⌘X"),
             .code: ("Code", "chevron.left.forwardslash.chevron.right", nil), .highlight: ("Highlight", "highlighter", nil),
@@ -470,7 +501,7 @@ final class MarkdownSelectionBarController {
             guard let (title, symbol, chord) = names[item], let control = bar.buttons[item] else { return nil }
             return .init(title: title, symbol: symbol, shortcut: chord, checked: control.isPressed) { [weak self, weak control] in
                 guard let self, let control else { return }
-                self.perform(item, from: control)
+                self.perform(item, from: control.isHidden ? self.bar.moreButton : control)
             }
         }
         openMenu(rows, from: button)

@@ -60,6 +60,8 @@ public struct MarkdownEditorConfiguration: Sendable {
     /// the reference editor's floating selection bar over a non-empty selection, with its
     /// selection colors (doc 24 §6). Off by default; live-reconciled.
     public var showsSelectionBar = false
+    /// Show a centered hidden-block count below collapsed headings; live-reconciled.
+    public var showsHiddenContentRow = true
     /// The editor's keyboard commands and their chords; live-reconciled.
     public var keyBindings: MarkdownKeyBindings = .default
 
@@ -397,10 +399,13 @@ public struct HeadingStyle: Sendable, Equatable {
 
 // MARK: - Image embeds (![[...]])
 
-/// Sizing and spacing rules for `![[Name]]` image embeds.
+/// Sizing and spacing rules for `![alt](url)` images and `![[Name]]` embeds.
 public struct ImageEmbedStyle: Sendable, Equatable {
     /// Minimum allowed display width (points) for an embedded image.
     public var minimumWidth: CGFloat
+    /// Smallest explicit width (`|40`) an image is drawn at: the reference
+    /// editor's resize minimum.
+    public var minimumExplicitWidth: CGFloat
     /// Fallback maximum width if no usable text container width is available.
     public var fallbackMaxWidth: CGFloat
     /// Sanity bound — container widths above this are treated as invalid.
@@ -409,40 +414,51 @@ public struct ImageEmbedStyle: Sendable, Equatable {
     public var paragraphSpacing: CGFloat
     /// Gap between the source line and the rendered image (visibleSource mode).
     public var imageGap: CGFloat
-    /// Tallest an image is displayed (points) — a phone screenshot or a long
-    /// scan is scaled down to this and keeps its aspect ratio, instead of
-    /// filling the column width and running for screens. An explicit width
-    /// (`![alt|300](url)`, `![[name|300]]`) still wins within the caps.
+    /// Tallest an image without an explicit width is displayed (points) — a
+    /// phone screenshot or a long scan is scaled down to this and keeps its
+    /// aspect ratio, instead of filling the column width and running for
+    /// screens. An explicit width (`![alt|300](url)`, `![[name|300]]`) is the
+    /// author's size and ignores it.
     public var maximumHeight: CGFloat
+    /// Corner radius (points) images are clipped to.
+    public var cornerRadius: CGFloat
 
     public init(
         minimumWidth: CGFloat = 50,
+        minimumExplicitWidth: CGFloat = 40,
         fallbackMaxWidth: CGFloat = 650,
         unreasonableMaxWidth: CGFloat = 1_000_000,
         paragraphSpacing: CGFloat = 8,
         imageGap: CGFloat = 8,
-        maximumHeight: CGFloat = 480
+        maximumHeight: CGFloat = 480,
+        cornerRadius: CGFloat = 4
     ) {
         self.minimumWidth = minimumWidth
+        self.minimumExplicitWidth = minimumExplicitWidth
         self.fallbackMaxWidth = fallbackMaxWidth
         self.unreasonableMaxWidth = unreasonableMaxWidth
         self.paragraphSpacing = paragraphSpacing
         self.imageGap = imageGap
         self.maximumHeight = maximumHeight
+        self.cornerRadius = cornerRadius
     }
 
-    /// The display size for an image of `natural` size: never upscaled, no
-    /// wider than `maxWidth`, no taller than `maximumHeight`, and at least
-    /// `minimumWidth` wide when the caps allow. A `requestedWidth` replaces the
-    /// natural width as the starting point and is clamped the same way.
+    /// The display size for an image of `natural` size (already cropped).
+    /// With a `requestedWidth`: that width, at least `minimumExplicitWidth`,
+    /// never wider than `maxWidth`, the height from the aspect ratio (no
+    /// height cap). Without one: never upscaled, no wider than `maxWidth`, no
+    /// taller than `maximumHeight`, and at least `minimumWidth` wide when the
+    /// caps allow.
     public func displaySize(natural: CGSize, requestedWidth: CGFloat? = nil, maxWidth: CGFloat) -> CGSize {
         guard natural.width > 0, natural.height > 0 else { return natural }
-        var width = requestedWidth.map { max($0, minimumWidth) } ?? natural.width
-        width = min(width, maxWidth)
-        if requestedWidth == nil { width = min(width, natural.width) }
+        if let requestedWidth {
+            let width = min(max(requestedWidth, minimumExplicitWidth), maxWidth)
+            return CGSize(width: width, height: width * natural.height / natural.width)
+        }
+        let width = min(natural.width, maxWidth)
         var scale = width / natural.width
         if natural.height * scale > maximumHeight { scale = maximumHeight / natural.height }
-        if natural.width * scale < minimumWidth, requestedWidth == nil {
+        if natural.width * scale < minimumWidth {
             scale = min(minimumWidth, maxWidth) / natural.width
         }
         return CGSize(width: natural.width * scale, height: natural.height * scale)

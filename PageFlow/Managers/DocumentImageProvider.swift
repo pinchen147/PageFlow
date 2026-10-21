@@ -46,6 +46,39 @@ final class DocumentImageProvider: EmbeddedImageProvider, @unchecked Sendable {
         return image
     }
 
+    var baseFolderURL: URL? { documentURL()?.deletingLastPathComponent() }
+
+    private func withImageAccess<T>(_ request: EmbeddedImageRequest, read: (URL) -> T?) -> T? {
+        guard let url = resolve(request.name) else { return nil }
+        return read(url) ?? FolderAccessStore.shared.withAccess(to: url) { read(url) }
+            ?? PastedImageStore.shared.withRememberedAccess(to: url, read)
+    }
+
+    func fullResolutionImage(for request: EmbeddedImageRequest) -> NSImage? {
+        withImageAccess(request) { url in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: max(width, height)]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        }
+    }
+
+    func pixelSize(for request: EmbeddedImageRequest) -> CGSize? {
+        withImageAccess(request) { url in
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+                  let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else { return nil }
+            let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+            return (5...8).contains(orientation) ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+        }
+    }
+
     /// Longest side, in pixels, an image is decoded at: twice the widest
     /// column the editor shows, so a Retina display still gets full density.
     /// A 12-megapixel screenshot decoded whole cost a visible pause on paste

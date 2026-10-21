@@ -1,4 +1,12 @@
 import Foundation
+import CoreFoundation
+
+/// Shared only by the deletion, insertion and inverses of one exact block move.
+final class MarkdownCommentMove {
+    let source: String
+
+    init(source: String) { self.source = source }
+}
 
 /// A note's comment threads and where each sits in the live text (doc 25).
 /// Host-retained with the editor controller, so threads, drafts and the
@@ -28,6 +36,69 @@ final class MarkdownCommentStore {
     private(set) var ranges: [String: NSRange] = [:]
     /// Each attached thread's text now, for finding it inside a replacement.
     private var liveExact: [String: String] = [:]
+    private enum ParkedAnchor {
+        case context(MarkdownCommentAnchor)
+        case move(MarkdownCommentMove, offset: Int, exact: String)
+    }
+    private struct MoveEdit {
+        let receipt: MarkdownCommentMove
+        let edit: MarkdownTextEdit
+        let core: NSRange
+    }
+    private var parked: [String: ParkedAnchor] = [:]
+    private var pendingMoveEdit: MoveEdit?
+    private var parkingObserver: CFRunLoopObserver?
+    private weak var observedUndo: UndoManager?
+    private var undoObservers: [NSObjectProtocol] = []
+
+    /// Undo starts a new gesture even if a caller invokes it before the run loop waits.
+    /// Its own synchronous remove/insert replay still shares the parking window.
+    func observeUndoBoundaries(of undo: UndoManager?) {
+        guard undo !== observedUndo else { return }
+        undoObservers.forEach(NotificationCenter.default.removeObserver)
+        undoObservers.removeAll()
+        observedUndo = undo
+        guard let undo else { return }
+        for name: Notification.Name in [.NSUndoManagerWillUndoChange, .NSUndoManagerWillRedoChange] {
+            undoObservers.append(NotificationCenter.default.addObserver(forName: name, object: undo, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.expireParkedAnchors() }
+            })
+        }
+    }
+
+    deinit { undoObservers.forEach(NotificationCenter.default.removeObserver) }
+
+    /// A move and its inverse remove and insert synchronously. A later paste must not inherit comments.
+    func expireParkedAnchors() {
+        pendingMoveEdit = nil
+        if let observer = parkingObserver { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        parkingObserver = nil
+        for id in parked.keys {
+            liveExact[id] = nil
+            if focusID == id { focusID = nil }
+            if activeID == id { activeID = nil }
+        }
+        let changed = !parked.isEmpty
+        parked.removeAll()
+        if changed { onDisplayChange?() }
+    }
+
+    private func park(_ id: String, range: NSRange, edit: MarkdownTextEdit, move: MoveEdit?) {
+        if let move, range.location >= move.core.location, NSMaxRange(range) <= NSMaxRange(move.core) {
+            parked[id] = .move(move.receipt, offset: range.location - move.core.location, exact: liveExact[id] ?? "")
+        } else {
+            let saved = thread(id)?.anchor
+            let prefix = String((saved?.prefix ?? "").suffix(min(32, range.location - edit.location)))
+            let suffix = String((saved?.suffix ?? "").prefix(min(32, edit.removedEnd - NSMaxRange(range))))
+            parked[id] = .context(MarkdownCommentAnchor(prefix: prefix, exact: liveExact[id] ?? "", suffix: suffix))
+        }
+        guard parkingObserver == nil else { return }
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, false, 0) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.expireParkedAnchors() }
+        }
+        parkingObserver = observer
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+    }
     /// The threads were loaded before an editor showed the note.
     private(set) var needsResolve = false
 
@@ -60,6 +131,7 @@ final class MarkdownCommentStore {
     /// Takes the sidecar's threads and finds each attached one in `text`, the
     /// live note, or when an editor first shows it (`resolveIfNeeded`).
     func load(_ loaded: [MarkdownCommentThread], text: NSString?) {
+        expireParkedAnchors()
         threads = loaded
         focusID = nil
         activeID = nil
@@ -105,11 +177,42 @@ final class MarkdownCommentStore {
 
     // MARK: - Following edits
 
+    /// Called immediately before a span mutation. Only the exact moved source,
+    /// optionally surrounded by blank separator lines, earns paired offsets.
+    func prepareMoveEdit(receipt: MarkdownCommentMove?, range: NSRange, replacement: String, in text: NSString) {
+        pendingMoveEdit = nil
+        guard let receipt, !receipt.source.isEmpty else { return }
+        let fragment: String
+        if range.length > 0, replacement.isEmpty {
+            guard range.location >= 0, range.location <= text.length,
+                  range.length <= text.length - range.location else { return }
+            fragment = text.substring(with: range)
+        } else if range.length == 0, !replacement.isEmpty {
+            fragment = replacement
+        } else { return }
+        let fragmentText = fragment as NSString
+        let core = fragmentText.range(of: receipt.source, options: .literal)
+        guard core.location != NSNotFound else { return }
+        let prefix = fragmentText.substring(to: core.location)
+        let suffix = fragmentText.substring(from: NSMaxRange(core))
+        guard prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              suffix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              prefix.isEmpty || prefix.last?.isNewline == true,
+              suffix.isEmpty || suffix.first?.isNewline == true else { return }
+        pendingMoveEdit = MoveEdit(
+            receipt: receipt,
+            edit: MarkdownTextEdit(location: range.location, removedLength: range.length, insertedLength: replacement.utf16.count),
+            core: NSRange(location: range.location + core.location, length: core.length)
+        )
+    }
+
     /// Moves every anchor through `edit` (`text` is the text after it). An
     /// anchor whose text was replaced whole looks for its quote inside the
     /// replacement (a format command or a table rewrite keeps it); one whose
     /// text is gone detaches, as in the reference editor.
     func textDidChange(_ edit: MarkdownTextEdit, text: NSString) {
+        let move = pendingMoveEdit.flatMap { $0.edit == edit ? $0 : nil }
+        pendingMoveEdit = nil
         guard !needsResolve else { return }
         var changed = false
         for (id, range) in ranges {
@@ -130,9 +233,35 @@ final class MarkdownCommentStore {
                 ranges[id] = found
             } else {
                 ranges[id] = nil
+                if edit.insertedLength == 0, edit.swallows(range) {
+                    park(id, range: range, edit: edit, move: move)
+                    continue
+                }
                 liveExact[id] = nil
                 if focusID == id { focusID = nil }
                 if activeID == id { activeID = nil }
+            }
+        }
+        if edit.removedLength == 0, edit.insertedLength > 0 {
+            for (id, anchor) in parked {
+                let found: NSRange?
+                switch anchor {
+                case .context(let context):
+                    found = MarkdownCommentAnchoring.resolve(context, in: text, scope: edit.inserted)
+                case .move(let receipt, let offset, let exact):
+                    if let move, move.receipt === receipt, offset <= move.core.length,
+                       exact.utf16.count <= move.core.length - offset {
+                        let candidate = NSRange(location: move.core.location + offset, length: exact.utf16.count)
+                        found = NSMaxRange(candidate) <= text.length
+                            && (text.substring(with: candidate) as NSString).isEqual(to: exact) ? candidate : nil
+                    } else { found = nil }
+                }
+                if let found {
+                    ranges[id] = found
+                    liveExact[id] = text.substring(with: found)
+                    parked[id] = nil
+                    changed = true
+                }
             }
         }
         if var draft, let mapped = edit.map(draft.range) {
@@ -186,6 +315,7 @@ final class MarkdownCommentStore {
     }
 
     func remove(_ id: String) {
+        parked[id] = nil
         threads.removeAll { $0.id == id }
         ranges[id] = nil
         liveExact[id] = nil

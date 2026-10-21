@@ -50,17 +50,17 @@ struct TextFileFidelity: Equatable, Sendable {
         encoding: .utf8, hadUTF8BOM: false, lineEnding: .lf, savedAsDowngradedUTF8: false)
 }
 
-enum TextFileCodec {
+nonisolated enum TextFileCodec {
 
     /// The decoded, normalized text plus the fidelity needed to re-save it.
-    struct Decoded: Equatable {
+    struct Decoded: Equatable, Sendable {
         /// Normalized to `\n` — the homogeneous in-memory form.
         var text: String
         var fidelity: TextFileFidelity
     }
 
     /// The result of encoding for save.
-    struct Encoded: Equatable {
+    struct Encoded: Equatable, Sendable {
         var data: Data
         /// True when the text could not be represented in its original 8-bit
         /// encoding and was saved as UTF-8 instead (e.g. an emoji typed into a
@@ -143,43 +143,56 @@ enum TextFileCodec {
         _ raw: String, encoding: String.Encoding, hadUTF8BOM: Bool, downgraded: Bool,
         replacedInvalidUTF8: Bool = false
     ) -> Decoded {
-        let lineEnding = dominantLineEnding(raw)
-        // Substring replacement matches on scalar sequence, so CRLF collapses
-        // before bare CR — order matters.
-        let normalized = raw
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
+        let bytes = Array(raw.utf8)
+        let endings = lineEndings(in: bytes)
+        let normalized: String
+        if endings.hasCR {
+            // CR and LF are single-byte ASCII and cannot appear inside a
+            // multi-byte UTF-8 scalar. Copy every other byte without touching
+            // combining sequences, emoji or Unicode paragraph separators.
+            var output: [UInt8] = []
+            output.reserveCapacity(bytes.count)
+            var offset = 0
+            while offset < bytes.count {
+                let byte = bytes[offset]
+                output.append(byte == 0x0D ? 0x0A : byte)
+                if byte == 0x0D, offset + 1 < bytes.count, bytes[offset + 1] == 0x0A { offset += 1 }
+                offset += 1
+            }
+            normalized = String(decoding: output, as: UTF8.self)
+        } else {
+            normalized = raw
+        }
         return Decoded(
             text: normalized,
             fidelity: TextFileFidelity(
                 encoding: encoding,
                 hadUTF8BOM: hadUTF8BOM,
-                lineEnding: lineEnding,
+                lineEnding: endings.dominant,
                 savedAsDowngradedUTF8: downgraded,
                 replacedInvalidUTF8: replacedInvalidUTF8))
     }
 
-    /// The most frequent line ending, counting CRLF as a pair before bare CR/LF.
-    /// Scans unicode scalars (not Characters) because Swift fuses `\r\n` into one
-    /// Character, which would hide the distinction. Defaults to LF.
+    /// CRLF is one ending; ties prefer CRLF, then LF, matching saved fidelity.
     static func dominantLineEnding(_ text: String) -> LineEnding {
+        lineEndings(in: Array(text.utf8)).dominant
+    }
+
+    private static func lineEndings(in bytes: [UInt8]) -> (dominant: LineEnding, hasCR: Bool) {
         var crlf = 0, cr = 0, lf = 0
-        // Stream the scalars with a one-scalar carry so a multi-MB document needs
-        // no backing array. A pending `\r` resolves to CRLF if the next scalar is
-        // `\n`, else it was a bare CR.
-        var sawCR = false
-        for scalar in text.unicodeScalars {
-            if sawCR {
-                sawCR = false
-                if scalar == "\n" { crlf += 1; continue }  // \r\n consumed as a pair
-                cr += 1                                     // the prior \r was bare
-            }
-            if scalar == "\r" { sawCR = true } else if scalar == "\n" { lf += 1 }
+        var offset = 0
+        while offset < bytes.count {
+            if bytes[offset] == 0x0D {
+                if offset + 1 < bytes.count, bytes[offset + 1] == 0x0A {
+                    crlf += 1
+                    offset += 1
+                } else { cr += 1 }
+            } else if bytes[offset] == 0x0A { lf += 1 }
+            offset += 1
         }
-        if sawCR { cr += 1 }  // trailing bare \r
-        if crlf >= lf && crlf >= cr && crlf > 0 { return .crlf }
-        if cr > lf && cr > 0 { return .cr }
-        return .lf
+        if crlf >= lf && crlf >= cr && crlf > 0 { return (.crlf, true) }
+        if cr > lf && cr > 0 { return (.cr, true) }
+        return (.lf, crlf > 0 || cr > 0)
     }
 
     // MARK: - Encode (save)

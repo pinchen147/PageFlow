@@ -110,7 +110,11 @@ final class TabSwitcherController {
         }
         rebuildContent?()
 
+        #if DEBUG
+        QAPresentation.show(panel)
+        #else
         panel.makeKeyAndOrderFront(nil)
+        #endif
 
         launchAnchor = anchor
         installClickMonitor()

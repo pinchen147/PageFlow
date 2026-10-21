@@ -45,14 +45,18 @@ extension NativeTextView {
         sourceGeneration: () -> Int,
         settle: (Int) -> Void,
         mapPin: ((Int) -> Int)?,
+        minimumLocation: Int? = nil,
+        excludingSource: NSRange? = nil,
         _ body: () -> Void
     ) -> Bool {
         guard viewportPinDepth == 0, let scroll = enclosingScrollView, !scroll.isHidden,
               let layout = textLayoutManager, let content = layout.textContentManager else { return false }
         let anchor: (offset: Int, offsetInViewport: CGFloat)
-        if let receipt, receipt.isCurrent(in: self, sourceGeneration: sourceGeneration()) {
+        if let receipt, receipt.isCurrent(in: self, sourceGeneration: sourceGeneration()),
+           minimumLocation.map({ receipt.offset >= $0 }) ?? true,
+           excludingSource.map({ !NSLocationInRange(receipt.offset, $0) }) ?? true {
             anchor = (receipt.offset, receipt.offsetInViewport)
-        } else if let captured = visibleSourceParagraphAnchor() {
+        } else if let captured = visibleSourceParagraphAnchor(minimumLocation: minimumLocation, excludingSource: excludingSource) {
             anchor = captured
         } else {
             receipt = nil
@@ -94,7 +98,7 @@ extension NativeTextView {
         return true
     }
 
-    private func visibleSourceParagraphAnchor() -> (offset: Int, offsetInViewport: CGFloat)? {
+    private func visibleSourceParagraphAnchor(minimumLocation: Int? = nil, excludingSource: NSRange? = nil) -> (offset: Int, offsetInViewport: CGFloat)? {
         guard let layout = textLayoutManager, let content = layout.textContentManager,
               let storage = textStorage else { return nil }
         let visible = visibleRect
@@ -113,7 +117,9 @@ extension NativeTextView {
             guard fragment.state == .layoutAvailable,
                   let elementRange = fragment.textElement?.elementRange else { return true }
             let elementStart = content.offset(from: content.documentRange.location, to: elementRange.location)
-            guard elementStart != NSNotFound, elementStart >= 0 else { return true }
+            guard elementStart != NSNotFound, elementStart >= 0,
+                  minimumLocation.map({ elementStart >= $0 }) ?? true,
+                  excludingSource.map({ !NSLocationInRange(elementStart, $0) }) ?? true else { return true }
             for line in fragment.textLineFragments {
                 guard remainingLines > 0 else { return false }
                 remainingLines -= 1
@@ -123,7 +129,8 @@ extension NativeTextView {
                       lineFrame.maxY <= visible.maxY else { continue }
                 let range = NSRange(location: elementStart + line.characterRange.location,
                                     length: line.characterRange.length)
-                guard range.location <= storage.length, range.length <= storage.length - range.location else { continue }
+                guard range.location <= storage.length, range.length <= storage.length - range.location,
+                      excludingSource.map({ NSIntersectionRange(range, $0).length == 0 }) ?? true else { continue }
                 var readable = false
                 var raster = false
                 storage.enumerateAttributes(in: range) { attributes, _, _ in

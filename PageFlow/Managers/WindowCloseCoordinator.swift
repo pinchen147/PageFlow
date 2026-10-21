@@ -31,9 +31,9 @@ struct DocumentClosePrompt {
 /// A modal alert runs a nested event loop. Keep approval bound to both the exact
 /// session and its source state; replacement, transfer or new edits revoke it.
 @MainActor
-private struct CloseSnapshot {
+struct DocumentCloseSnapshot {
     let session: TabSession
-    private let unchanged: (Bool) -> Bool
+    private let unchanged: (Bool, Bool) -> Bool
 
     init(_ session: TabSession) {
         self.session = session
@@ -43,7 +43,7 @@ private struct CloseSnapshot {
             let document = manager.document
             let url = manager.documentURL
             let revision = manager.closeRevision
-            unchanged = { allowingSavedURL in
+            unchanged = { allowingSavedURL, _ in
                 manager.document === document && (allowingSavedURL || manager.documentURL == url) &&
                     manager.closeRevision == revision
             }
@@ -51,17 +51,18 @@ private struct CloseSnapshot {
             content.reconcileLiveText()
             let manager = content.documentManager
             let text = manager.text
+            let comments = manager.commentBlock
             let url = manager.documentURL
-            unchanged = { allowingSavedURL in
+            unchanged = { allowingSavedURL, allowingImageAdoption in
                 content.reconcileLiveText()
                 return !manager.isClosed && (allowingSavedURL || manager.documentURL == url) &&
-                    manager.text.utf8.elementsEqual(text.utf8)
+                    (allowingImageAdoption || (manager.text.hasSameSource(as: text) && manager.commentBlock.hasSameSource(as: comments)))
             }
         }
     }
 
-    func matches(_ owner: TabManager, allowingSavedURL: Bool = false) -> Bool {
-        owner.sessions[session.id] === session && owner.tabs.contains { $0.id == session.id } && unchanged(allowingSavedURL)
+    func matches(_ owner: TabManager, allowingSavedURL: Bool = false, allowingImageAdoption: Bool = false) -> Bool {
+        owner.sessions[session.id] === session && owner.tabs.contains { $0.id == session.id } && unchanged(allowingSavedURL, allowingImageAdoption)
     }
 }
 
@@ -70,13 +71,13 @@ extension TabManager {
         let prompt = prompt ?? .live
         flushMarkdownEditors()
         let initialIDs = tabs.map(\.id)
-        let candidates = initialIDs.compactMap { sessions[$0] }.map(CloseSnapshot.init)
+        let candidates = initialIDs.compactMap { sessions[$0] }.map(DocumentCloseSnapshot.init)
         guard candidates.count == initialIDs.count else { return false }
-        var approved: [CloseSnapshot] = []
+        var approved: [DocumentCloseSnapshot] = []
         for candidate in candidates {
             guard candidate.matches(self),
                   confirmDocumentClose(candidate.session, using: prompt) else { return false }
-            approved.append(CloseSnapshot(candidate.session))
+            approved.append(DocumentCloseSnapshot(candidate.session))
         }
         return tabs.map(\.id) == initialIDs && approved.allSatisfy { $0.matches(self) }
     }
@@ -84,7 +85,7 @@ extension TabManager {
     /// Shared by tab close, replacement and native whole-window close.
     func confirmDocumentClose(_ session: TabSession, using prompt: DocumentClosePrompt? = nil) -> Bool {
         let prompt = prompt ?? .live
-        let snapshot = CloseSnapshot(session)
+        var snapshot = DocumentCloseSnapshot(session)
         guard snapshot.matches(self) else { return false }
         let document = session.content.document
         guard document.isDirty else { return true }
@@ -97,9 +98,14 @@ extension TabManager {
             let saved: Bool
             if document.needsSaveAs {
                 guard let url = prompt.saveURL(document.documentTitle), snapshot.matches(self) else { return false }
-                saved = saveDocumentAsSync(session, to: url, isSecurityScoped: true, expectedDocument: document)
+                saved = saveDocumentAsSync(session, to: url, isSecurityScoped: true, expectedDocument: document,
+                                           whileApproved: { snapshot.matches(self) }, didAdoptImages: {
+                    guard snapshot.matches(self, allowingImageAdoption: true) else { return false }
+                    snapshot = DocumentCloseSnapshot(session)
+                    return true
+                })
             } else {
-                saved = DirtyDoc(session: session, owner: self).saveSync()
+                saved = DirtyDoc(session: session, owner: self).saveSync(whileApproved: { snapshot.matches(self) })
             }
             guard saved, snapshot.matches(self, allowingSavedURL: true) else { return false }
             return !document.isDirty
@@ -129,6 +135,7 @@ final class WindowCloseCoordinator: NSObject, NSWindowDelegate {
     private weak var original: (any NSWindowDelegate)?
     private var isApproving = false
     private var isClosing = false
+    private var approvalTask: Task<Void, Never>?
     private let prompt: DocumentClosePrompt
 
     init(window: NSWindow, manager: TabManager, prompt: DocumentClosePrompt? = nil) {
@@ -142,6 +149,7 @@ final class WindowCloseCoordinator: NSObject, NSWindowDelegate {
 
     func detach() {
         guard !isClosing, let window, window.delegate === self else { return }
+        approvalTask?.cancel()
         window.delegate = original
     }
 
@@ -155,12 +163,26 @@ final class WindowCloseCoordinator: NSObject, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard !isApproving else { return false }
+        guard !isApproving, approvalTask == nil else { return false }
         isApproving = true
         defer { isApproving = false }
         guard original?.windowShouldClose?(sender) ?? true else { return false }
         guard sender === window, let manager else { return true }
-        return manager.confirmWindowClose(using: prompt)
+        manager.flushMarkdownEditors()
+        guard manager.needsCloseApproval else { return true }
+        approvalTask = Task { @MainActor [weak self, weak sender, weak manager] in
+            guard let self, let sender, let manager else { return }
+            let sheet = DocumentCloseWaitSheet(window: sender) { [weak self] in self?.approvalTask?.cancel() }
+            defer { sheet.finish(); self.approvalTask = nil }
+            guard await manager.confirmWindowCloseInBackground(using: self.prompt), !Task.isCancelled,
+                  !manager.hasPendingDocumentWrites,
+                  sender === self.window, sender.delegate === self,
+                  WindowRegistry.shared.window(for: manager) === sender else { return }
+            // close() is the already-approved native route; performClose would
+            // ask this delegate to start another approval.
+            sender.close()
+        }
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

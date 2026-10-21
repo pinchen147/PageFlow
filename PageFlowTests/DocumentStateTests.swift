@@ -260,6 +260,24 @@ struct DocumentStateTests {
     }
 
     @Test
+    func settingsManagerDefaultsHiddenContentRowVisibleAndPersistsChanges() throws {
+        let suiteName = "SettingsManagerHiddenContentRowTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let manager = SettingsManager(defaults: defaults)
+        #expect(manager.markdownShowsHiddenContentRow)
+
+        manager.markdownShowsHiddenContentRow = false
+        let reloadedManager = SettingsManager(defaults: defaults)
+        #expect(!reloadedManager.markdownShowsHiddenContentRow)
+
+        reloadedManager.markdownShowsHiddenContentRow = true
+        #expect(SettingsManager(defaults: defaults).markdownShowsHiddenContentRow)
+    }
+
+    @Test
     func settingsManagerInitializesSeparatedVisibilityControlsHidden() throws {
         let suiteName = "SettingsManagerDefaultVisibilityTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))

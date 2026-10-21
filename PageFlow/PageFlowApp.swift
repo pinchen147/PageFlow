@@ -8,11 +8,12 @@
 import SwiftUI
 import PDFKit
 import UniformTypeIdentifiers
+import MarkdownEngine
 
 @main
 struct PageFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var recentFilesManager = RecentFilesManager()
+    private var recentFilesManager: RecentFilesManager { appDelegate.recentFilesManager }
     @State private var settingsManager = SettingsManager.shared
 
     // MARK: - Focused Values
@@ -85,17 +86,6 @@ struct PageFlowApp: App {
         WindowGroup {
             TabContainerView()
                 .environment(recentFilesManager)
-                .onAppear {
-                    appDelegate.windowContentBuilder = { tabManager in
-                        AnyView(
-                            TabContainerView(tabManager: tabManager)
-                                .environment(recentFilesManager)
-                        )
-                    }
-                    // Builder is now installed — materialize any buffered extra
-                    // restore windows from the previous session (S8 P1).
-                    appDelegate.flushPendingRestoreWindows()
-                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -338,6 +328,32 @@ struct PageFlowApp: App {
         focusedTabManager?.activeMarkdownContent?.isFormatOn(command) ?? false
     }
 
+    @ViewBuilder
+    private var foldingMenuContent: some View {
+        let content = focusedTabManager?.activeMarkdownContent
+        let _ = content?.foldingRevision
+        let controller = content?.editorController
+        Menu("Folding") {
+            Button(controller?.isCurrentSectionFolded == true ? "Expand Section" : "Collapse Section") {
+                controller?.performFoldingCommand(.toggleFold)
+            }
+            .keyboardShortcut(for: "markdown.toggleFold")
+            .disabled(controller?.canPerformFoldingCommand(.toggleFold) != true)
+
+            Button("Collapse All") {
+                controller?.performFoldingCommand(.collapseAll)
+            }
+            .keyboardShortcut(for: "markdown.collapseAll")
+            .disabled(controller?.canPerformFoldingCommand(.collapseAll) != true)
+
+            Button("Expand All") {
+                controller?.performFoldingCommand(.expandAll)
+            }
+            .keyboardShortcut(for: "markdown.expandAll")
+            .disabled(controller?.canPerformFoldingCommand(.expandAll) != true)
+        }
+    }
+
     // MARK: - View Menu
 
     @ViewBuilder
@@ -384,6 +400,10 @@ struct PageFlowApp: App {
         }
         .keyboardShortcut(for: "zoomToFit")
         .disabled(!hasDocument)
+
+        Divider()
+
+        foldingMenuContent
 
         Divider()
 
@@ -701,67 +721,42 @@ struct PageFlowApp: App {
     }
 
     private func exportMarkdown(scope: ExportScope) {
-        guard pdfPermissions.copy, let document = pdfManager?.document else { return }
-
-        let markdown = MarkdownExporter.export(scope: scope, document: document, comments: comments)
-        guard !markdown.isEmpty else { return }
-
-        MarkdownExporter.copyToClipboard(markdown)
+        pdfManager?.copyMarkdown(scope: scope, comments: comments)
     }
 
     private func savePageAsMarkdownFile() {
-        guard let manager = pdfManager, manager.permissions.copy,
-              let document = manager.document else { return }
-
+        guard let manager = pdfManager, manager.permissions.copy else { return }
         let pageIndex = manager.currentPageIndex
-        let markdown = MarkdownExporter.export(
-            scope: .currentPage(pageIndex),
-            document: document,
-            comments: comments
-        )
-        guard !markdown.isEmpty else { return }
-
         let filename = manager.documentURL?.deletingPathExtension().lastPathComponent ?? "document"
-
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = "\(filename)-page\(pageIndex + 1).md"
-        panel.canCreateDirectories = true
-
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            do {
-                try markdown.write(to: url, atomically: true, encoding: .utf8)
-            } catch {
-                self.showAlert(message: "Failed to save: \(error.localizedDescription)")
-            }
-        }
+        saveMarkdownFile(scope: .currentPage(pageIndex), filename: "\(filename)-page\(pageIndex + 1).md")
     }
 
     private func saveAsMarkdownFile() {
-        guard let manager = pdfManager, manager.permissions.copy,
-              let document = manager.document else { return }
-
-        let markdown = MarkdownExporter.export(
-            scope: .entireDocument,
-            document: document,
-            comments: comments
-        )
-        guard !markdown.isEmpty else { return }
-
+        guard let manager = pdfManager, manager.permissions.copy else { return }
         let filename = manager.documentURL?.deletingPathExtension().lastPathComponent ?? "document"
+        saveMarkdownFile(scope: .entireDocument, filename: "\(filename).md")
+    }
 
+    private func saveMarkdownFile(scope: ExportScope, filename: String) {
+        guard let manager = pdfManager, let document = manager.document, manager.permissions.copy else { return }
+        let revision = manager.closeRevision
+        let requestedComments = comments
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = "\(filename).md"
+        panel.nameFieldStringValue = filename
         panel.canCreateDirectories = true
-
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            do {
-                try markdown.write(to: url, atomically: true, encoding: .utf8)
-            } catch {
-                self.showAlert(message: "Failed to save: \(error.localizedDescription)")
+            guard manager.document === document, manager.closeRevision == revision else {
+                self.showAlert(message: "The PDF changed while choosing an export location. Please export it again.")
+                return
+            }
+            manager.exportMarkdown(scope: scope, comments: requestedComments) { markdown in
+                do {
+                    try markdown.write(to: url, atomically: true, encoding: .utf8)
+                } catch {
+                    self.showAlert(message: "Failed to save: \(error.localizedDescription)")
+                }
             }
         }
     }

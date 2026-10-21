@@ -59,7 +59,7 @@ struct MarkdownLinkPopoverTests {
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
         window.contentView = scroll
-        window.orderFront(nil)
+        window.orderBack(nil)
         wrapper.updateNativeView(scroll, coordinator: coordinator)
         window.makeFirstResponder(view)
         return (coordinator, view, window)

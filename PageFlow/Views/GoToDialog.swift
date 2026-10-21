@@ -41,11 +41,13 @@ struct GoToDialog: View {
                 Button("Cancel") {
                     dismiss()
                 }
+                .pageFlowClickCursor()
                 .keyboardShortcut(.cancelAction)
 
                 Button("Go") {
                     submit()
                 }
+                .pageFlowClickCursor()
                 .keyboardShortcut(.defaultAction)
             }
         }

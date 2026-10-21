@@ -30,6 +30,72 @@ struct MarkdownDocumentManagerTests {
 
     private func rawBytes(_ url: URL) -> Data { (try? Data(contentsOf: url)) ?? Data() }
 
+    @Test
+    func anEmptyRecoveredDraftNeedsSavingUntilItsOwnSaveAsCompletes() async throws {
+        let manager = MarkdownDocumentManager()
+        manager.recoverUnsavedSource("", title: "Deleted contents")
+        #expect(manager.isDirty)
+        #expect(manager.documentURL == nil)
+        #expect(manager.documentTitle == "Recovered — Deleted contents")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(manager.saveAsSync(to: url))
+        #expect(!manager.isDirty)
+        #expect(manager.documentURL == url)
+        #expect(try Data(contentsOf: url).isEmpty)
+    }
+
+    @Test
+    func recoveredSourceStaysUnsavedAndCannotReplaceAnOpenOriginal() async throws {
+        try await withTempFile(bytes: Data("original".utf8)) { url in
+            let source = "# e\u{301} 😀\n\n| A | B |\n| --- | --- |\n| **one** | 二 |\n"
+            let draft = MarkdownDocumentManager()
+            draft.recoverUnsavedSource(source, title: "Original")
+            #expect(draft.source.hasSameSource(as: source))
+            #expect(draft.isDirty)
+            #expect(draft.documentURL == nil)
+            #expect(try String(contentsOf: url, encoding: .utf8) == "original")
+            try draft.load(from: url)
+            #expect(!draft.isDirty)
+            #expect(draft.documentTitle == url.deletingPathExtension().lastPathComponent)
+            draft.recoverUnsavedSource("must not replace", title: "Other")
+            #expect(draft.source == "original")
+        }
+    }
+
+    @Test
+    func largeNoteStatisticsDoNotBlockPublishingTheDocumentText() async throws {
+        let manager = MarkdownDocumentManager()
+        let source = "# Large\n\n" + String(repeating: "word 😀 ", count: 20_000)
+        manager.text = source
+        #expect(manager.source.hasSameSource(as: source))
+        #expect(manager.wordCount.words == 0, "large-note statistics must not run synchronously on the UI actor")
+        let deadline = ContinuousClock.now + .seconds(3)
+        while manager.wordCount.words == 0, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(manager.wordCount.words == 40_002)
+        #expect(manager.outline.map(\.title) == ["Large"])
+        #expect(manager.source.hasSameSource(as: source))
+    }
+
+    @Test
+    func supersededStatisticsStopDuringLongParagraphs() {
+        let paragraph = String(repeating: "word 😀 ", count: 20_000)
+        var outlinePolls = 0
+        let outline = MarkdownOutline.parse(paragraph) {
+            outlinePolls += 1
+            return outlinePolls >= 2
+        }
+        #expect(outline == nil, "a canceled scan must not deliver a partial outline")
+        var wordPolls = 0
+        let words = WordCount.count(paragraph) {
+            wordPolls += 1
+            return wordPolls >= 2
+        }
+        #expect(words == nil, "a canceled scan must not deliver a partial count")
+    }
+
     // MARK: - Load
 
     @Test
@@ -392,6 +458,62 @@ struct MarkdownDocumentManagerTests {
             #expect(manager.savedText.utf8.elementsEqual("base-3\n".utf8))
             #expect(!manager.isDirty)
             #expect(!manager.diskWasModifiedExternally())
+        }
+    }
+
+    @Test
+    func backgroundReloadPreservesEncodingAndReplacesTheDirtyBaseline() async throws {
+        try await withTempFile(bytes: Data("Original\n".utf8)) { url in
+            let manager = MarkdownDocumentManager()
+            try manager.load(from: url)
+            manager.text = "Local edit"
+            try Data("# Changed e\u{301} 😀\r\n".utf8).write(to: url)
+            #expect(try await manager.reloadWithCompletion())
+            #expect(manager.text.hasSameSource(as: "# Changed e\u{301} 😀\n"))
+            #expect(manager.fidelity.lineEnding == .crlf)
+            #expect(!manager.isDirty)
+            #expect(manager.saveSync())
+            #expect(try Data(contentsOf: url) == Data("# Changed e\u{301} 😀\r\n".utf8))
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func anUnreadableBackgroundReloadLeavesTheDraftAndBaselineIntact(binary: Bool) async throws {
+        try await withTempFile(bytes: Data("Original\r\n".utf8)) { url in
+            let manager = MarkdownDocumentManager()
+            try manager.load(from: url)
+            manager.text = "Local draft"
+            if binary { try Data([0, 0, 0, 0, 0]).write(to: url) }
+            else { try FileManager.default.removeItem(at: url) }
+            var rebuilt = false
+            var failed = false
+            do { _ = try await manager.reloadWithCompletion(willApply: { rebuilt = true }) }
+            catch { failed = true }
+            #expect(failed && !rebuilt)
+            #expect(manager.text == "Local draft")
+            #expect(manager.savedText == "Original\n")
+            #expect(manager.documentURL == url)
+            #expect(manager.fidelity.lineEnding == .crlf)
+            #expect(manager.isDirty)
+        }
+    }
+
+    @Test
+    func keepingAnObservedVersionDoesNotAcknowledgeALaterUnseenWrite() async throws {
+        try await withTempFile(bytes: Data("Original\n".utf8)) { url in
+            let manager = MarkdownDocumentManager()
+            try manager.load(from: url)
+            manager.text = "Local edit"
+            let probe = try #require(manager.diskProbe())
+            try Data("Observed\n".utf8).write(to: url)
+            let observation = MarkdownDocumentManager.observe(probe)
+            try Data("Unseen update\n".utf8).write(to: url)
+            #expect(manager.keepLocalVersionIgnoringDisk(observation, for: probe))
+            #expect(manager.text == "Local edit")
+            #expect(manager.isDirty)
+            #expect(manager.diskWasModifiedExternally())
+            manager.close()
+            #expect(!manager.keepLocalVersionIgnoringDisk(observation, for: probe))
         }
     }
 

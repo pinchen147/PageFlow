@@ -14,7 +14,20 @@ extension NativeTextViewCoordinator {
 
     enum PendingFindCommand {
         case show(FindRequest, source: String, generation: Int)
+        case navigation(source: String, generation: Int, action: () -> Void)
         case clear
+    }
+
+    /// Comments share Find's protected-input deferral and stale-source rejection,
+    /// while retaining their own scroll placement and card focus behavior.
+    func performNavigationWhenInputSettles(_ action: @escaping () -> Void) {
+        guard let view = textView else { return }
+        if isComposing(in: view) || isWritingToolsActive {
+            pendingFindCommand = .navigation(source: view.string, generation: documentGeneration, action: action)
+            return
+        }
+        pendingFindCommand = nil
+        action()
     }
 
     /// Rendering attributes disappear when TextKit reflows a fragment. Reapply
@@ -100,6 +113,9 @@ extension NativeTextViewCoordinator {
         case .show(let request, let source, let generation):
             guard generation == documentGeneration, (view.string as NSString).isEqual(to: source) else { return }
             applyFind(request, in: view)
+        case .navigation(let source, let generation, let action):
+            guard generation == documentGeneration, (view.string as NSString).isEqual(to: source) else { return }
+            action()
         case .clear:
             activeFindHighlights.removeAll()
             refreshFindRendering(in: view)
@@ -158,6 +174,7 @@ extension NativeTextViewCoordinator {
         tableEditingSession.finishInput()
         tableEditingSession.retire()
         let range = request.range
+        _ = revealFoldedSource(range)
         if tv.isEditable, tv.selectedRange() != range { tv.setSelectedRange(range) }
         activeFindHighlights = request.highlights
         refreshFindRendering(in: tv)

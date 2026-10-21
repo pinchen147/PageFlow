@@ -13,6 +13,7 @@ extension NativeTextViewCoordinator {
     @available(macOS 15.0, *)
     public func textViewWritingToolsWillBegin(_ textView: NSTextView) {
         guard !isComposing(in: textView) else { return }
+        synchronizeFolding()
         let sel = textView.selectedRange()
         // Publish pending keystrokes before the session cancels their debounce.
         commitTextSync(for: textView)
@@ -33,6 +34,7 @@ extension NativeTextViewCoordinator {
     @available(macOS 15.0, *)
     public func textViewWritingToolsDidEnd(_ textView: NSTextView) {
         guard isWritingToolsActive else { return }
+        defer { (textView as? NativeTextView)?.resumeCompletedImageImports() }
         textSyncGeneration &+= 1
         isWritingToolsActive = false
         wtChildWindow = nil
@@ -78,6 +80,7 @@ extension NativeTextViewCoordinator {
             isUpdatingSourceOrStyle = false
         }
         if incomingSource == nil { restyleCurrentSource(in: textView, focusOffset: position?.anchorOffset ?? caret) }
+        synchronizeFolding()
         restoreAfterRebuild(textView, position: position, caret: caret)
         enqueueDeferredRestyle([])
         pendingPresentationRefresh = false

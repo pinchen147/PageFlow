@@ -230,20 +230,79 @@ struct TableCellRangeSelectionTests {
         #expect(session.cellSelection == range((1, 0), (2, 1)))
     }
 
-    @Test("copy writes an HTML table and one plain line per cell; cut clears the cells")
+    @Test("cell range Copy and Cut stay enabled and export Markdown text")
     func copyAndCut() async throws {
         let editor = try MountedTableEditor(source: Self.source)
         defer { editor.close() }
         let session = editor.coordinator.tableEditingSession
         let cell = try editor.focusCell(inTableContaining: "| A", row: 0, column: 0)
         session.setCellSelection(range((0, 0), (1, 1)))
+        #expect(cell.selectedRange().length == 0, "range selection belongs to the table, not its hidden field")
+        let menu = NSMenu(title: "Edit")
+        let copy = NSMenuItem(title: "Copy", action: #selector(NSTextView.copy(_:)), keyEquivalent: "c")
+        let cut = NSMenuItem(title: "Cut", action: #selector(NSTextView.cut(_:)), keyEquivalent: "x")
+        for item in [copy, cut] { item.target = cell; menu.addItem(item) }
+        menu.update()
+        #expect(copy.isEnabled, "AppKit must enable Copy for the table selection")
+        #expect(cut.isEnabled, "AppKit must enable Cut for the table selection")
         cell.copy(nil)
         let board = NSPasteboard.general
-        #expect(board.string(forType: .html) == "<table><tr><th>A</th><th>B</th></tr><tr><td>a1</td><td>b1</td></tr></table>")
-        #expect(board.string(forType: .string) == "A\nB\na1\nb1")
+        #expect(board.string(forType: .html) == nil)
+        #expect(board.string(forType: .string) == "| A | B |\n| --- | --- |\n| a1 | b1 |")
         cell.cut(nil)
         #expect(editor.main.string.contains("|  |  | C |"))
         #expect(editor.state.undo.undoActionName == "Cut")
+    }
+
+    @Test("full-table Copy preserves literal Markdown, alignment, Unicode and line endings", arguments: ["\n", "\r\n"])
+    func wholeTableMarkdown(_ newline: String) async throws {
+        let literal = ["| **H** | B |", "| :--- | ---: |", "| cafe\u{301}\\|🧭 | $x$ |"].joined(separator: newline)
+        let source = "Intro" + newline + newline + literal + newline + newline + "After"
+        let editor = try MountedTableEditor(source: source)
+        defer { editor.close() }
+        let session = editor.coordinator.tableEditingSession
+        let cell = try editor.focusCell(inTableContaining: "| **H**", row: 0, column: 0)
+        session.setCellSelection(range((0, 0), (1, 1)))
+        cell.copy(nil)
+        #expect(NSPasteboard.general.string(forType: .string)?.utf16.elementsEqual(literal.utf16) == true,
+                "copy the table source, not its rendered labels; table range=\(String(describing: session.table?.range))")
+        #expect(editor.main.string.utf16.elementsEqual(source.utf16))
+    }
+
+    @Test("partial cell Copy preserves Markdown syntax, empty cells and alignment", arguments: ["\n", "\r\n"])
+    func bodyCellsMarkdown(_ newline: String) async throws {
+        let source = ["Intro", "", "| A | B | C |", "| :--- | :---: | ---: |",
+                      "| a1 | **b1** | c1\\|x |", "| a2 | e\u{301}🧭 |  |", "", "After"].joined(separator: newline)
+        let editor = try MountedTableEditor(source: source)
+        defer { editor.close() }
+        let session = editor.coordinator.tableEditingSession
+        let cell = try editor.focusCell(inTableContaining: "| A", row: 1, column: 1)
+        session.setCellSelection(range((1, 1), (2, 2)))
+        cell.copy(nil)
+        let expected = ["| **b1** | c1\\|x |", "| :---: | ---: |", "| e\u{301}🧭 |  |"].joined(separator: newline)
+        #expect(NSPasteboard.general.string(forType: .string)?.utf16.elementsEqual(expected.utf16) == true)
+        #expect(editor.main.string.utf16.elementsEqual(source.utf16))
+    }
+
+    @Test("borderless cell Copy keeps a trailing backslash separate from its new pipe", arguments: [
+        (#"x\"#, #"| x\ |"# + "\n| ---|"),
+        (#"x\\"#, #"| x\\|"# + "\n| ---|"),
+        (#"x\\\"#, #"| x\\\ |"# + "\n| ---|")
+    ])
+    func borderlessTrailingBackslash(_ value: String, _ expected: String) async throws {
+        let editor = try MountedTableEditor(source: "A | B\n--- | ---\na | " + value)
+        defer { editor.close() }
+        let session = editor.coordinator.tableEditingSession
+        let cell = try editor.focusCell(inTableContaining: "A | B", row: 1, column: 1)
+        session.setCellSelection(range((1, 1), (1, 1)))
+        cell.copy(nil)
+        let markdown = try #require(NSPasteboard.general.string(forType: .string))
+        #expect(markdown == expected)
+        let external = NSPasteboard(name: .init("PageFlowTableCopy-" + UUID().uuidString))
+        defer { external.releaseGlobally() }
+        external.setString(markdown, forType: .string)
+        #expect(MarkdownTableEditingSession.pastedGrid(from: external) == [[value]],
+                "the Markdown alone must preserve the selected cell without PageFlow's private payload")
     }
 
     @Test("copied cells paste back with their exact Markdown, growing the table from a caret")
@@ -343,6 +402,30 @@ struct TableCellRangeSelectionTests {
     }
 
     // MARK: - Undo and keys
+
+    @Test("Undo clamps a range to surviving rows and columns before Copy", arguments: ["row", "column"])
+    func copyAfterUndoingTableGrowth(_ dimension: String) async throws {
+        let editor = try MountedTableEditor(source: Self.source)
+        defer { editor.close() }
+        let session = editor.coordinator.tableEditingSession
+        let cell = try editor.focusCell(inTableContaining: "| A", row: 2, column: 2)
+        let isRow = dimension == "row"
+        try #require(session.perform(isRow ? .insertRow(below: true) : .insertColumn(right: true)))
+        session.setCellSelection(range((0, 0), isRow ? (3, 0) : (2, 3)))
+        editor.state.undo.undo()
+        #expect(editor.main.string == Self.source)
+        let selected = try #require(session.cellSelection)
+        #expect(selected == range((0, 0), isRow ? (2, 0) : (2, 2)))
+        let table = try #require(session.table)
+        // Keep a broken selection from trapping the entire suite before the regression is reported.
+        try #require(selected.rows.upperBound < table.rowCount && selected.columns.upperBound < table.columnCount)
+        cell.copy(nil)
+        let expected = isRow
+            ? "| A |\n| --- |\n| a1 |\n| a2 |"
+            : "| A | B | C |\n| --- | --- | --- |\n| a1 | b1 | c1 |\n| a2 | b2 | c2 |"
+        #expect(NSPasteboard.general.string(forType: .string) == expected)
+        #expect(editor.main.string == Self.source)
+    }
 
     @Test("Undo of a range command brings the range back")
     func undoRestoresRange() async throws {

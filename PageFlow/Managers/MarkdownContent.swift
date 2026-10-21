@@ -20,6 +20,7 @@ final class MarkdownContent {
     /// The durable text document — the source of truth when the editor is
     /// unmounted (ADR-0012 D2).
     let documentManager: MarkdownDocumentManager
+    @ObservationIgnored private(set) var recoverySession: MarkdownRecoverySession?
 
     /// Per-editor undo stack for text edits + its observable availability mirror.
     /// Distinct from the PDF page-op undo so ⌘Z in a markdown tab can never pop
@@ -105,6 +106,7 @@ final class MarkdownContent {
         self.liveStorageText = { [weak controller] in controller?.commitPendingText() }
         self.documentId = documentId
         self.bus = Self.makeBus(documentId: documentId)
+        controller.onFoldingStateChange = { [weak self] in self?.foldingRevision &+= 1 }
         controller.onFormatStateChange = { [weak self] state in
             MainActor.assumeIsolated { self?.formatState = state }
         }
@@ -125,6 +127,12 @@ final class MarkdownContent {
         shortcutObserver = NotificationCenter.default.addMainActorObserver(forName: SettingsManager.shortcutsDidChange) { [weak controller] in
             controller?.keyBindings = ShortcutCatalog.editorKeyBindings()
         }
+        if !TestEnvironment.isRunningTests {
+            #if DEBUG
+            if !RecoveryQA.isRequested, QAPresentation.runsInBackground || QAReplay.isRequested || WindowCloseQA.isRequested { return }
+            #endif
+            recoverySession = MarkdownRecoverySession(content: self, store: .shared)
+        }
     }
 
     @ObservationIgnored private var shortcutObserver: NSObjectProtocol?
@@ -136,6 +144,7 @@ final class MarkdownContent {
     /// The formatting at the editor's selection, shared by the selection bar,
     /// the Format menu's check marks and the toolbar (doc 24 §6.4).
     var formatState = MarkdownFormatState()
+    var foldingRevision = 0
 
     /// Whether `command` can apply at the selection. A table cell takes no
     /// block command (a list, heading or table can't live in a cell), and code
@@ -146,6 +155,7 @@ final class MarkdownContent {
         switch formatState.context {
         case .cellText, .cellRange: return !command.isBlock
         case .codeBlock: return !command.isBlock || command == .codeBlock
+        case .image: return false
         case .none, .text: return true
         }
     }
@@ -205,11 +215,14 @@ final class MarkdownContent {
 
     /// Before a Save As: images pasted while the note had no folder move next
     /// to it, and their absolute links turn relative, as one undoable edit.
-    func adoptPastedImages(savedAt url: URL, store: PastedImageStore = .shared) {
+    @discardableResult
+    func adoptPastedImages(savedAt url: URL, store: PastedImageStore = .shared, whileApproved: () -> Bool = { true }) -> Bool {
         reconcileLiveText()
         let source = documentManager.text
-        let edits = store.adoptFallbackImages(in: source, savedAt: url)
-        guard let first = edits.first, let last = edits.last else { return }
+        let edits = store.adoptFallbackImages(in: source, savedAt: url, whileApproved: {
+            whileApproved() && (self.editorController.currentStorageText ?? self.documentManager.text).hasSameSource(as: source)
+        })
+        guard let first = edits.first, let last = edits.last else { return false }
         let ns = source as NSString
         let span = NSRange(location: first.range.location, length: NSMaxRange(last.range) - first.range.location)
         var rebuilt = ""
@@ -222,6 +235,8 @@ final class MarkdownContent {
                                                actionName: "Move Pasted Images") {
             documentManager.text = ns.replacingCharacters(in: span, with: rebuilt)
         }
+        reconcileLiveText()
+        return true
     }
 
     /// A `#heading` link: the first heading whose title matches by slug
@@ -242,7 +257,12 @@ final class MarkdownContent {
     /// A clicked local link's file: a `file:` URL as given, a path from the
     /// note's folder; `nil` for a relative link in an untitled note.
     func localLinkTarget(_ link: URL) -> URL? {
-        if link.isFileURL { return link.standardizedFileURL }
+        if link.isFileURL {
+            var components = URLComponents(url: link, resolvingAgainstBaseURL: true)
+            components?.fragment = nil
+            components?.query = nil
+            return components?.url?.standardizedFileURL
+        }
         let path = link.path(percentEncoded: false)
         if path.hasPrefix("/") { return URL(fileURLWithPath: path).standardizedFileURL }
         guard let folder = documentManager.documentURL?.deletingLastPathComponent() else { return nil }
@@ -361,6 +381,7 @@ final class MarkdownContent {
 
     /// Where the reference editor's comment toasts ("Link copied") show.
     func showCommentToasts(_ post: @escaping (String) -> Void) {
+        recoverySession?.onFailure = post
         editorController.onCommentsToast = { message in MainActor.assumeIsolated { post(message) } }
     }
 
@@ -411,6 +432,7 @@ final class MarkdownContent {
     /// After the note is written: links to its comments name the file it is now.
     func noteWasSaved() {
         editorController.commentLinkBase = documentManager.documentURL
+        recoverySession?.checkpoint()
     }
 
     /// Keeps the table column widths the user set with the document's view
@@ -519,9 +541,34 @@ final class MarkdownContent {
     /// across that rebuild. Throws if the file can't be read (caller keeps the buffer).
     func reloadFromDisk() throws {
         editorController.keepPositionAcrossNextRebuild()
+        let previous = documentManager.text
         try documentManager.reload()
+        if !documentManager.text.hasSameSource(as: previous) { editorController.resetFolds() }
         loadComments()
         undoManager.removeAllActions()
+    }
+
+    @ObservationIgnored private(set) var isReloadingFromDisk = false
+
+    @discardableResult
+    func reloadFromDiskInBackground(whileCurrent: () -> Bool) async throws -> Bool {
+        guard !isReloadingFromDisk else { return false }
+        isReloadingFromDisk = true
+        defer { isReloadingFromDisk = false }
+        reconcileLiveText()
+        let previous = documentManager.text
+        let applied = try await documentManager.reloadWithCompletion(whileCurrent: {
+            self.reconcileLiveText()
+            return whileCurrent()
+        }, willApply: {
+            self.editorController.keepPositionAcrossNextRebuild()
+        })
+        if applied {
+            if !documentManager.text.hasSameSource(as: previous) { editorController.resetFolds() }
+            loadComments()
+            undoManager.removeAllActions()
+        }
+        return applied
     }
 
     // MARK: - Print (S9)
@@ -571,6 +618,7 @@ final class MarkdownContent {
 
     /// Ordered teardown when the tab is closed (peer of `PDFContent.cleanup`).
     func cleanup() {
+        recoverySession?.retire()
         reconcileLiveText()
         releaseEditorSurface()
         documentManager.close()

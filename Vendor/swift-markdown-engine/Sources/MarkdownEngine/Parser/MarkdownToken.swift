@@ -19,10 +19,12 @@ extension NSAttributedString.Key {
 
 enum MarkdownTokenKind: Hashable {
     /// Kinds whose caret-driven reveal/collapse swaps a tall rendered band
-    /// (grid / block-math image / embed) for multi-line raw source — a
+    /// (grid / block-math image / image) for multi-line raw source — a
     /// height change big enough that a restyle touching one must anchor the
-    /// viewport (see `restylePreservingViewport`). Named once so the anchor
-    /// gates don't re-list `.table/.blockLatex/.imageEmbed` inline.
+    /// viewport (see `restylePreservingViewport`). An image's width, crop
+    /// and size tokens change its height too (doc 26 §2.5). Named once so the
+    /// anchor gates don't re-list `.table/.blockLatex/.imageEmbed/.imageLink`
+    /// inline.
     ///
     /// NOT the whole story: a rendered diagram block (```` ```mermaid ````) is
     /// ALSO height-banded — it collapses a tall image ⇄ multi-line source — but
@@ -30,7 +32,7 @@ enum MarkdownTokenKind: Hashable {
     /// would then anchor). Use ``isHeightBanded(_:in:diagramLanguages:)`` at the
     /// gates instead of testing `heightBanded.contains(kind)` directly, so the
     /// diagram case is covered by the one predicate.
-    static let heightBanded: Set<MarkdownTokenKind> = [.table, .blockLatex, .imageEmbed]
+    static let heightBanded: Set<MarkdownTokenKind> = [.table, .blockLatex, .imageEmbed, .imageLink]
 
     /// Whether `token` is height-banded: its kind is in ``heightBanded``, OR it
     /// is a fenced code block whose info-string language is a rendered diagram

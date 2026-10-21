@@ -222,7 +222,7 @@ struct MarkdownEditorSurfaceTests {
         try "hello".write(to: url, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: url) }
         let manager = TabManager()
-        manager.openDocument(url: url, isSecurityScoped: false)
+        await manager.openDocument(url: url, isSecurityScoped: false)?.value
         let content = try #require(manager.activeMarkdownContent)
         let surface = RetainedMarkdownEditorSurface(editor: editor(for: content))
         content.retainedEditorSurface = surface

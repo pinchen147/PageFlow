@@ -81,6 +81,7 @@ extension NativeTextView {
     /// model the viewport pin measures in. Lays out that one paragraph if it is
     /// still an estimate; nothing else materializes.
     func lineFrame(at offset: Int) -> CGRect? {
+        guard (delegate as? NativeTextViewCoordinator)?.foldLayout.hiddenRange(containing: offset) == nil else { return nil }
         guard let tlm = textLayoutManager, let tcm = tlm.textContentManager,
               let location = tcm.location(tcm.documentRange.location, offsetBy: offset) else { return nil }
         tlm.ensureLayout(for: NSTextRange(location: location))

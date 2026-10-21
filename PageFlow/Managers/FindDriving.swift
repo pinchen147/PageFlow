@@ -49,6 +49,9 @@ protocol FindDriving {
     /// at construction, so the bar never supplies content.
     func runSearch()
 
+    /// Query typing may coalesce work; explicit commands still use runSearch.
+    func scheduleSearch()
+
     /// Advance to the next match (wrapping), revealing/highlighting it.
     func next()
 
@@ -60,6 +63,7 @@ protocol FindDriving {
 }
 
 extension FindDriving {
+    func scheduleSearch() { runSearch() }
     var hasResults: Bool { resultCount > 0 }
 }
 

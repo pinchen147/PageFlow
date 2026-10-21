@@ -126,10 +126,15 @@ final class SelectionBarButton: NSView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
+        trackActionCursor()
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: isEnabled ? .arrow : .operationNotAllowed)
+        addCursorRect(bounds, cursor: isEnabled ? .pointingHand : .operationNotAllowed)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        (isEnabled ? NSCursor.pointingHand : .operationNotAllowed).set()
     }
 
     override func mouseEntered(with event: NSEvent) {

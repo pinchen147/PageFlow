@@ -11,6 +11,7 @@ extension NativeTextViewCoordinator {
 
     func finishComposition(in textView: NativeTextView) {
         guard !isComposing(in: textView) else { return }
+        defer { textView.resumeCompletedImageImports() }
         guard pendingCompositionRefresh else {
             finishPendingFind(in: textView)
             return
@@ -56,6 +57,11 @@ extension NativeTextViewCoordinator {
     }
 
     func cancelDocumentWork() {
+        foldIndexTask?.cancel()
+        foldIndexTask = nil
+        foldIndexNeedsReconciliation = false
+        foldCompositionStart = nil
+        (textView as? NativeTextView)?.cancelImageImports()
         tableEditingSession.retire()
         cancelFindWork()
         documentGeneration &+= 1
@@ -73,6 +79,7 @@ extension NativeTextViewCoordinator {
         wtChildWindow = nil
         wtPostUndoSnapshot = nil
         resetPerDocumentEditState(preservingReadingPosition: true)
+        objectSelection = nil
         activeTokenIndices.removeAll()
         cachedParsedChars = nil
         cachedParsedDocument = nil

@@ -8,7 +8,7 @@ struct ReadableTextLineProbe {
     let sourceUTF16: [UInt16]
     let windowY: CGFloat
 
-    static func capture(in textView: NSTextView) -> Self? {
+    static func capture(in textView: NSTextView, minimumLocation: Int = 0) -> Self? {
         guard let layout = textView.textLayoutManager, let content = layout.textContentManager,
               let start = layout.textViewportLayoutController.viewportRange?.location else { return nil }
         let visible = textView.visibleRect
@@ -21,7 +21,8 @@ struct ReadableTextLineProbe {
             guard fragment.state == .layoutAvailable, let elementRange = fragment.textElement?.elementRange else { return true }
             let elementStart = content.offset(from: content.documentRange.location, to: elementRange.location)
             for line in fragment.textLineFragments where line.characterRange.location != NSNotFound {
-                if let sample = sample(at: elementStart + line.characterRange.location, in: textView) {
+                let offset = elementStart + line.characterRange.location
+                if offset >= minimumLocation, let sample = sample(at: offset, in: textView) {
                     result = sample
                     return false
                 }
@@ -32,9 +33,10 @@ struct ReadableTextLineProbe {
     }
 
     /// The same offset, line range and literal UTF16 must still be readable and fully visible.
-    func resample(in textView: NSTextView) -> Self? {
-        guard let current = Self.sample(at: range.location, in: textView),
-              current.range == range, current.sourceUTF16 == sourceUTF16 else { return nil }
+    func resample(in textView: NSTextView, offsetDelta: Int = 0) -> Self? {
+        let mapped = NSRange(location: range.location + offsetDelta, length: range.length)
+        guard mapped.location >= 0, let current = Self.sample(at: mapped.location, in: textView),
+              current.range == mapped, current.sourceUTF16 == sourceUTF16 else { return nil }
         return current
     }
 
@@ -61,7 +63,7 @@ struct ReadableTextLineProbe {
         var hasReadableFont = false
         storage.enumerateAttributes(in: range) { attributes, _, _ in
             if attributes[NSAttributedString.Key("RenderedBlockImage")] is NSImage { hasRaster = true }
-            if let font = attributes[.font] as? NSFont, font.pointSize.isFinite, font.pointSize >= 1 {
+            if let font = attributes[.font] as? NSFont, font.pointSize.isFinite, font.pointSize > 1 {
                 hasReadableFont = true
             }
         }

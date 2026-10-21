@@ -45,10 +45,8 @@ struct CommentsSidebar: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .contentShape(Rectangle())
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
     }
 
     // MARK: - Comments List
@@ -151,11 +149,9 @@ struct CommentBubbleView: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .padding(.leading, DesignTokens.commentTailSize + DesignTokens.spacingXS)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
     }
 
     private var bubbleContent: some View {
@@ -196,11 +192,7 @@ struct CommentBubbleView: View {
                     ClickCatcher(onSingleClick: onSelect, onDoubleClick: onStartEditing)
                 }
             }
-            .onHover { hovering in
-                if !isEditing {
-                    (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-                }
-            }
+            .pageFlowClickCursor(when: !isEditing)
             .contextMenu { contextMenuItems }
 
             bubbleCloseButton
@@ -227,10 +219,8 @@ struct CommentBubbleView: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .disabled(!canEdit)
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
     }
 
         private var editableText: some View {

@@ -66,6 +66,12 @@ struct MarkdownEditorView: View {
     var onPasteImage: ((NSPasteboard) -> String?)? = nil
     /// Opens dropped PDF/Markdown files as tabs instead of inserting their paths.
     var onDropDocuments: (([URL]) -> Bool)? = nil
+    /// Which dropped files are documents to open (the rest must be images).
+    var opensDroppedFile: ((URL) -> Bool)? = nil
+    /// Copies images dropped on the note beside it and answers with their links.
+    var onImportImages: ((MarkdownImageDrop, @escaping ([String]) -> Void) -> Void)? = nil
+    /// A file drag over the note's text: images or documents, nil when it leaves.
+    var onFileDragHover: ((MarkdownFileDragKind?) -> Void)? = nil
     /// Follows a local link (relative path, `file:`, `#heading`) clicked in the note.
     var onOpenLocalLink: ((URL) -> Void)? = nil
     /// The window's warm (mounted) tab `documentId`s (S8 P2). The engine keeps each
@@ -87,6 +93,8 @@ struct MarkdownEditorView: View {
     /// Page look: fixed measure (42 em of the body font) centered in the
     /// window, on the same background as the rest of the editor.
     var pageLook: Bool = true
+    /// Whether collapsed sections show a hidden-content summary row (Settings, live).
+    var showsHiddenContentRow: Bool = true
     /// Forces the editor's `NSScrollView.appearance` independent of the system (fork
     /// knob, Feature 2b). `nil` follows the system. The SwiftUI side of the scheme
     /// is applied by `MarkdownTabView` (`.environment(\.colorScheme)` + background);
@@ -117,6 +125,9 @@ struct MarkdownEditorView: View {
             isEditable: isEditable,
             onPasteImage: onPasteImage,
             onDropDocuments: onDropDocuments,
+            opensDroppedFile: opensDroppedFile,
+            onImportImages: onImportImages,
+            onFileDragHover: onFileDragHover,
             onOpenLocalLink: onOpenLocalLink,
             retainedScrollDocumentIds: retainedScrollDocumentIds,
             editorController: editorController,
@@ -151,6 +162,7 @@ struct MarkdownEditorView: View {
         configuration.safeAreaInsets = SafeAreaInsets(top: topInset, leading: 0, trailing: 0, bottom: 0)
         // Zoomed-out column placement (Settings toggle, live).
         configuration.centersZoomedOutColumn = centersZoomedOut
+        configuration.showsHiddenContentRow = showsHiddenContentRow
         // The editor's own chords, as Settings > Shortcuts binds them (live).
         configuration.keyBindings = ShortcutCatalog.editorKeyBindings()
         if pageLook {

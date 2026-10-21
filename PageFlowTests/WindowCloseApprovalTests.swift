@@ -1,5 +1,6 @@
 import AppKit
 import PDFKit
+import MarkdownEngine
 import Testing
 @testable import PageFlow
 
@@ -123,6 +124,24 @@ struct WindowCloseApprovalTests {
         #expect(!allowed)
         #expect(owner.tabs.count == 2)
         #expect(first.content.markdown?.documentManager.text == "new edit during another prompt")
+    }
+
+    @Test
+    func aCommentEditRevokesAnEarlierDiscardApproval() throws {
+        let (owner, first, _) = try drafts()
+        var decisions = 0
+        let allowed = owner.confirmWindowClose(using: DocumentClosePrompt(decide: { _ in
+            decisions += 1
+            if decisions == 2 {
+                first.content.markdown?.documentManager.setCommentBlock(MarkdownCommentBlock.block(for: [
+                    MarkdownCommentThread(anchor: MarkdownCommentAnchor(prefix: "", exact: "first", suffix: ""), root: MarkdownComment(body: "New comment"))
+                ]))
+            }
+            return .discard
+        }, saveURL: { _ in nil }))
+        #expect(!allowed)
+        #expect(first.content.markdown?.documentManager.commentBlock.contains("New comment") == true)
+        #expect(owner.sessions[first.id] === first)
     }
 
     @Test

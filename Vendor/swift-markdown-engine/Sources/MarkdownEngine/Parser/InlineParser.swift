@@ -104,8 +104,13 @@ enum InlineParser {
     /// The decoded destination of a link or image whose `(` is at `openParen`:
     /// title and `<…>` excluded, backslash escapes resolved.
     static func linkDestination(in source: NSString, openParen: Int) -> String? {
-        guard let target = scanInlineLinkTarget(source, source.length, from: openParen + 1) else { return nil }
-        return decodedLinkDestination(in: source, range: target.destination)
+        guard let range = linkDestinationRange(in: source, openParen: openParen) else { return nil }
+        return decodedLinkDestination(in: source, range: range)
+    }
+
+    /// The literal destination range, excluding angle brackets and an optional title.
+    static func linkDestinationRange(in source: NSString, openParen: Int) -> NSRange? {
+        scanInlineLinkTarget(source, source.length, from: openParen + 1)?.destination
     }
 
     static func decodedLinkDestination(in source: NSString, range: NSRange) -> String {
@@ -157,10 +162,18 @@ enum InlineParser {
                 return NSRange(location: NSMaxRange(open), length: close.location - NSMaxRange(open))
             case .underline(_, let content, _), .strikethrough(_, let content, _), .highlight(_, let content, _):
                 return content
-            case .link(let range, _, _, _):
+            case .link(let range, _, _, _), .image(let range, _, _, _):
                 return range
             default:
                 return nil
+            }
+        }
+
+        /// A link's text or an image's description, and its four markers.
+        var labelAndMarkers: (label: NSRange, markers: [NSRange])? {
+            switch self {
+            case .link(_, let label, _, let markers), .image(_, let label, _, let markers): return (label, markers)
+            default: return nil
             }
         }
     }
@@ -272,7 +285,7 @@ enum InlineParser {
             while k < sorted.count, sorted[k].location < NSMaxRange(full) {
                 let overlap = NSIntersectionRange(sorted[k], full)
                 if overlap.length > 0 {
-                    if case .link(_, let label, _, let markers) = span {
+                    if let (label, markers) = span.labelAndMarkers {
                         if !rangeContains(label, sorted[k]) {
                             let target = NSRange(location: NSMaxRange(markers[2]),
                                                  length: markers[3].location - NSMaxRange(markers[2]))
@@ -308,7 +321,7 @@ enum InlineParser {
         let c2 = peek(ns, i + 2, len)
         if c == bang, c1 == lbracket, c2 == lbracket { return matchImageEmbed(ns, len, start: i) }
         if c == lbracket, c1 == lbracket { return matchWikiLink(ns, len, start: i) }
-        if c == bang, c1 == lbracket { return matchImage(ns, len, start: i) }
+        if c == bang, c1 == lbracket { return matchImage(ns, len, start: i, claimed: claimed) }
         if c == lbracket { return matchLink(ns, len, start: i, claimed: claimed) }
         if c == tilde, c1 == tilde { return matchStrikethrough(ns, len, start: i, claimed: claimed) }
         if c == equals, c1 == equals { return matchHighlight(ns, len, start: i, claimed: claimed) }
@@ -360,10 +373,12 @@ enum InlineParser {
         return nil
     }
 
-    /// `![ alt ]( url )`
-    private static func matchImage(_ ns: NSString, _ len: Int, start i: Int) -> Span? {
+    /// `![ alt ]( url )`. The description ends where a link's text would, so
+    /// an escaped `\]` or `\|` (which PageFlow writes in descriptions) stays
+    /// inside it.
+    private static func matchImage(_ ns: NSString, _ len: Int, start i: Int, claimed: [NSRange]) -> Span? {
         let altStart = i + 2
-        guard let closeBracket = findChar(ns, len, from: altStart, char: rbracket),
+        guard let closeBracket = linkLabelEnd(ns, len, from: altStart, claimed: claimed),
               peek(ns, closeBracket + 1, len) == lparen,
               let target = scanInlineLinkTarget(ns, len, from: closeBracket + 2) else { return nil }
         let closeParen = target.close
@@ -608,17 +623,6 @@ enum InlineParser {
             let ch = ns.character(at: k)
             if ch == newline { return nil }
             if ch == rbracket { return peek(ns, k + 1, len) == rbracket ? k : nil }
-            k += 1
-        }
-        return nil
-    }
-
-    private static func findChar(_ ns: NSString, _ len: Int, from: Int, char: unichar) -> Int? {
-        var k = from
-        while k < len {
-            let ch = ns.character(at: k)
-            if ch == char { return k }
-            if ch == newline { return nil }
             k += 1
         }
         return nil

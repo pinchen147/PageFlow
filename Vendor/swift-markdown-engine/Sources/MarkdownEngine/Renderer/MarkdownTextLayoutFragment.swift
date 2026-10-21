@@ -42,6 +42,34 @@ extension NSAttributedString.Key {
     /// NSValue(range:) — ANCHOR-RELATIVE (see `anchorRelativeRange`) exact
     /// markdown table source replaced by native table edits.
     static let markdownTableSourceRange = NSAttributedString.Key("MarkdownTableSourceRange")
+    /// NSValue(range:) — ANCHOR-RELATIVE source of a collapsed image, `$$`
+    /// formula or diagram: the whole token the block commands act on.
+    static let markdownBlockSourceRange = NSAttributedString.Key("MarkdownBlockSourceRange")
+    /// String — the `MarkdownBlockKind` raw value of a collapsed block's anchor.
+    static let markdownBlockKind = NSAttributedString.Key("MarkdownBlockKind")
+    /// NSValue(rect:) — the part of a block image to draw: normalized x, y,
+    /// w, h from its top-left corner (the `crop=` token). Absent: all of it.
+    static let blockImageCrop = NSAttributedString.Key("BlockImageCrop")
+    /// CGFloat — the radius a block image's corners are clipped to.
+    static let blockImageCornerRadius = NSAttributedString.Key("BlockImageCornerRadius")
+    /// Int — `NSTextAlignment` raw value of an image the fragment places
+    /// itself: below its revealed source, or wider than the column.
+    static let blockImageAlignment = NSAttributedString.Key("BlockImageAlignment")
+}
+
+/// What a collapsed standalone block draws, for the commands that act on blocks.
+enum MarkdownBlockKind: String {
+    case image, math, diagram
+
+    init?(collapsing kind: MarkdownTokenKind) {
+        switch kind {
+        case .imageLink, .imageEmbed: self = .image
+        case .blockLatex: self = .math
+        // Only a rendered diagram fence collapses to an image.
+        case .codeBlock: self = .diagram
+        default: return nil
+        }
+    }
 }
 
 // MARK: - Shift-safe range payloads
@@ -109,9 +137,13 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         if let manager = textLayoutManager {
             manager.renderingAttributesValidator?(manager, self)
         }
-        // Comment highlights follow the text TextKit lays out and draws.
+        // Comment highlights and the selected image's ring follow the text
+        // TextKit lays out and draws.
         if let coordinator = textLayoutManager?.textContainer?.textView?.delegate as? NativeTextViewCoordinator {
             MainActor.assumeIsolated { coordinator.comments?.layoutDidChange() }
+            if coordinator.objectSelection != nil { coordinator.imageChrome?.setNeedsRefresh() }
+            coordinator.imageControls?.setNeedsRefresh()
+            coordinator.foldControls?.setNeedsRefresh()
         }
         // 0. Wide-table overlays: re-glue the sibling overlay to the anchor line
         //    it reserves (self-heals stale positions; see syncWideTableOverlay).
@@ -398,6 +430,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         attrRange: NSRange,
         imageBounds: CGRect,
         blockOffsetY: CGFloat?,
+        alignment: NSTextAlignment?,
         point: CGPoint
     ) -> CGRect? {
         guard let pos = drawPosition(forDocumentCharAt: attrRange.location, point: point) else { return nil }
@@ -426,27 +459,47 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
             yPosition = firstLineMinY + (lineHeight - imageBounds.height) / 2
         }
 
-        // X: the anchor glyph's position — except when the image is WIDER than
-        // the prose wrap column, which is only possible under visual zoom-out
-        // where the text VIEW grew to the effective width while the container
-        // stays pinned at the wrap width (ADR-0019): center it on the column
-        // and clamp it into the TEXT VIEW's box — AppKit clips drawing at the
-        // view bounds, so the spill must stay inside the view (drawing on the
-        // text layer keeps scrolling composited in one pass — no overlay).
+        // X: the anchor glyph's position, which the paragraph's alignment
+        // placed — except in two cases where the image is placed on the column
+        // by its alignment (centred without one):
+        // - an image drawn under its revealed source: the source line is
+        //   left-aligned, the image is not;
+        // - an image WIDER than the prose wrap column, which is only possible
+        //   under visual zoom-out where the text VIEW grew to the effective
+        //   width while the container stays pinned at the wrap width
+        //   (ADR-0019). It is clamped into the TEXT VIEW's box — AppKit clips
+        //   drawing at the view bounds, so the spill must stay inside the view
+        //   (drawing on the text layer keeps scrolling composited in one pass —
+        //   no overlay).
         var xPosition = pos.x
         if let container = textLayoutManager?.textContainer,
-           let textView = container.textView,
-           imageBounds.width > container.size.width + 0.5 {
-            // The text view's own box expressed in text-container coordinates.
-            let originShift = textView.textContainerOrigin.x
-            let boxLeft = -originShift
-            let boxRightStart = textView.frame.width - originShift - imageBounds.width
-            let centeredOnColumn = (container.size.width - imageBounds.width) / 2
-            let containerX = min(max(centeredOnColumn, boxLeft), max(boxLeft, boxRightStart))
-            xPosition = point.x + containerX - layoutFragmentFrame.origin.x
+           let textView = container.textView {
+            let columnWidth = container.size.width
+            let isWide = imageBounds.width > columnWidth + 0.5
+            if isWide || (blockOffsetY != nil && alignment != nil) {
+                var containerX: CGFloat = switch alignment {
+                case .left?: 0
+                case .right?: columnWidth - imageBounds.width
+                default: (columnWidth - imageBounds.width) / 2
+                }
+                if isWide {
+                    // The text view's own box expressed in text-container coordinates.
+                    let originShift = textView.textContainerOrigin.x
+                    let boxLeft = -originShift
+                    let boxRightStart = textView.frame.width - originShift - imageBounds.width
+                    containerX = min(max(containerX, boxLeft), max(boxLeft, boxRightStart))
+                }
+                xPosition = point.x + containerX - layoutFragmentFrame.origin.x
+            }
         }
         return CGRect(x: xPosition, y: yPosition,
                        width: imageBounds.width, height: imageBounds.height)
+    }
+
+    /// The alignment an image's tokens ask for; nil for other block images.
+    private func imageAlignment(at location: Int, in storage: NSTextStorage) -> NSTextAlignment? {
+        (storage.attribute(.blockImageAlignment, at: location, effectiveRange: nil) as? Int)
+            .flatMap(NSTextAlignment.init(rawValue:))
     }
 
     /// The drawn rect of the block image anchored at `location`, in text-container
@@ -460,8 +513,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         let imageBounds = (ts.attribute(.latexBounds, at: location, effectiveRange: nil) as? NSValue)?.rectValue
             ?? CGRect(origin: .zero, size: image.size)
         let blockOffsetY = ts.attribute(.latexBlockOffsetY, at: location, effectiveRange: nil) as? CGFloat
-        return blockImageDrawRect(attrRange: attrRange, imageBounds: imageBounds,
-                                  blockOffsetY: blockOffsetY, point: layoutFragmentFrame.origin)
+        return blockImageDrawRect(attrRange: attrRange, imageBounds: imageBounds, blockOffsetY: blockOffsetY,
+                                  alignment: imageAlignment(at: location, in: ts), point: layoutFragmentFrame.origin)
     }
 
     /// Returns the rects of all block images in this fragment, relative to
@@ -481,7 +534,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
             let boundsVal = ts.attribute(.latexBounds, at: attrRange.location, effectiveRange: nil) as? NSValue
             let imageBounds = boundsVal?.rectValue ?? .zero
             let blockOffsetY = ts.attribute(.latexBlockOffsetY, at: attrRange.location, effectiveRange: nil) as? CGFloat
-            if let rect = blockImageDrawRect(attrRange: attrRange, imageBounds: imageBounds, blockOffsetY: blockOffsetY, point: point) {
+            if let rect = blockImageDrawRect(attrRange: attrRange, imageBounds: imageBounds, blockOffsetY: blockOffsetY,
+                                             alignment: imageAlignment(at: attrRange.location, in: ts), point: point) {
                 rects.append(rect)
             }
         }
@@ -547,13 +601,26 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
             let drawRect: CGRect
             if isBlock {
-                guard let rect = blockImageDrawRect(attrRange: attrRange, imageBounds: imageBounds, blockOffsetY: blockOffsetY, point: point) else { return }
+                guard let rect = blockImageDrawRect(attrRange: attrRange, imageBounds: imageBounds, blockOffsetY: blockOffsetY,
+                                                    alignment: self.imageAlignment(at: attrRange.location, in: ts),
+                                                    point: point) else { return }
                 drawRect = rect
             } else {
                 let descent = imageBounds.origin.y
                 drawRect = CGRect(x: pos.x,
                                   y: pos.baselineY + descent - imageBounds.height,
                                   width: imageBounds.width, height: imageBounds.height)
+            }
+            // The scroll notification can precede TextKit's viewport update.
+            // A returning narrow table must remount its live editor after its
+            // fragment actually draws, using the same coalesced reconciliation
+            // as wide tables. Do not force viewport layout during drawing.
+            if let value = ts.attribute(.markdownTableSourceRange, at: attrRange.location, effectiveRange: nil) as? NSValue,
+               let textView = self.textLayoutManager?.textContainer?.textView as? NativeTextView,
+               let coordinator = textView.delegate as? NativeTextViewCoordinator,
+               coordinator.tableEditingSession.owns(AnchorRelativeRange.decode(value, anchorLocation: attrRange.location)),
+               !coordinator.tableEditingSession.isMounted(in: textView) {
+                textView.updateWideTableOverlays()
             }
             if let value = ts.attribute(.markdownTableSourceRange, at: attrRange.location, effectiveRange: nil) as? NSValue,
                let textView = self.textLayoutManager?.textContainer?.textView as? NativeTextView,
@@ -569,9 +636,45 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 }
                 painted.draw(in: drawRect)
             } else {
-                image.draw(in: drawRect)
+                let crop = (ts.attribute(.blockImageCrop, at: attrRange.location, effectiveRange: nil) as? NSValue)?.rectValue
+                let radius = ts.attribute(.blockImageCornerRadius, at: attrRange.location, effectiveRange: nil) as? CGFloat ?? 0
+                if let textView = self.textLayoutManager?.textContainer?.textView,
+                   (textView.delegate as? NativeTextViewCoordinator)?.objectSelection?.anchor == attrRange.location {
+                    // An object-selected image's selection band (doc 26 §3.3): TextKit
+                    // paints it under the hidden source, the image's own rect; the page
+                    // colour keeps it out of a transparent image.
+                    textView.effectiveAppearance.performAsCurrentDrawingAppearance {
+                        NSColor.textBackgroundColor.setFill()
+                        drawRect.fill()
+                    }
+                }
+                Self.drawBlockImage(image, in: drawRect, crop: crop, cornerRadius: radius)
             }
         }
+    }
+
+    /// Draws `image` into `rect` in the current (flipped) context: only the
+    /// `crop` part (normalized, from the top-left) when there is one, clipped
+    /// to `cornerRadius`. A cropped image keeps all four corners rounded
+    /// (doc 26 I4). The image itself is never changed.
+    static func drawBlockImage(_ image: NSImage, in rect: CGRect, crop: CGRect?, cornerRadius: CGFloat) {
+        guard crop != nil || cornerRadius > 0 else {
+            image.draw(in: rect)
+            return
+        }
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        if cornerRadius > 0 {
+            NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius).addClip()
+        }
+        var source = CGRect.zero
+        if let crop {
+            // NSImage's own coordinates run bottom-up; the crop is measured from the top.
+            let size = image.size
+            source = CGRect(x: crop.minX * size.width, y: (1 - crop.minY - crop.height) * size.height,
+                            width: crop.width * size.width, height: crop.height * size.height)
+        }
+        image.draw(in: rect, from: source, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 
     // MARK: - Thematic Breaks (---, ***, ___)

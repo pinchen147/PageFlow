@@ -91,7 +91,8 @@ extension NativeTextViewCoordinator {
             selectionRange: textView.selectedRange(),
             tokens: tokens,
             in: nsDisplay,
-            suppressed: !textView.isEditable
+            suppressed: !textView.isEditable,
+            objectSelection: objectSelectionRange(for: textView.selectedRange())
         )
 
         // Viewport-first on a long note: style the paragraphs around the focus
@@ -243,6 +244,30 @@ extension NativeTextViewCoordinator {
         return parsed
     }
 
+    /// A complete, balanced block at top-level boundaries cannot change untouched
+    /// tokens. Re-tokenize the parser's seam window, then shift the suffix once.
+    func prepareStandaloneBlockTokens(in source: NSString, range: NSRange, replacement: String) -> Bool {
+        guard let cachedParsedChars, let parsed = cachedParsedDocument,
+              plainInsertionsSinceParse.isEmpty, utf16(cachedParsedChars, equals: source),
+              let splice = BlockParser.prepareStandaloneEdit(in: source, range: range, replacement: replacement,
+                  snapshot: cachedBlockParse) else { return false }
+        let old = splice.oldWindow
+        guard !parsed.tokens.contains(where: {
+            ($0.range.location < old.location && NSMaxRange($0.range) > old.location)
+                || ($0.range.location < NSMaxRange(old) && NSMaxRange($0.range) > NSMaxRange(old))
+        }) else { return false }
+        let fragment = String(decoding: splice.characters[splice.newWindow.location..<NSMaxRange(splice.newWindow)], as: UTF16.self)
+        let local = MarkdownTokenizer.parseTokensViaAST(in: fragment, memoizing: false)
+        let delta = replacement.utf16.count - range.length
+        var tokens = parsed.tokens.filter { NSMaxRange($0.range) <= old.location }
+        tokens.append(contentsOf: local.map { $0.shifted(by: splice.newWindow.location) })
+        tokens.append(contentsOf: parsed.tokens.filter { $0.range.location >= NSMaxRange(old) }.map { $0.shifted(by: delta) })
+        self.cachedParsedChars = splice.characters
+        cachedParsedDocument = parsedDocument(from: tokens)
+        cachedBlockParse = splice.snapshot
+        return true
+    }
+
     /// Caches `parsed` as the parse of `source`, with headroom in the source
     /// copy for the typing that keeps it current (`recordPlainInsertion`), so
     /// the first keystroke does not reallocate a megabytes-long buffer.
@@ -253,6 +278,7 @@ extension NativeTextViewCoordinator {
             count = length
         }
         cachedParsedDocument = parsed
+        cachedBlockParse = BlockParser.snapshot(for: source) ?? BlockParser.snapshot(parsing: source)
         plainInsertionsSinceParse.removeAll()
         pendingPlainFastPathExpansion = nil
     }
@@ -359,7 +385,8 @@ extension NativeTextViewCoordinator {
             selectionRange: textView.selectedRange(),
             tokens: tokens,
             in: nsText,
-            suppressed: !textView.isEditable
+            suppressed: !textView.isEditable,
+            objectSelection: objectSelectionRange(for: textView.selectedRange())
         )
         restyleTextView(textView, paragraphCandidates: paragraphs, tokens: tokens)
     }
@@ -408,7 +435,7 @@ extension NativeTextViewCoordinator {
     /// then layout up to the pin so its Y is trustworthy before correction.
     /// Bounded cost: only structural/reveal paths reach here; plain prose
     /// typing exits on the fast paths long before.
-    func restylePreservingViewport(_ textView: NSTextView, mapPin: ((Int) -> Int)? = nil, anchoringVisibleSource: Bool = false, tag: String = #function, _ body: () -> Void) {
+    func restylePreservingViewport(_ textView: NSTextView, mapPin: ((Int) -> Int)? = nil, anchoringVisibleSource: Bool = false, anchorLocation: Int? = nil, excludingSource: NSRange? = nil, tag: String = #function, _ body: () -> Void) {
         guard let native = textView as? NativeTextView else { body(); return }
         let settle: (Int) -> Void = { pinLoc in
             guard let tlm = native.textLayoutManager,
@@ -439,13 +466,13 @@ extension NativeTextViewCoordinator {
             var receipt = bulkViewportAnchor
             if native.preservingVisibleSourceAnchor(continuing: &receipt,
                                                     sourceGeneration: { self.nativeSourceGeneration },
-                                                    settle: settle, mapPin: mapPin, body) {
+                                                    settle: settle, mapPin: mapPin, minimumLocation: anchorLocation, excludingSource: excludingSource, body) {
                 bulkViewportAnchor = receipt
                 return
             }
             bulkViewportAnchor = nil
         }
-        native.preservingViewportAnchor(settle: settle, mapPin: mapPin, tag: tag, body)
+        native.preservingViewportAnchor(anchorLocation: anchorLocation, settle: settle, mapPin: mapPin, tag: tag, body)
     }
 
     /// Restyle `tv`, optionally pinning the viewport across the pass. `anchor`

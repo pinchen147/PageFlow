@@ -130,29 +130,12 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     private func configureContextMenuCallbacks(_ pdfView: StablePDFView) {
         pdfView.onCopyPageAsMarkdown = { [weak pdfManager, weak commentManager] in
-            guard let pdfManager = pdfManager, pdfManager.permissions.copy,
-                  let document = pdfManager.document else { return }
-
-            let markdown = MarkdownExporter.export(
-                scope: .currentPage(pdfManager.currentPageIndex),
-                document: document,
-                comments: commentManager?.comments ?? []
-            )
-            guard !markdown.isEmpty else { return }
-            MarkdownExporter.copyToClipboard(markdown)
+            guard let pdfManager else { return }
+            pdfManager.copyMarkdown(scope: .currentPage(pdfManager.currentPageIndex), comments: commentManager?.comments ?? [])
         }
 
         pdfView.onCopyDocumentAsMarkdown = { [weak pdfManager, weak commentManager] in
-            guard let pdfManager = pdfManager, pdfManager.permissions.copy,
-                  let document = pdfManager.document else { return }
-
-            let markdown = MarkdownExporter.export(
-                scope: .entireDocument,
-                document: document,
-                comments: commentManager?.comments ?? []
-            )
-            guard !markdown.isEmpty else { return }
-            MarkdownExporter.copyToClipboard(markdown)
+            pdfManager?.copyMarkdown(scope: .entireDocument, comments: commentManager?.comments ?? [])
         }
 
         pdfView.onToggleBookmark = { [weak pdfManager, weak bookmarkManager] in

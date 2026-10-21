@@ -77,13 +77,18 @@ extension TabManager {
         guard let session = sessions.values.first(where: { $0.content.markdown === content }) else {
             return .cancelled
         }
-        guard confirmSaveOverExternalChange(content, session: session),
-              confirmReplacingInvalidUTF8(content) else { return .cancelled }
+        guard await confirmSaveOverExternalChangeInBackground(content, session: session),
+              let owner = WindowRegistry.shared.owner(of: session, document: content, fallback: self) else { return .cancelled }
+        let approval = DocumentCloseSnapshot(session)
+        guard owner.confirmReplacingInvalidUTF8(content), !Task.isCancelled,
+              let currentOwner = WindowRegistry.shared.owner(of: session, document: content, fallback: owner),
+              approval.matches(currentOwner) else { return .cancelled }
         let completion = await documentManager.saveWithCompletion()
         if !completion.didWrite, documentManager.isBackingFileMissing {
             // The vanished file's path can't be recreated (its folder moved, or
             // the sandbox no longer grants it): choose a new location instead.
-            return await saveActiveDocumentAs()
+            guard let owner = WindowRegistry.shared.owner(of: session, document: content, fallback: currentOwner) else { return .cancelled }
+            return await owner.saveMarkdownDocumentAs(id: session.id, content: content)
         }
         return completeMarkdownSave(session: session, content: content, completion: completion, saveAs: false)
     }
@@ -161,10 +166,11 @@ extension TabManager {
     /// until completion publishes the identity, even if the source changes windows.
     func saveDocumentAs(
         _ session: TabSession, to url: URL, isSecurityScoped: Bool,
-        expectedDocument document: any TabDocument
+        expectedDocument document: any TabDocument,
+        whileApproved: () -> Bool = { true }, didAdoptImages: () -> Bool = { true }
     ) async -> SaveResult {
         let registry = WindowRegistry.shared
-        guard let owner = registry.owner(of: session, document: document, fallback: self) else { return .cancelled }
+        guard whileApproved(), let owner = registry.owner(of: session, document: document, fallback: self) else { return .cancelled }
         guard let claim = registry.claimSaveAs(to: url, session: session, document: document, owner: owner) else {
             // The destination is open in another tab, which is now in front.
             return .failure(message: "“\(url.lastPathComponent)” is open in another tab. Close it first to save over it.")
@@ -175,7 +181,8 @@ extension TabManager {
             let completion = await content.pdfManager.saveAsWithCompletion(to: url, isSecurityScoped: isSecurityScoped)
             return completePDFSave(session: session, completion: completion, saveAs: true)
         case .markdown(let content):
-            content.adoptPastedImages(savedAt: url)
+            if content.adoptPastedImages(savedAt: url, whileApproved: whileApproved), !didAdoptImages() { return .cancelled }
+            guard whileApproved() else { return .cancelled }
             content.reconcileLiveText()
             let completion = await content.documentManager.saveAsWithCompletion(to: url, isSecurityScoped: isSecurityScoped)
             return completeMarkdownSave(session: session, content: content, completion: completion, saveAs: true)
@@ -186,13 +193,17 @@ extension TabManager {
     /// Keep the claim until metadata follows any window move during a modal note.
     func saveDocumentAsSync(
         _ session: TabSession, to url: URL, isSecurityScoped: Bool,
-        expectedDocument document: any TabDocument
+        expectedDocument document: any TabDocument,
+        whileApproved: () -> Bool = { true }, didAdoptImages: () -> Bool = { true }
     ) -> Bool {
         let registry = WindowRegistry.shared
         guard let owner = registry.owner(of: session, document: document, fallback: self),
               let claim = registry.claimSaveAs(to: url, session: session, document: document, owner: owner) else { return false }
         defer { registry.releaseSaveAs(claim) }
-        session.content.markdown?.adoptPastedImages(savedAt: url)
+        guard whileApproved() else { return false }
+        if let content = session.content.markdown,
+           content.adoptPastedImages(savedAt: url, whileApproved: whileApproved), !didAdoptImages() { return false }
+        guard whileApproved() else { return false }
         let saved = document.saveAsSync(to: url, isSecurityScoped: isSecurityScoped)
         guard let owner = registry.owner(of: session, document: document, fallback: owner) else { return false }
         // An earlier accepted write can commit an identity even if this write fails.

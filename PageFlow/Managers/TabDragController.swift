@@ -821,6 +821,9 @@ private final class TabDragPreviewWindow {
     }
 
     func show() {
+        #if DEBUG
+        guard !QAPresentation.runsInBackground else { return }
+        #endif
         panel.orderFrontRegardless()
         panel.contentView?.layoutSubtreeIfNeeded()
         panel.displayIfNeeded()

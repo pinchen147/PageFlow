@@ -8,6 +8,7 @@ import AppKit
 final class ChromeMenuView: NSView {
     struct Row {
         enum Leading { case glyph(String), symbol(String), none }
+        var isDanger = false
         let title: String
         let leading: Leading
         let shortcut: String?
@@ -31,6 +32,11 @@ final class ChromeMenuView: NSView {
             self.checked = checked
             isSeparator = false
             self.action = action
+        }
+
+        init(title: String, isDanger: Bool = false, action: @escaping () -> Void) {
+            self.title = title; self.isDanger = isDanger; leading = .none
+            shortcut = nil; checked = false; isSeparator = false; self.action = action
         }
 
         private init() {
@@ -104,7 +110,9 @@ final class ChromeMenuView: NSView {
         for row in rows where !row.isSeparator {
             let label = (row.title as NSString).size(withAttributes: [.font: font]).width
             let hint = row.shortcut.map { ($0 as NSString).size(withAttributes: [.font: hintFont]).width + 12 } ?? 0
-            width = max(width, 4 + 8 + 16 + 8 + label + hint + 8 + 12 + 8 + 4)
+            let leadingWidth: CGFloat
+            switch row.leading { case .none: leadingWidth = 0; default: leadingWidth = 24 }
+            width = max(width, 4 + 8 + leadingWidth + label + hint + 14 + 4)
         }
         var y: CGFloat = 4
         rowFrames = rows.map { row in
@@ -135,7 +143,7 @@ final class ChromeMenuView: NSView {
                 continue
             }
             if index == focused {
-                ChromePalette.hover.setFill()
+                (row.isDanger ? NSColor(calibratedRed: 0.816, green: 0.231, blue: 0.231, alpha: 1) : ChromePalette.hover).setFill()
                 NSBezierPath(roundedRect: frame, xRadius: 6, yRadius: 6).fill()
             } else if row.checked {
                 ChromePalette.current.setFill()
@@ -155,7 +163,8 @@ final class ChromeMenuView: NSView {
             case .none:
                 break
             }
-            let labelAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: ChromePalette.text]
+            let danger = dark ? NSColor(calibratedRed: 0.925, green: 0.494, blue: 0.494, alpha: 1) : NSColor(calibratedRed: 0.557, green: 0.149, blue: 0.149, alpha: 1)
+            let labelAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: row.isDanger ? (index == focused ? NSColor.white : danger) : ChromePalette.text]
             let labelSize = (row.title as NSString).size(withAttributes: labelAttributes)
             (row.title as NSString).draw(at: NSPoint(x: x, y: frame.midY - labelSize.height / 2), withAttributes: labelAttributes)
             var right = frame.maxX - 8

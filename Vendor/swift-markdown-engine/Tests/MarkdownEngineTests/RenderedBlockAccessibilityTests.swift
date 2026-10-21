@@ -60,4 +60,20 @@ struct RenderedBlockAccessibilityTests {
         #expect(labels.contains("image: A chart"))
         #expect(labels.contains("table, 2 rows"))
     }
+
+    @Test("an image is read by its description: size, align and crop tokens stripped, escapes decoded")
+    func imageLabelsDropTokens() {
+        let source = #"""
+        ![Chart|300|center](x.png)
+
+        ![Q3 \| 2024|crop=0,0,0.5,0.5|420](y.png)
+
+        ![|right|300](z.png)
+
+        ![[shot.png|center|300]]
+        """# as NSString
+        let tokens = MarkdownTokenizer.parseTokensViaAST(in: source as String)
+        let labels = tokens.compactMap { NativeTextView.accessibilityLabel(for: $0, in: source) }
+        #expect(labels == ["image: Chart", "image: Q3 | 2024", "image", "image: shot.png"])
+    }
 }

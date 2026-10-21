@@ -66,6 +66,7 @@ extension NativeTextViewCoordinator {
             let focus = (textView as? NativeTextView)?.readingPosition()?.anchorOffset
             self.restylePreservingViewport(textView, anchoringVisibleSource: true) {
                 self.restyleCurrentSource(in: textView, focusOffset: focus)
+                self.synchronizeFolding()
             }
         }
     }

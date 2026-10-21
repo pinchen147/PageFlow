@@ -56,9 +56,23 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     /// `"![[my-image]]"`) to insert at the caret, or `nil` to fall through
     /// to the system's default plain-text paste.
     public var onPasteImage: ((NSPasteboard) -> String?)?
-    /// Optional drop hook. Return `true` when the host opens the dropped files
-    /// as documents; `false` lets the drop insert into the text as usual.
+    /// Optional drop hook: the files dropped on the note that
+    /// ``opensDroppedFile`` accepted. Return `true` when the host opens them.
     public var onDropDocuments: (([URL]) -> Bool)?
+    /// Whether the host opens a dropped file as a document (a PDF, another
+    /// note). Those files go to ``onDropDocuments``; with this unset, or for a
+    /// file it rejects, the file is refused unless it is an image.
+    public var opensDroppedFile: ((URL) -> Bool)?
+    /// Stores images dropped on the note (files, data or file promises) and
+    /// answers, on the main thread, with one Markdown image link per image
+    /// added, in drop order (empty when none was). The editor inserts them at
+    /// the block boundary the drop line marked, mapped through any edit made
+    /// meanwhile, as one Undo step. Unset, images are not accepted.
+    public var onImportImages: ((MarkdownImageDrop, @escaping ([String]) -> Void) -> Void)?
+    /// Reports a file drag over the note: `.images` while the editor shows
+    /// its drop line, `.documents` for documents only, `nil` when it leaves,
+    /// drops or ends. Hosts use it to hide their own drop overlay for images.
+    public var onFileDragHover: ((MarkdownFileDragKind?) -> Void)?
 
     /// Fires when the user clicks a `[[Name]]` link. The argument is the
     /// resolved opaque identifier (or the display name when no resolver
@@ -184,6 +198,9 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         isEditable: Bool = true,
         onPasteImage: ((NSPasteboard) -> String?)? = nil,
         onDropDocuments: (([URL]) -> Bool)? = nil,
+        opensDroppedFile: ((URL) -> Bool)? = nil,
+        onImportImages: ((MarkdownImageDrop, @escaping ([String]) -> Void) -> Void)? = nil,
+        onFileDragHover: ((MarkdownFileDragKind?) -> Void)? = nil,
         onLinkClick: ((String) -> Void)? = nil,
         onOpenLocalLink: ((URL) -> Void)? = nil,
         onCaretRectChange: ((CGRect) -> Void)? = nil,
@@ -218,6 +235,9 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         self.isEditable = isEditable
         self.onPasteImage = onPasteImage
         self.onDropDocuments = onDropDocuments
+        self.opensDroppedFile = opensDroppedFile
+        self.onImportImages = onImportImages
+        self.onFileDragHover = onFileDragHover
         self.onLinkClick = onLinkClick
         self.onOpenLocalLink = onOpenLocalLink
         self.onCaretRectChange = onCaretRectChange
@@ -348,6 +368,9 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         textView.isAutomaticTextReplacementEnabled = configuration.inputSubstitution.automaticTextReplacement
         textView.onPasteImage = onPasteImage
         textView.onDropDocuments = onDropDocuments
+        textView.opensDroppedFile = opensDroppedFile
+        textView.onImportImages = onImportImages
+        textView.onFileDragHover = onFileDragHover
         if #available(macOS 15.1, *) {
             textView.writingToolsBehavior = .complete
             textView.allowedWritingToolsResultOptions = .plainText
@@ -401,6 +424,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         scrollView.reflectScrolledClipView(scrollView.contentView)
 
         coordinator.textView = textView
+        coordinator.installFolding(in: textView)
         coordinator.installFindRenderingValidator(in: textLayoutManager)
         coordinator.onCaretRectChange = onCaretRectChange
         coordinator.onInlineSelectionChange = onInlineSelectionChange
@@ -474,6 +498,12 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             // coordinator; the undo manager does not retain it.
             textView.undoManager?.removeAllActions(withTarget: coordinator)
         }
+        if let observer = coordinator.foldStorageObserver { NotificationCenter.default.removeObserver(observer) }
+        coordinator.foldStorageObserver = nil
+        coordinator.foldControls?.uninstall()
+        coordinator.foldControls = nil
+        coordinator.imageControls?.uninstall()
+        coordinator.imageControls = nil
         coordinator.cancelDocumentWork()
         if coordinator.editorController?.coordinator === coordinator {
             coordinator.editorController?.coordinator = nil
@@ -499,7 +529,10 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     public func updateNativeView(_ nsView: NSScrollView, coordinator: Coordinator) {
         PerfTrace.stamp("updateNSView.start")
         guard let textView = nsView.nativeTextView else { return }
-        defer { coordinator.reconcileSelectionBar(in: nsView) }
+        defer {
+            coordinator.reconcileSelectionBar(in: nsView)
+            coordinator.synchronizeFolding()
+        }
         let isNodeSwitch = coordinator.documentId != documentId
         let sourceChanged = !(coordinator.lastSyncedText as NSString).isEqual(to: text)
         let fontChanged = coordinator.fontName != fontName || coordinator.fontSize != fontSize
@@ -634,6 +667,9 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
 
         textView.onPasteImage = onPasteImage
         textView.onDropDocuments = onDropDocuments
+        textView.opensDroppedFile = opensDroppedFile
+        textView.onImportImages = onImportImages
+        textView.onFileDragHover = onFileDragHover
         textView.setPlaceholder(placeholder)
         coordinator.applyLayoutConfiguration(to: textView)
         let needsFullRestyle = presentationChanged
@@ -697,6 +733,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             // final offset, in doc coords, independent of the scale).
             projectMagnification(nsView)
             coordinator.documentId = documentId
+            coordinator.localFoldSession.reset()
             // Typing coalescing must never span documents.
             textView.breakUndoCoalescing()
             // With host-supplied PER-DOCUMENT managers each document keeps its

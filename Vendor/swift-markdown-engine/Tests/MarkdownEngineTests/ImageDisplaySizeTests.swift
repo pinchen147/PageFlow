@@ -2,8 +2,9 @@
 //  ImageDisplaySizeTests.swift
 //  MarkdownEngineTests
 //
-//  How an embedded image is sized: never upscaled, capped by the column width
-//  and by a maximum height, a requested width honoured within those caps.
+//  How an image is sized: without a width token never upscaled, capped by the
+//  column width and by a maximum height; with one, that width within the
+//  column and no height cap (doc 26 §2.5).
 //
 
 import CoreGraphics
@@ -29,22 +30,24 @@ struct ImageDisplaySizeTests {
         #expect(small == CGSize(width: 120, height: 80))
     }
 
-    @Test("a requested width wins within the caps")
+    @Test("an explicit width is the author's size: the column caps it, the height cap does not")
     func requestedWidth() {
         let asked = style.displaySize(natural: CGSize(width: 1_206, height: 2_622), requestedWidth: 200, maxWidth: 700)
         #expect(asked.width == 200)
-        let tooTall = style.displaySize(natural: CGSize(width: 1_000, height: 4_000), requestedWidth: 600, maxWidth: 700)
-        #expect(tooTall.height == 480, "the height cap still holds")
+        let portrait = style.displaySize(natural: CGSize(width: 1_170, height: 2_532), requestedWidth: 600, maxWidth: 700)
+        #expect(portrait.width == 600, "width honoured")
+        #expect(abs(portrait.height - 600 * 2_532 / 1_170) < 0.01, "height from the aspect ratio, past 480")
         let tooWide = style.displaySize(natural: CGSize(width: 1_000, height: 100), requestedWidth: 5_000, maxWidth: 700)
         #expect(tooWide.width == 700)
+        let upscaled = style.displaySize(natural: CGSize(width: 100, height: 50), requestedWidth: 300, maxWidth: 700)
+        #expect(upscaled == CGSize(width: 300, height: 150), "an explicit width may upscale")
     }
 
-    @Test("`![alt|300](url)` asks for 300 points; anything else asks for nothing")
-    func altWidthSuffix() {
-        #expect(MarkdownStyler.requestedWidth(inAlt: "photo|300") == 300)
-        #expect(MarkdownStyler.requestedWidth(inAlt: "a|b|250 ") == 250)
-        #expect(MarkdownStyler.requestedWidth(inAlt: "photo") == nil)
-        #expect(MarkdownStyler.requestedWidth(inAlt: "photo|big") == nil)
-        #expect(MarkdownStyler.requestedWidth(inAlt: "photo|0") == nil)
+    @Test("an explicit width is at least 40 (the resize minimum), not the 50 of a natural size")
+    func explicitMinimum() {
+        let tiny = style.displaySize(natural: CGSize(width: 400, height: 200), requestedWidth: 30, maxWidth: 700)
+        #expect(tiny == CGSize(width: 40, height: 20))
+        let natural = style.displaySize(natural: CGSize(width: 30, height: 30), maxWidth: 700)
+        #expect(natural.width == 50, "no token: today's 50 minimum stands")
     }
 }

@@ -213,6 +213,7 @@ struct PDFTabView: View {
                     tabManager.openFilePicker()
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .padding(.horizontal, DesignTokens.spacingMD)
                 .padding(.vertical, DesignTokens.spacingSM)
                 .pageFlowLiquidGlassPanel(.primaryButton)
@@ -221,6 +222,7 @@ struct PDFTabView: View {
                     tabManager.newMarkdownDocument()
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .padding(.horizontal, DesignTokens.spacingMD)
                 .padding(.vertical, DesignTokens.spacingSM)
                 .pageFlowLiquidGlassPanel(.primaryButton)
@@ -248,6 +250,7 @@ struct PDFTabView: View {
                 .pageFlowLiquidGlassSurface(.pageIndicator)
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 10, y: -3)
         .padding(.bottom, DesignTokens.spacingXS)
         .padding(.trailing, DesignTokens.spacingMD)

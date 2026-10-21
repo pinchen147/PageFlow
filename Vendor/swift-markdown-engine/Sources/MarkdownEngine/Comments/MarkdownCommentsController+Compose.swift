@@ -112,7 +112,8 @@ extension MarkdownCommentsController {
         let height = composer.fittingHeight(forWidth: width)
         let railHeight = scrollView.bounds.height - scrollView.contentInsets.top
         var y: CGFloat = 8
-        if let draft = store.draft, let rect = segmentRects(for: NSRange(location: draft.range.location, length: min(1, draft.range.length)), in: main).first {
+        if let draft = store.draft, let rect = imageRect(draft.range, in: main)
+            ?? segmentRects(for: NSRange(location: draft.range.location, length: min(1, draft.range.length)), in: main).first {
             let inScroll = main.convert(rect, to: scrollView)
             y = (scrollView.isFlipped ? inScroll.minY : scrollView.bounds.height - inScroll.maxY) - scrollView.contentInsets.top
         }

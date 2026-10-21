@@ -111,6 +111,7 @@ extension NativeTextViewCoordinator {
             textView.restore(position)
         }
         applyPendingReadingPosition(scrollView: scrollView, textView: textView)
+        foldControls?.refresh()
     }
 
     // MARK: - Observers
@@ -170,6 +171,7 @@ extension NativeTextViewCoordinator {
             // reconcile trigger (see realignWideTableOverlays).
             textView.realignWideTableOverlays()
             coordinator.selectionBar?.reposition()
+            coordinator.foldControls?.refresh()
         }
         viewObserverTokens = [frameObserver, boundsObserver]
     }

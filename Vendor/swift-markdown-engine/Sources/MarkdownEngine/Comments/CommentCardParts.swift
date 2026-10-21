@@ -35,7 +35,7 @@ final class CommentTextButton: NSView {
     let title: String
     let style: Style
     var onPress: (() -> Void)?
-    var isEnabled = true { didSet { needsDisplay = true } }
+    var isEnabled = true { didSet { needsDisplay = true; window?.invalidateCursorRects(for: self) } }
     private var isHovered = false { didSet { if isHovered != oldValue { needsDisplay = true } } }
     var hasKeyboardFocus = false { didSet { if hasKeyboardFocus != oldValue { needsDisplay = true } } }
 
@@ -97,7 +97,11 @@ final class CommentTextButton: NSView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
+        trackActionCursor()
     }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: isEnabled ? .pointingHand : .arrow) }
+    override func cursorUpdate(with event: NSEvent) { (isEnabled ? NSCursor.pointingHand : .arrow).set() }
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
@@ -178,7 +182,11 @@ final class CommentReactionPill: NSView {
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
+        trackActionCursor()
     }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }

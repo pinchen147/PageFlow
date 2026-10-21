@@ -530,6 +530,7 @@ private struct ThumbnailCellView: View {
             pdfManager.pushNavigationState()
             pdfManager.goToPage(pageIndex)
         }
+        .pointerStyle(isDragging ? .grabActive : (isEditing ? .grabIdle : .link))
         .contextMenu { contextMenu }
         .task(id: thumbnailLoadID(revision: thumbnailRevision)) {
             await loadThumbnail(revision: thumbnailRevision)
@@ -679,8 +680,6 @@ private struct ThumbnailCellView: View {
     }
 
     private func copyPageAsMarkdown() {
-        guard pdfManager.permissions.copy, let document = pdfManager.document else { return }
-        let markdown = MarkdownExporter.export(scope: .currentPage(pageIndex), document: document)
-        MarkdownExporter.copyToClipboard(markdown)
+        pdfManager.copyMarkdown(scope: .currentPage(pageIndex))
     }
 }

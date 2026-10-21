@@ -93,6 +93,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         onClick: @escaping (TabBarClickTarget) -> Void
     ) {
         let layoutChanged = self.tabFrames != tabFrames || self.activeTabID != activeTabID
+            || self.newTabButtonFrame != newTabButtonFrame
         self.tabManagerRef = tabManager
         self.tabFrames = tabFrames
         self.newTabButtonFrame = newTabButtonFrame
@@ -101,7 +102,10 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         self.onHover = onHover
         self.onClick = onClick
         registerIfReady()
-        if layoutChanged { scheduleHoverRefresh() }
+        if layoutChanged {
+            window?.invalidateCursorRects(for: self)
+            scheduleHoverRefresh()
+        }
     }
 
     // MARK: - View Lifecycle
@@ -160,7 +164,7 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         }
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.activeInActiveApp, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            options: [.activeInActiveApp, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved, .cursorUpdate],
             owner: self,
             userInfo: nil
         )
@@ -182,6 +186,19 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
             return self
         }
         return nil
+    }
+
+    override func resetCursorRects() {
+        for frame in Array(tabFrames.values) + [newTabButtonFrame] {
+            let visible = bounds.intersection(frame)
+            if !visible.isEmpty { addCursorRect(visible, cursor: .pointingHand) }
+        }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard !TabDragController.shared.isActive else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        (bounds.contains(point) && clickTarget(at: point) != nil ? NSCursor.pointingHand : .arrow).set()
     }
 
     // MARK: - Hover

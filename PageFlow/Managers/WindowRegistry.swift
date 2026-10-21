@@ -191,12 +191,28 @@ final class WindowRegistry {
 
     /// Lands every admitted save in every window before quit judges dirty state:
     /// approving termination must never cut a background write short.
+    var hasPendingDocumentWrites: Bool {
+        entries.values.contains { entry in
+            entry.window != nil && entry.tabManager.hasPendingDocumentWrites
+        }
+    }
+
     func finishAllPendingWrites() {
         for entry in entries.values where entry.window != nil {
             for session in entry.tabManager.sessions.values {
                 session.content.document.finishPendingWrites()
             }
         }
+    }
+
+    /// Approved quit must not resurrect drafts that the owner saved/discarded.
+    func retireMarkdownRecoveryCopies() {
+        for entry in entries.values where entry.window != nil {
+            for session in entry.tabManager.sessions.values {
+                session.content.markdown?.recoverySession?.retire()
+            }
+        }
+        MarkdownRecoveryStore.shared.flush()
     }
 
     // MARK: - Session Restore (S8 P1)
@@ -279,13 +295,27 @@ final class WindowRegistry {
         return false
     }
 
+    /// A local-link continuation can await an open deduplicated into another window.
+    func pendingMarkdownOpenTask(for url: URL) -> Task<Void, Never>? {
+        for entry in entries.values where entry.window != nil {
+            if let id = entry.tabManager.tabID(for: url),
+               let request = entry.tabManager.sessions[id]?.pendingMarkdownOpen {
+                return request.task
+            }
+        }
+        return nil
+    }
+
     /// Activates an existing tab for the given URL if already open. Returns
     /// `true` if handled (caller should not create a new tab/window).
-    func activateExistingDocument(for url: URL) -> Bool {
+    func activateExistingDocument(for url: URL, bringsToFront: Bool = true, pdfPageIndex: Int? = nil) -> Bool {
         let canonicalURL = url.pageFlowCanonicalDocumentURL
         if let (owner, session) = pendingSaveAsOwner(for: canonicalURL) {
             owner.selectTab(session.id)
-            bringToFront(for: owner)
+            if let pdfPageIndex, let pdf = session.pdfManager, let sourceURL = pdf.documentURL {
+                pdf.followPageLink(pdfPageIndex, for: sourceURL)
+            }
+            if bringsToFront { bringToFront(for: owner) }
             return true
         }
         let match: (TabManager, UUID, NSWindow?)? = {
@@ -299,7 +329,9 @@ final class WindowRegistry {
         }()
 
         guard let (tabManager, tabID, _) = match else { return false }
-        activate(tabID, in: tabManager)
+        if bringsToFront { activate(tabID, in: tabManager) }
+        else { tabManager.selectTab(tabID) }
+        tabManager.followPDFPageLink(pdfPageIndex, to: url)
         return true
     }
 
@@ -445,6 +477,12 @@ final class WindowRegistry {
     }
 
     private func bringWindowToFront(_ window: NSWindow?) {
+        #if DEBUG
+        if QAPresentation.runsInBackground {
+            if let window { QAPresentation.show(window) }
+            return
+        }
+        #endif
         // Raise the target window FIRST, so the opened document's first paint never
         // waits on app-level activation timing.
         if let window {

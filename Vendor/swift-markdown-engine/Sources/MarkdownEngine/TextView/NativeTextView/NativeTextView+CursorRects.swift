@@ -4,7 +4,8 @@
 //
 //  Created by Luca Chen on 27.05.26.
 //
-//  Read-only cursor handling: arrow over text, pointing hand over links.
+//  Cursor handling: read-only, an arrow over text and a pointing hand over
+//  links; editing, an arrow over rendered images (doc 26 §3.5).
 //
 
 import AppKit
@@ -12,13 +13,32 @@ import AppKit
 extension NativeTextView {
 
     override func mouseMoved(with event: NSEvent) {
+        // Images and their handles are not text hit targets. AppKit's text
+        // hover path can synchronously lay out the note before we replace its
+        // cursor, so let the rendered object consume the event first.
+        guard (delegate as? NativeTextViewCoordinator)?.foldControls?.applyCursor(for: event) != true,
+              !applyImageCursor(for: event) else { return }
+#if DEBUG
+        let hoverStart = CFAbsoluteTimeGetCurrent()
+#endif
         super.mouseMoved(with: event)
+#if DEBUG
+        PerfTrace.add("hover.nativeSuper", since: hoverStart)
+#endif
         applyReadOnlyCursor(for: event)
     }
 
     override func mouseEntered(with event: NSEvent) {
+        guard (delegate as? NativeTextViewCoordinator)?.foldControls?.applyCursor(for: event) != true,
+              !applyImageCursor(for: event) else { return }
         super.mouseEntered(with: event)
         applyReadOnlyCursor(for: event)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard (delegate as? NativeTextViewCoordinator)?.foldControls?.applyCursor(for: event) != true,
+              !applyImageCursor(for: event) else { return }
+        super.cursorUpdate(with: event)
     }
 
     /// In read-only mode, override NSTextView's I-beam: pointing hand over a
