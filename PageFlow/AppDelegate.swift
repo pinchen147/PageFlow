@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         super.init()
         AppDelegate.shared = self
+        let recentFiles = recentFilesManager
+        windowContentBuilder = { tabManager in
+            AnyView(TabContainerView(tabManager: tabManager).environment(recentFiles))
+        }
     }
 
     struct PendingDocumentOpen {
@@ -30,14 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private let firstLaunchManager = FirstLaunchManager()
+    let recentFilesManager = RecentFilesManager()
+    private var didFinishLaunching = false
+    private var recoveryRestoreTask: Task<Void, Never>?
+    private var terminationTask: Task<Void, Never>?
     private(set) var terminationApproved = false
     private var windowControllers: [NSWindowController] = []
     private var windowCloseObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
 
     /// Builds the SwiftUI root view for a new window, wrapping the passed-in
-    /// (pre-populated) TabManager. Set once by `PageFlowApp` at launch. Nil
-    /// means "a window was requested before PageFlowApp installed the builder"
-    /// — which should never happen, but if it does we fail loud.
+    /// (pre-populated) TabManager. Installed before any scene appears so a
+    /// Finder launch can create its document window without a default scene.
     var windowContentBuilder: ((TabManager) -> AnyView)?
 
     /// URLs received before any TabManager registered (cold launch from Finder)
@@ -140,7 +147,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let originalAnimationBehavior = window.animationBehavior
         defer { window.animationBehavior = originalAnimationBehavior }
         if !animatePresentation { window.animationBehavior = .none }
+        #if DEBUG
+        if QAPresentation.runsInBackground { QAPresentation.show(window) }
+        else { windowController.showWindow(nil) }
+        #else
         windowController.showWindow(nil)
+        #endif
         return window
     }
 
@@ -155,7 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         animatePresentation: Bool = true
     ) -> NSWindow? {
         guard let builder = windowContentBuilder else {
-            assertionFailure("windowContentBuilder not installed — PageFlowApp.onAppear didn't fire")
+            assertionFailure("windowContentBuilder not installed")
             return nil
         }
         return createNewWindow(with: builder(tabManager), screenPoint: screenPoint, frame: frame,
@@ -163,17 +175,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        firstLaunchManager.handleFirstLaunch()
+        #if DEBUG
+        QAPresentation.prepare()
+        #endif
+        if !TestEnvironment.isRunningTests { firstLaunchManager.handleFirstLaunch() }
         ShortcutMenuRefresh.install()
         #if DEBUG
         RestoreOpenQA.prepareIfRequested(delegate: self)
         #endif
         restorePreviousSessionIfNeeded()
+        didFinishLaunching = true
+        openPendingDocumentWindowIfNeeded()
+        flushPendingRestoreWindows()
+        restoreUnsavedMarkdownCopies()
         #if DEBUG
         WindowCloseQA.startIfRequested()
         OpenDocumentQA.startIfRequested()
         QAReplay.startIfRequested()
+        RecoveryQA.startIfRequested(delegate: self, recoveryTask: recoveryRestoreTask)
         #endif
+    }
+
+    private func restoreUnsavedMarkdownCopies() {
+        guard !TestEnvironment.isRunningTests else { return }
+        #if DEBUG
+        if !RecoveryQA.isRequested, QAPresentation.runsInBackground || QAReplay.isRequested || WindowCloseQA.isRequested { return }
+        #endif
+        recoveryRestoreTask = Task { [weak self] in
+            let records = await MarkdownRecoveryStore.shared.load()
+            guard !Task.isCancelled, let self, !records.isEmpty, !self.terminationApproved else { return }
+            let manager = TabManager()
+            for record in records { manager.restoreRecoveredMarkdown(record) }
+            guard let window = self.createNewWindow(with: manager) else { return }
+            WindowRegistry.shared.register(manager, window: window)
+            manager.postTransientToast("Recovered \(records.count) unsaved note(s). Save to keep these copies.")
+            WindowRegistry.shared.dismissTransientPlaceholderWindowForExternalOpen()
+        }
     }
 
     /// The v1 external-change hook (ADR-0012 D5, S9): when PageFlow returns to the
@@ -254,8 +291,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Materializes every buffered restore window UNIFORMLY (S8 P1, review M2/L2).
-    /// Called from `PageFlowApp.onAppear` right AFTER `windowContentBuilder` is
-    /// installed. Each saved window opens its bookmark-resolved files into a fresh
+    /// Called after launch URLs have a registered destination. Each saved
+    /// window opens its bookmark-resolved files into a fresh
     /// pre-populated `TabManager` (the tear-off pattern) and selects the saved
     /// active tab — the first window is no longer a special-cased path. A file that
     /// is already open elsewhere (e.g. a Finder launch-open in the default window)
@@ -316,7 +353,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let activeURL, let activeID = tabManager.tabID(for: activeURL) {
             tabManager.selectTab(activeID)
         }
-        createNewWindow(with: tabManager)
+        guard let nativeWindow = createNewWindow(with: tabManager) else { return false }
+        WindowRegistry.shared.register(tabManager, window: nativeWindow)
         return true
     }
 
@@ -352,6 +390,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if reroutedIntoExistingWindow {
             WindowRegistry.shared.dismissTransientPlaceholderWindowForExternalOpen()
         }
+        openPendingDocumentWindowIfNeeded()
+    }
+
+    /// File launches can suppress SwiftUI's initial WindowGroup entirely.
+    /// Register a hosted window before draining its queue so restore and later
+    /// Finder events see the same document owner immediately.
+    private func openPendingDocumentWindowIfNeeded() {
+        guard didFinishLaunching, !pendingDocumentOpens.isEmpty else { return }
+        if let manager = WindowRegistry.shared.anyTabManager() {
+            flushPendingURLs(to: manager)
+            return
+        }
+        let manager = TabManager()
+        manager.documentOpenedHandler = { [recentFilesManager] url, isSecurityScoped in
+            recentFilesManager.addRecentFile(url, isSecurityScoped: isSecurityScoped)
+        }
+        guard let window = createNewWindow(with: manager) else { return }
+        WindowRegistry.shared.register(manager, window: window)
+        flushPendingURLs(to: manager)
+        WindowRegistry.shared.dismissTransientPlaceholderWindowForExternalOpen()
     }
 
     /// Delivers launch URLs only after this manager is visible to cross-window
@@ -372,11 +430,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        terminationApproved = false
+        WindowRegistry.shared.flushAllViewState()
         // Test host: never block termination behind the save prompt — a modal
         // alert in a headless host turns finished test runs into zombies.
         if TestEnvironment.isRunningTests { return approveTermination() }
+        guard terminationTask == nil else { return .terminateLater }
+        WindowRegistry.shared.flushAllEditors()
+        let owners = WindowRegistry.shared.allOpenTabs().map(\.tabManager)
+        guard owners.contains(where: { $0.needsCloseApproval }) else { return approveTermination() }
+        terminationTask = Task { @MainActor [weak self] in
+            guard let self else { sender.reply(toApplicationShouldTerminate: false); return }
+            let owner = WindowRegistry.shared.frontmostTabManager() ?? WindowRegistry.shared.anyTabManager()
+            let sheet = DocumentCloseWaitSheet(window: owner.flatMap { WindowRegistry.shared.window(for: $0) }, quitting: true) { [weak self] in
+                self?.terminationTask?.cancel()
+            }
+            let result = await self.confirmTerminationInBackground()
+            sheet.finish()
+            self.terminationTask = nil
+            sender.reply(toApplicationShouldTerminate: result == .terminateNow)
+        }
+        return .terminateLater
+    }
 
+    func confirmTermination(using prompt: DocumentClosePrompt? = nil) -> NSApplication.TerminateReply {
+        terminationApproved = false
         // Reconcile every markdown editor's live text into its durable document
         // BEFORE the dirty gate reads it (fork P1) — the engine commits keystrokes
         // on a ~1s deferred binding write, so a tab edited just before ⌘Q would
@@ -393,6 +470,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return approveTermination()
         }
 
+        var approval = TerminationApproval()
+        let decision = prompt?.decide(firstDirty.title) ?? presentTerminationDecision(dirtyDocs)
+        guard approval.matches() else { return .terminateCancel }
+        switch decision {
+        case .save:
+            var failedTitles: [String] = []
+            for doc in dirtyDocs {
+                guard approval.matches() else { return .terminateCancel }
+                var didSave = false
+                if doc.needsSaveAs {
+                    // A dirty untitled Markdown buffer: route to a synchronous
+                    // Save-As panel. A cancelled panel cancels termination (the
+                    // buffer is preserved unsaved) — never silently discarded.
+                    // Untitled buffers look alike, so show whose panel this is.
+                    doc.reveal()
+                    switch runSyncSaveAs(for: doc, using: prompt, whileApproved: { approval.matches() },
+                                         didAdoptImages: { approval.acceptImageAdoption(of: doc.tabID) }) {
+                    case .saved: didSave = true
+                    case .cancelled: return .terminateCancel
+                    case .failed: failedTitles.append(doc.title)
+                    }
+                } else {
+                    didSave = doc.saveSync(whileApproved: { approval.matches() })
+                    if !didSave { failedTitles.append(doc.title) }
+                }
+                if didSave, !approval.acceptSave(of: doc.tabID) { return .terminateCancel }
+                if !didSave, !approval.matches() { return .terminateCancel }
+            }
+
+            guard failedTitles.isEmpty else {
+                showSaveFailureAlert(titles: failedTitles)
+                return .terminateCancel
+            }
+            guard approval.matches(), WindowRegistry.shared.allDirtyDocuments().isEmpty else { return .terminateCancel }
+            return approveTermination()
+        case .discard:
+            return approveTermination()
+        default:
+            return .terminateCancel
+        }
+    }
+
+    /// Native quit uses the same source/membership approval as modal boundaries,
+    /// but user-document writes and their barriers never wait on the UI actor.
+    func confirmTerminationInBackground(using prompt: DocumentClosePrompt? = nil) async -> NSApplication.TerminateReply {
+        terminationApproved = false
+        let registry = WindowRegistry.shared
+        registry.flushAllEditors()
+        var approval = TerminationApproval()
+        let groups = registry.allOpenTabs()
+        for group in groups {
+            for tab in group.tabs {
+                guard !Task.isCancelled, approval.matchesInitialWrites(), let session = group.tabManager.sessions[tab.id] else { return .terminateCancel }
+                if session.content.document.hasPendingWrites {
+                    guard await DocumentCloseOperation.wait({ _ in await session.content.document.finishPendingWritesInBackground(); return true }) == true,
+                          !Task.isCancelled else { return .terminateCancel }
+                }
+            }
+        }
+        guard !Task.isCancelled, !registry.hasPendingDocumentWrites, approval.acceptInitialWrites() else { return .terminateCancel }
+        for group in groups {
+            for tab in group.tabs {
+                if let session = group.tabManager.sessions[tab.id] { group.tabManager.publishSavedDocumentIdentity(session) }
+            }
+        }
+        registry.flushAllViewState()
+        let dirty = registry.allDirtyDocuments()
+        guard let first = dirty.first else { return approveTermination() }
+        let decision = prompt?.decide(first.title) ?? presentTerminationDecision(dirty)
+        guard !Task.isCancelled, approval.matches(), !registry.hasPendingDocumentWrites else { return .terminateCancel }
+        switch decision {
+        case .cancel: return .terminateCancel
+        case .discard: return approveTermination()
+        case .save:
+            let savePrompt = DocumentClosePrompt(decide: { _ in .save }, saveURL: { title in
+                prompt.map { $0.saveURL(title) } ?? MarkdownSavePanel.runModal(defaultName: title)
+            })
+            for document in dirty {
+                guard !Task.isCancelled, approval.matches(),
+                      await document.saveForCloseInBackground(using: savePrompt,
+                          whileApproved: { approval.matches() },
+                          didAdoptImages: { approval.acceptImageAdoption(of: document.tabID) }),
+                      !Task.isCancelled, approval.acceptSave(of: document.tabID) else { return .terminateCancel }
+            }
+            guard approval.matches(), !registry.hasPendingDocumentWrites, registry.allDirtyDocuments().isEmpty else { return .terminateCancel }
+            return approveTermination()
+        }
+    }
+
+    private func presentTerminationDecision(_ dirtyDocs: [DirtyDoc]) -> DocumentClosePrompt.Decision {
+        let firstDirty = dirtyDocs[0]
         let alert = NSAlert()
         alert.icon = NSApp.applicationIconImage
         alert.messageText = "Do you want to save changes before quitting?"
@@ -408,40 +576,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Don't Save")
 
         switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            var failedTitles: [String] = []
-            for doc in dirtyDocs {
-                if doc.needsSaveAs {
-                    // A dirty untitled Markdown buffer: route to a synchronous
-                    // Save-As panel. A cancelled panel cancels termination (the
-                    // buffer is preserved unsaved) — never silently discarded.
-                    // Untitled buffers look alike, so show whose panel this is.
-                    doc.reveal()
-                    switch runSyncSaveAs(for: doc) {
-                    case .saved: continue
-                    case .cancelled: return .terminateCancel
-                    case .failed: failedTitles.append(doc.title)
-                    }
-                } else if !doc.saveSync() {
-                    failedTitles.append(doc.title)
-                }
-            }
-
-            guard failedTitles.isEmpty else {
-                showSaveFailureAlert(titles: failedTitles)
-                return .terminateCancel
-            }
-            return approveTermination()
-        case .alertThirdButtonReturn:
-            return approveTermination()
-        default:
-            return .terminateCancel
+        case .alertFirstButtonReturn: return .save
+        case .alertThirdButtonReturn: return .discard
+        default: return .cancel
         }
     }
 
     private func approveTermination() -> NSApplication.TerminateReply {
         // Save As may have created file identities while quit panels were open.
-        if !TestEnvironment.isRunningTests { WindowRegistry.shared.persistSessionNow() }
+        if !TestEnvironment.isRunningTests {
+            WindowRegistry.shared.persistSessionNow()
+            recoveryRestoreTask?.cancel()
+            WindowRegistry.shared.retireMarkdownRecoveryCopies()
+        }
         terminationApproved = true
         return .terminateNow
     }
@@ -453,9 +600,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Routes through the shared `MarkdownSavePanel` builder so the allowed types +
     /// default-name rule match ⌘⇧S exactly (AppDelegate stays unaware of the
     /// markdown UTTypes).
-    private func runSyncSaveAs(for doc: DirtyDoc) -> SyncSaveAsOutcome {
-        guard let url = MarkdownSavePanel.runModal(defaultName: doc.title) else { return .cancelled }
-        return doc.saveAsSync(to: url, isSecurityScoped: true) ? .saved : .failed
+    private func runSyncSaveAs(for doc: DirtyDoc, using prompt: DocumentClosePrompt?, whileApproved: () -> Bool,
+                               didAdoptImages: () -> Bool) -> SyncSaveAsOutcome {
+        let selectedURL = prompt.map { $0.saveURL(doc.title) } ?? MarkdownSavePanel.runModal(defaultName: doc.title)
+        guard let url = selectedURL, whileApproved() else { return .cancelled }
+        return doc.saveAsSync(to: url, isSecurityScoped: true, whileApproved: whileApproved,
+                              didAdoptImages: didAdoptImages) ? .saved : .failed
     }
 
     private func showSaveFailureAlert(titles: [String]) {

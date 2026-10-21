@@ -79,6 +79,21 @@ struct TextFileCodecTests {
         #expect(decoded.text.isEmpty)
     }
 
+    @Test
+    func newlineNormalizationPreservesUnicodeAndMixedEndingTieRules() {
+        let cases: [(String, String, LineEnding)] = [
+            ("e\u{301}\r\n二\u{2028}😀\rZ\n", "e\u{301}\n二\u{2028}😀\nZ\n", .crlf),
+            ("a\r\r\nb\n\n", "a\n\nb\n\n", .lf),
+            ("\u{2028}\u{2029}\u{0085}é", "\u{2028}\u{2029}\u{0085}é", .lf),
+            ("😀\ré\r", "😀\né\n", .cr)
+        ]
+        for (input, expected, ending) in cases {
+            let decoded = TextFileCodec.decode(Data(input.utf8))
+            #expect(Array(decoded.text.utf8) == Array(expected.utf8))
+            #expect(decoded.fidelity.lineEnding == ending)
+        }
+    }
+
     // MARK: - Damaged UTF-8
 
     @Test

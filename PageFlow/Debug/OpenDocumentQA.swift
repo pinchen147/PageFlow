@@ -9,7 +9,11 @@ enum OpenDocumentQA {
 
     static func startIfRequested() {
         guard isRequested else { return }
-        Task { await run() }
+        if ProcessInfo.processInfo.environment["PAGEFLOW_QA_PDF_MODE"] != nil {
+            Task { await PDFOpenQA.run() }
+        } else {
+            Task { await run() }
+        }
     }
 
     private struct WindowState: Codable {
@@ -95,7 +99,10 @@ enum OpenDocumentQA {
     private static func run() async {
         guard !TestEnvironment.isRunningTests, !QAReplay.isRequested, !WindowCloseQA.isRequested,
               let delegate = AppDelegate.shared else { finish([], errors: ["Standalone OpenDocumentQA required"]) }
-        NSApp.activate(ignoringOtherApps: true)
+        guard !QAPresentation.runsInBackground else {
+            finish([], errors: ["Deferred: external-open owner routing requires a foreground key/main window; background policy forbids activation"])
+        }
+        QAPresentation.activateIfAllowed()
         guard let initial = await initialWindow() else { finish([], errors: ["Initial WindowGroup placeholder did not register"]) }
         let mountObserved = Date()
         guard initial.tabManager.hasOnlyPlaceholderTab, initial.window.attachedSheet == nil,
@@ -138,7 +145,7 @@ enum OpenDocumentQA {
         let oldTabID = owner.activeTabID
         let watcher = PanelWatcher()
         watcher.start()
-        window.makeKeyAndOrderFront(nil)
+        QAPresentation.show(window)
         window.makeMain()
         await sleep(0.1)
         result.before = snapshot()
@@ -156,6 +163,7 @@ enum OpenDocumentQA {
         guard result.qualified else { watcher.stop(); result.panelEvents = watcher.events; return result }
         let started = Date()
         delegate.application(NSApp, open: duplicateBatch ? [url, url] : [url])
+        await oldTabID.flatMap { owner.sessions[$0]?.pendingMarkdownOpen?.task }?.value
         let openedSession = owner.activeSession
         // A second actual callback must also deduplicate the same canonical file.
         delegate.application(NSApp, open: [url])
@@ -194,7 +202,7 @@ enum OpenDocumentQA {
             guard Date() < deadline else { return false }
             await sleep(0.02)
         }
-        window.makeKeyAndOrderFront(nil)
+        QAPresentation.show(window)
         window.makeMain()
         WindowChromeController.attached(to: window)?.setTrafficLightsVisible(true, animated: false)
         while window.standardWindowButton(.closeButton)?.isEnabled != true {

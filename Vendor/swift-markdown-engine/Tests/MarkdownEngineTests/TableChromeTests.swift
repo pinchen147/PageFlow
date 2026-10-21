@@ -73,6 +73,12 @@ struct TableChromeTests {
     func hoverIsDrawOnly() async throws {
         let (editor, chrome) = try await mount()
         defer { editor.close() }
+        // Hover chrome is intentionally suppressed during a physical drag,
+        // including one in another app while this fixture runs behind it.
+        for _ in 0..<100 where NSEvent.pressedMouseButtons & 1 != 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(NSEvent.pressedMouseButtons & 1 == 0, "hover qualification requires the mouse button to be up")
         let storage = try #require(editor.main.textStorage)
         var edits = 0
         let observer = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage,
@@ -81,8 +87,14 @@ struct TableChromeTests {
         let tlm = try #require(editor.main.textLayoutManager)
         var before: [ObjectIdentifier] = []
         tlm.enumerateTextLayoutFragments(from: tlm.documentRange.location, options: []) { before.append(ObjectIdentifier($0)); return true }
-        let start = try cellCenter(editor, row: 1, column: 0)
-        for step in 0..<50 { chrome.hover(at: NSPoint(x: start.x + CGFloat(step % 25) * 4, y: start.y + CGFloat(step / 25) * 30)) }
+        let starts = try [cellCenter(editor, row: 1, column: 0), cellCenter(editor, row: 2, column: 0)]
+        let ends = try [cellCenter(editor, row: 1, column: 2), cellCenter(editor, row: 2, column: 2)]
+        for step in 0..<50 {
+            let row = step / 25
+            let fraction = CGFloat(step % 25) / 24
+            chrome.hover(at: NSPoint(x: starts[row].x + (ends[row].x - starts[row].x) * fraction,
+                                     y: starts[row].y))
+        }
         var after: [ObjectIdentifier] = []
         tlm.enumerateTextLayoutFragments(from: tlm.documentRange.location, options: []) { after.append(ObjectIdentifier($0)); return true }
         #expect(edits == 0)
@@ -91,7 +103,7 @@ struct TableChromeTests {
         #expect(chrome.view.hovered?.row == 2)
         #expect(chrome.view.showsAddRow, "a last-row cell shows the add-row bar")
         #expect(editor.coordinator.tableActions?.hoveredTable == chrome.table)
-        chrome.hover(at: NSPoint(x: start.x, y: 4))
+        chrome.hover(at: NSPoint(x: starts[0].x, y: 4))
         #expect(chrome.view.isHidden, "a point outside the wrapper removes it")
         #expect(editor.coordinator.tableActions?.hoveredTable == nil)
     }

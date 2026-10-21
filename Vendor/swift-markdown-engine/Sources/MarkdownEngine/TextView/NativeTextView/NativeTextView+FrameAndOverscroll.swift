@@ -65,7 +65,7 @@ extension NativeTextView {
     /// supply `mapPin` so the measurement follows the same source paragraph
     /// through inserted or removed text. Resolve the mapped location against
     /// the current source length, which can differ from the captured source.
-    func preservingViewportAnchor(settle: (Int) -> Void = { _ in }, mapPin: ((Int) -> Int)? = nil, tag: String = "pin", _ body: () -> Void) {
+    func preservingViewportAnchor(anchorLocation: Int? = nil, settle: (Int) -> Void = { _ in }, mapPin: ((Int) -> Int)? = nil, tag: String = "pin", _ body: () -> Void) {
         if mapPin == nil, continueBulkViewportAnchor(body) { return }
         guard let scrollView = enclosingScrollView,
               let bridge = layoutBridge,
@@ -136,7 +136,7 @@ extension NativeTextView {
         // (Broken out of the original `if let y = pinY(pinLoc)` so the trace can
         //  report whether pinY(caret) was nil and whether the fallback ran; the
         //  control flow is identical to the old two-branch form.)
-        let caretLoc = min(max(0, selectedRange().location), ns.length - 1)
+        let caretLoc = min(max(0, anchorLocation ?? selectedRange().location), ns.length - 1)
         let caretY = lineY(caretLoc)
         #if DEBUG
         anchorCensusTrace("pin.afterCaretLineY")
@@ -241,7 +241,9 @@ extension NativeTextView {
             return
         }
         let delta = (afterY - beforeOffset) - visibleRect.minY
-        let willCorrect = abs(delta) > 0.5
+        // A half point is a full backing pixel on Retina. Ignoring equality
+        // lets repeated native clip adjustments accumulate visible drift.
+        let willCorrect = abs(delta) >= 0.5
         #if DEBUG
         anchorTrace(
             "ANCHOR[\(tag)]: pinLoc=\(pinLoc) caretLoc=\(caretLoc) usedFallback=\(!caretOnScreen) "

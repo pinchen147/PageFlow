@@ -49,6 +49,7 @@ struct ShortcutsSettingsTab: View {
                     SettingsManager.shared.resetShortcuts()
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .padding(.horizontal, DesignTokens.spacingMD)
                 .padding(.vertical, DesignTokens.spacingXS)
                 .pageFlowLiquidGlassSurface(.settingsRow)
@@ -93,6 +94,7 @@ struct ShortcutRow: View {
                         confirmShortcut()
                     }
                     .buttonStyle(.plain)
+                    .pageFlowClickCursor()
                     .padding(.horizontal, DesignTokens.spacingSM)
                     .padding(.vertical, DesignTokens.spacingXS)
                     .pageFlowLiquidGlassSurface(.settingsAction(enabled: canConfirm, activeTint: 0.10))
@@ -102,6 +104,7 @@ struct ShortcutRow: View {
                         cancelRecording()
                     }
                     .buttonStyle(.plain)
+                    .pageFlowClickCursor()
                     .padding(.horizontal, DesignTokens.spacingSM)
                     .padding(.vertical, DesignTokens.spacingXS)
                     .pageFlowLiquidGlassSurface(.settingsRow.with(strokeOpacity: 0.14))
@@ -111,6 +114,7 @@ struct ShortcutRow: View {
                     startRecording()
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .frame(width: DesignTokens.shortcutButtonWidth)
                 .padding(.vertical, DesignTokens.spacingXS)
                 .pageFlowLiquidGlassSurface(.settingsRow)

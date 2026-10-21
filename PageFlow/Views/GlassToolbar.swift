@@ -137,6 +137,7 @@ private struct ToolbarFoldEffect: ViewModifier {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .opacity(isOpen ? 0 : 1)
         .allowsHitTesting(!isOpen)
         .accessibilityHidden(isOpen)
@@ -186,6 +187,7 @@ struct GlassToolbarButton: View {
             GlassToolbarLabel(icon: icon, interactive: !disabled)
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .disabled(disabled)
         .opacity(disabled ? 0.3 : 1.0)
         .toolbarTooltip(help, enabled: settingsManager.showTooltips)

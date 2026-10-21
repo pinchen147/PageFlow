@@ -81,6 +81,12 @@ struct MarkdownGoToLineTests {
         let terminated = "alpha\nbeta\n"
         #expect(MarkdownOutline.lineStartLocation(ofLine: 2, in: terminated) == (terminated as NSString).length)
         #expect(MarkdownOutline.lineStartLocation(ofLine: 3, in: terminated) == nil)
+
+        let longLine = String(repeating: "a", count: 4093) + "😀\r\n# Next"
+        #expect(MarkdownOutline.lineCount(in: longLine) == 2)
+        #expect(MarkdownOutline.lineStartLocation(ofLine: 1, in: longLine) == 4097)
+        #expect(MarkdownOutline.parse(longLine).map(\.lineIndex) == [1])
+        #expect(MarkdownOutline.parse(longLine).map(\.title) == ["Next"])
     }
 
     @Test("Source line numbering agrees across LF, CRLF and CR", arguments: ["\n", "\r\n", "\r"])

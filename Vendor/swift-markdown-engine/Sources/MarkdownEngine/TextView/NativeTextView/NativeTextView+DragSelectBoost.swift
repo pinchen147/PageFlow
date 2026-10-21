@@ -19,6 +19,8 @@ extension NativeTextView {
         let comments = (delegate as? NativeTextViewCoordinator)?.comments
         comments?.documentMouseDown(event)
         if routeMouseDownToTables(event) { comments?.documentClickHandledElsewhere(); return }
+        // After the tables, which end any cell editing on a press elsewhere.
+        if routeMouseDownToBlocks(event) { comments?.documentClickHandledElsewhere(); return }
         if let toggled = toggleTaskCheckboxIfHit(event: event), toggled {
             comments?.documentClickHandledElsewhere()
             return

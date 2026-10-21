@@ -64,6 +64,10 @@ struct DocumentImageProviderTests {
         let big = try #require(DocumentImageProvider.read(dir.appendingPathComponent("big.png")))
         #expect(big.size.width == CGFloat(DocumentImageProvider.maxDecodedPixels))
         #expect(big.size.height == CGFloat(DocumentImageProvider.maxDecodedPixels) / 2)
+        let sourceProvider = provider(url: dir.appendingPathComponent("note.md"))
+        let request = EmbeddedImageRequest(name: "big.png")
+        #expect(sourceProvider.pixelSize(for: request) == NSSize(width: 4_000, height: 2_000))
+        #expect(sourceProvider.fullResolutionImage(for: request)?.size == NSSize(width: 4_000, height: 2_000))
         let small = try #require(DocumentImageProvider.read(dir.appendingPathComponent("small.png")))
         #expect(small.size == NSSize(width: 300, height: 200))
     }

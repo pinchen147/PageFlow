@@ -125,16 +125,37 @@ struct MarkdownTabView: View {
                 onRequestFocus: onRequestFocus,
                 readingPositionRequest: content.pendingReadingPosition,
                 imageProvider: content.imageProvider,
-                onPasteImage: { [weak content] pasteboard in
+                onPasteImage: { [weak content, weak tabManager] pasteboard in
                     guard let content else { return nil }
-                    return PastedImageStore.shared.markdownLinks(for: pasteboard, documentURL: content.documentManager.documentURL)
+                    return PastedImageStore.shared.markdownLinks(
+                        for: pasteboard, documentURL: content.documentManager.documentURL,
+                        report: { tabManager?.postTransientToast($0) }
+                    )
                 },
+                // The editor is the deepest drop target over the text and its
+                // gutters, so the tab's own drop target never sees these files
+                // (doc 26 §9.1): documents open as tabs, images are copied
+                // beside the note and land where the drop line showed.
                 onDropDocuments: { [weak tabManager] urls in
-                    // The editor is the deepest drop target over the text, so the
-                    // tab's own drop target never sees these files.
-                    guard let tabManager, urls.allSatisfy(\.pageFlowIsOpenableDocument) else { return false }
+                    guard let tabManager else { return false }
                     DispatchQueue.main.async { tabManager.openDroppedFiles(urls) }
                     return true
+                },
+                opensDroppedFile: { $0.pageFlowIsOpenableDocument },
+                onImportImages: { [weak content, weak tabManager] drop, completion in
+                    guard let content else { return completion([]) }
+                    PastedImageStore.shared.importImages(
+                        drop.fileURLs, data: drop.imageData,
+                        documentURL: { [weak content] in content?.documentManager.documentURL }
+                    ) { imported in
+                        if let message = imported.message { tabManager?.postTransientToast(message) }
+                        completion(imported.links)
+                    }
+                },
+                // The window overlay stays for documents; for images the
+                // editor's drop line shows instead, unblurred.
+                onFileDragHover: { [weak tabManager] kind in
+                    tabManager?.editorFileDragShowsOverlay = kind.map { $0 == .documents }
                 },
                 onOpenLocalLink: { [weak tabManager, weak content] link in
                     guard let tabManager, let content else { return }
@@ -145,6 +166,7 @@ struct MarkdownTabView: View {
                 sideMargin: settingsManager.markdownSideMargin,
                 centersZoomedOut: settingsManager.markdownCentersZoomedOut,
                 pageLook: settingsManager.markdownPageLook,
+                showsHiddenContentRow: settingsManager.markdownShowsHiddenContentRow,
                 forcedAppearanceName: settingsManager.markdownColorScheme.forcedAppearanceName,
                 undoManager: content.undoManager,
                 zoomScale: content.zoomScale,
@@ -168,7 +190,7 @@ struct MarkdownTabView: View {
         .onAppear {
             content.showCommentToasts { [weak tabManager] message in tabManager?.postTransientToast(message) }
         }
-        .pageFlowFileDropTarget(tabManager: tabManager)
+        .pageFlowFileDropTarget(tabManager: tabManager, hintsImagesGoInTheNote: true)
         .sheet(isPresented: showingGoToLineBinding) {
             goToLineDialog
         }

@@ -9,13 +9,17 @@ extension NativeTextViewCoordinator {
     func replaceSourceRanges(
         _ ranges: [NSRange], with replacement: String, expectedSource: String, actionName: String,
         reflowsParagraphChain: Bool = true, insertedAttributes: [NSAttributedString.Key: Any]? = nil,
-        registersUndo: Bool = true, selectionAfter: NSRange? = nil
+        registersUndo: Bool = true, selectionAfter: NSRange? = nil, preflighted: Bool = false, preservesBlockStructure: Bool = false,
+        commentMove: MarkdownCommentMove? = nil
     ) -> Bool {
-        guard let tv = textView, tv.isEditable,
-              !isComposing(in: tv), !isWritingToolsActive, !ranges.isEmpty,
-              (tv.string as NSString).isEqual(to: expectedSource) else { return false }
-        if #available(macOS 15.0, *), tv.isWritingToolsActive { return false }
-        let source = tv.string as NSString
+        let phaseStart = CFAbsoluteTimeGetCurrent()
+        defer { PerfTrace.add("replace.total", since: phaseStart) }
+        guard let tv = textView, preflighted || tv.isEditable,
+              preflighted || (!isComposing(in: tv) && !isWritingToolsActive), !ranges.isEmpty,
+              let storage = tv.textStorage,
+              utf16(copiedUTF16(of: expectedSource as NSString), equals: storage.mutableString) else { return false }
+        if #available(macOS 15.0, *), !preflighted, tv.isWritingToolsActive { return false }
+        let source = storage.mutableString
         var previousEnd = 0
         var previousStart = -1
         func validBoundary(_ offset: Int) -> Bool {
@@ -31,6 +35,10 @@ extension NativeTextViewCoordinator {
             previousStart = range.location
             previousEnd = range.location + range.length
         }
+
+        var admitted = true
+        for range in ranges where !admitFoldedEdit(range, in: tv) { admitted = false }
+        guard admitted else { return false }
 
         let start = ranges[0].location
         let span = NSRange(location: start, length: previousEnd - start)
@@ -58,7 +66,8 @@ extension NativeTextViewCoordinator {
             mapLocation: Self.replacementMap(ranges: ranges, lengths: ranges.map { _ in replacementLength }),
             inverseMapLocation: Self.replacementMap(ranges: inverseRanges, lengths: ranges.map(\.length)),
             inverseSelection: tv.selectedRange(), reflowsParagraphChain: reflowsParagraphChain,
-            insertedAttributes: insertedAttributes, registersUndo: registersUndo
+            insertedAttributes: insertedAttributes, registersUndo: registersUndo, preflighted: preflighted, preservesBlockStructure: preservesBlockStructure,
+            commentMove: commentMove
         )
         let undo = tv.undoManager
         let ownsGroup = registersUndo && undo?.groupingLevel == 0 && undo?.isUndoing == false && undo?.isRedoing == false

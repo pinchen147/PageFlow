@@ -92,6 +92,10 @@ protocol TabDocument: AnyObject {
     /// judging dirty state, so termination never cuts an in-flight save short.
     func finishPendingWrites()
 
+    /// Native close/quit wait without synchronously draining storage on main.
+    func finishPendingWritesInBackground() async
+    var hasPendingWrites: Bool { get }
+
     // MARK: Lifecycle
 
     /// Ordered teardown on tab close (not on a window move — that transfers the
@@ -159,21 +163,22 @@ struct DirtyDoc {
 
     /// Blocking save to the existing location (Markdown reconciles first).
     @discardableResult
-    func saveSync() -> Bool {
-        guard let currentOwner = owner else { return false }
+    func saveSync(whileApproved: () -> Bool = { true }) -> Bool {
+        guard whileApproved(), let currentOwner = owner else { return false }
         if let content = session.content.markdown {
-            if content.shouldPromptForExternalChange {
-                reveal()
-                guard currentOwner.confirmSaveOverExternalChange(content, session: session) else {
-                    // Reload left the tab matching disk; Cancel keeps it dirty.
-                    return !document.isDirty
-                }
+            // The coordinator observes once and reveals only a modified file.
+            let allowed = currentOwner.confirmSaveOverExternalChange(content, session: session)
+            guard whileApproved() else { return false }
+            guard allowed else {
+                // Reload left the tab matching disk; Cancel keeps it dirty.
+                return !document.isDirty
             }
             if content.documentManager.hasInvalidUTF8 {
                 reveal()
-                guard currentOwner.confirmReplacingInvalidUTF8(content) else { return false }
+                guard currentOwner.confirmReplacingInvalidUTF8(content), whileApproved() else { return false }
             }
         }
+        guard whileApproved() else { return false }
         let saved = document.saveSync()
         guard let owner else { return false }
         owner.publishSavedDocumentIdentity(session)
@@ -189,9 +194,63 @@ struct DirtyDoc {
     }
 
     /// Reconcile + blocking Save-As (untitled-Markdown quit path only).
-    func saveAsSync(to url: URL, isSecurityScoped: Bool) -> Bool {
-        guard let owner else { return false }
+    func saveAsSync(to url: URL, isSecurityScoped: Bool, whileApproved: () -> Bool = { true },
+                    didAdoptImages: () -> Bool = { true }) -> Bool {
+        guard whileApproved(), let owner else { return false }
         return owner.saveDocumentAsSync(session, to: url, isSecurityScoped: isSecurityScoped,
-                                        expectedDocument: document)
+                                        expectedDocument: document, whileApproved: whileApproved, didAdoptImages: didAdoptImages)
+    }
+}
+
+// Keep the asynchronous barrier beside the document lifecycle contract.
+extension PDFContent {
+    var hasPendingWrites: Bool { pdfManager.hasPendingWrites }
+    func finishPendingWritesInBackground() async { await pdfManager.finishPendingWritesInBackground() }
+}
+
+extension MarkdownContent {
+    var hasPendingWrites: Bool { documentManager.hasPendingWrites }
+    func finishPendingWritesInBackground() async { await documentManager.finishPendingWritesInBackground() }
+}
+
+extension DirtyDoc {
+    func saveForCloseInBackground(using prompt: DocumentClosePrompt,
+                                  whileApproved: @escaping () -> Bool,
+                                  didAdoptImages: @escaping () -> Bool) async -> Bool {
+        guard let owner else { return false }
+        return await owner.confirmDocumentCloseInBackground(session, using: prompt,
+            whileApproved: whileApproved, didAdoptImages: didAdoptImages)
+    }
+
+    /// Approval belongs to the invoking close/quit request. A dispatched save
+    /// continues normally even when that request stops waiting.
+    func saveInBackground(whileApproved: @escaping () -> Bool) async -> Bool {
+        guard !Task.isCancelled, whileApproved(), let currentOwner = owner else { return false }
+        if let content = session.content.markdown {
+            let allowed = await currentOwner.confirmSaveOverExternalChangeInBackground(content, session: session, selectingForClose: true, whileApproved: whileApproved)
+            guard whileApproved() else { return false }
+            guard allowed else { return !document.isDirty }
+            guard currentOwner.confirmReplacingInvalidUTF8(content), whileApproved() else { return false }
+            let completion = await content.documentManager.saveWithCompletion()
+            guard let currentOwner = owner else { return false }
+            currentOwner.publishSavedDocumentIdentity(session)
+            if completion.didWrite, completion.isCurrent {
+                if whileApproved() { content.presentEncodingDowngradeNoteIfNeeded() }
+                content.noteWasSaved()
+            } else if completion.isCurrent, whileApproved() {
+                reveal()
+                currentOwner.postTransientToast(completion.failureReason.map { "Save failed. \($0)" } ?? "Save failed. Your edits are still open.")
+            }
+            return completion.didWrite && !document.isDirty
+        }
+        guard let manager = session.pdfManager, whileApproved() else { return false }
+        let completion = await manager.saveWithCompletion()
+        guard let currentOwner = owner, manager.acceptsSaveCompletion(completion) else { return false }
+        currentOwner.publishSavedDocumentIdentity(session)
+        if !completion.didWrite, manager.isCurrentSaveCompletion(completion), whileApproved() {
+            reveal()
+            currentOwner.postTransientToast("Save failed. Your edits are still open.")
+        }
+        return completion.didWrite && !document.isDirty
     }
 }

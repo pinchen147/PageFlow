@@ -63,6 +63,14 @@ final class MarkdownTableCellTextView: NSTextView {
         }
     }
 
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if session?.isRangeMode == true {
+            if item.action == #selector(copy(_:)) { return true }
+            if item.action == #selector(cut(_:)) { return isEditable && !hasProtectedInput }
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
     @objc override func copy(_ sender: Any?) {
         if let session, session.isRangeMode { session.copyRange(cut: false) } else { super.copy(sender) }
     }

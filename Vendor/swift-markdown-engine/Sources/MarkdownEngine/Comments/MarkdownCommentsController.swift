@@ -134,6 +134,7 @@ final class MarkdownCommentsController {
     }
 
     private func connectStore() {
+        store.observeUndoBoundaries(of: textView?.undoManager)
         store.onDisplayChange = { [weak self] in self?.setNeedsRefresh() }
         if let main = textView { store.resolveIfNeeded(in: main.string as NSString) }
         setNeedsRefresh()
@@ -150,7 +151,9 @@ final class MarkdownCommentsController {
         guard let storage = textView?.textStorage, storage !== observedStorage else { return }
         observedStorage = storage
         observers.append(NotificationCenter.default.addObserver(
-            forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil
+            // didProcessEditing expands editedRange while fixing paragraph attributes.
+            // Map the character edit before that expansion can swallow an anchor.
+            forName: NSTextStorage.willProcessEditingNotification, object: storage, queue: nil
         ) { [weak self] note in
             guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
             let edit = MarkdownTextEdit(editedRange: storage.editedRange, changeInLength: storage.changeInLength)
@@ -232,9 +235,23 @@ final class MarkdownCommentsController {
         let showsResolved = store.mode == .list && (store.filter == .resolved || store.filter == .all)
         var result: [String: CommentHighlightView.Paint] = [:]
         for thread in store.threads where !thread.resolved || showsResolved || resolving.contains(thread.id) {
-            guard let range = store.ranges[thread.id] else { continue }
+            guard let range = store.ranges[thread.id],
+                  coordinator?.foldLayout.hiddenRange(containing: range.location) == nil else { continue }
             let visible = NSIntersectionRange(range, viewport)
             guard visible.length > 0 else { continue }
+            if let rect = imageRect(range, in: main) {
+                let selected = coordinator?.objectSelection?.token == range
+                let isLit = lit == thread.id || litCluster.contains(thread.id)
+                let dark = ChromePalette.isDark(main.effectiveAppearance)
+                let rest = dark ? NSColor(calibratedRed: 0.859, green: 0.576, blue: 0, alpha: 1)
+                    : NSColor(calibratedRed: 0.718, green: 0.467, blue: 0, alpha: 1)
+                let outline: NSColor = selected ? .clear : thread.resolved ? CommentPalette.resolved.withAlphaComponent(isLit ? 0.32 : 0.18)
+                    : store.focusID == thread.id ? ImageChromeView.ringColor
+                    : isLit ? ImageChromeView.ringColor.withAlphaComponent(0.5) : rest
+                result[thread.id] = CommentHighlightView.Paint(rects: [rect], alpha: 0, underlined: false,
+                    outline: outline, outlineOffset: 3, cornerRadius: 4, overTable: true)
+                continue
+            }
             let interior = thread.table ? nil : tableInteriorRects(for: range, cells: thread.cells, in: main)
             let rects = thread.table ? tableRect(range, in: main).map { [$0] } ?? [] : interior ?? segmentRects(for: visible, in: main)
             guard !rects.isEmpty else { continue }
@@ -258,7 +275,12 @@ final class MarkdownCommentsController {
         }
         if let draft = store.draft, draft.range.length > 0 {
             let visible = NSIntersectionRange(draft.range, viewport)
-            if draft.table, let rect = tableRect(draft.range, in: main) {
+            if let rect = imageRect(draft.range, in: main) {
+                let color: NSColor = coordinator?.objectSelection?.token == draft.range ? .clear
+                    : NSColor(calibratedRed: 0.651, green: 0.416, blue: 0, alpha: 1)
+                result[Self.draftID] = CommentHighlightView.Paint(rects: [rect], alpha: 0, underlined: false,
+                    outline: color, outlineOffset: 3, cornerRadius: 4, overTable: true)
+            } else if draft.table, let rect = tableRect(draft.range, in: main) {
                 result[Self.draftID] = CommentHighlightView.Paint(rects: [rect], alpha: 0, underlined: false, outline: CommentPalette.composingTarget)
             } else if let interior = tableInteriorRects(for: draft.range, cells: draft.cells, in: main) {
                 result[Self.draftID] = CommentHighlightView.Paint(rects: interior, alpha: CommentPalette.restAlpha, underlined: false,
@@ -306,6 +328,13 @@ final class MarkdownCommentsController {
             tlm.invalidateRenderingAttributes(for: textRange)
         }
         main.needsDisplay = true
+    }
+
+    /// An ordinary thread whose exact range is a rendered image token.
+    func imageRect(_ range: NSRange, in main: NativeTextView) -> NSRect? {
+        guard let storage = main.textStorage,
+              let image = NativeTextViewCoordinator.renderedImage(around: range, in: storage), image.token == range else { return nil }
+        return main.renderedImageRect(at: image.anchor)
     }
 
     /// A rendered table's rect in the text view, for `range` starting at the table.

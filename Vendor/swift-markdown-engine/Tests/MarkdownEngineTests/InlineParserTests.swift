@@ -172,6 +172,17 @@ struct InlineParserTests {
         ])
     }
 
+    @Test("an image description holds escapes and balanced brackets, as link text does")
+    func imageDescriptionEscapes() {
+        // `![a\|b\]c](u)`: the escaped `|` and `]` stay inside the description.
+        #expect(InlineParser.parse(#"![a\|b\]c](u)"#) == [
+            .image(range: r(0, 13), alt: r(2, 7), url: r(11, 1), markers: [r(0, 2), r(9, 1), r(10, 1), r(12, 1)]),
+        ])
+        #expect(InlineParser.parse("![a [b] c](u)") == [
+            .image(range: r(0, 13), alt: r(2, 7), url: r(11, 1), markers: [r(0, 2), r(9, 1), r(10, 1), r(12, 1)]),
+        ])
+    }
+
     @Test("emphasis inside link text")
     func linkContainsEmphasis() {
         #expect(InlineParser.parse("[*x*](u)") == [

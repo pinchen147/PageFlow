@@ -7,7 +7,7 @@
 //  bus posting. All headless — no mounted editor, no window.
 //
 
-import Foundation
+import AppKit
 import Testing
 import MarkdownEngine
 @testable import PageFlow
@@ -71,6 +71,23 @@ struct MarkdownChromeTests {
         let emoji = WordCount.count("a 😀 b")
         #expect(emoji.words == 3)
         #expect(emoji.characters == 5)
+
+        let cases: [(String, Int, Int)] = [
+            ("a\r\nb", 2, 3),
+            ("e\u{301}", 1, 1),
+            ("\u{600}a", 1, 1),
+            ("👩‍👩‍👧‍👦 🇺🇳", 2, 3),
+            (" \u{301}a", 1, 2),
+            ("\u{2003}\u{301}b", 1, 2),
+            ("1\u{FE0F}\u{20E3}", 1, 1),
+            ("a\u{200D}b", 1, 2)
+        ]
+        for (text, words, characters) in cases {
+            let storage = NSTextStorage(string: text)
+            for source in [text, NSMutableString(string: text) as String, storage.string] {
+                #expect(WordCount.count(source) == WordCount(words: words, characters: characters))
+            }
+        }
     }
 
     // MARK: - (c) Content-kind → icon / toolbar set

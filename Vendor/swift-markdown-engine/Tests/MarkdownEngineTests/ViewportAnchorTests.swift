@@ -132,6 +132,32 @@ struct ViewportAnchorTests {
         )
     }
 
+    @Test("half-point native scroll changes cannot accumulate across pinned transactions")
+    func halfPointScrollCorrection() async throws {
+        let (window, tv, coordinator) = try #require(await mount())
+        defer { window.orderOut(nil) }
+        let pin = (tv.string as NSString).range(of: Self.pinMarker)
+        tv.setSelectedRange(NSRange(location: pin.location, length: 0))
+        fireSelectionChange(coordinator, tv)
+        await settle(2)
+        scrollTo(location: pin.location, tv, coordinator)
+        await settle(2)
+        let scroll = try #require(tv.enclosingScrollView)
+        let baseline = try #require(pinViewportY(tv, coordinator: coordinator))
+        for shift: CGFloat in [0.5, 0.5, -0.5, -0.5] {
+            tv.preservingViewportAnchor {
+                let before = scroll.contentView.bounds.origin
+                scroll.contentView.scroll(to: NSPoint(x: before.x, y: before.y + shift))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                #expect(abs(scroll.contentView.bounds.origin.y - before.y - shift) < 0.01,
+                        "the native clip must actually move inside the transaction")
+            }
+            let actual = try #require(pinViewportY(tv, coordinator: coordinator))
+            #expect(abs(actual - baseline) < 0.01,
+                    "each transaction must restore the readable line, including exactly half a point")
+        }
+    }
+
     @Test("the first-visible-character probe agrees with AppKit on wrapped continuation lines")
     func bridgeCharacterIndexMatchesAppKitOnWrappedLines() async throws {
         let (window, tv, coordinator) = try #require(await mount())

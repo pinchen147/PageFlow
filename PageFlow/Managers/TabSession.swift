@@ -360,6 +360,27 @@ final class TabSession {
     /// stored on `PDFContent`, which silently no-op'd all setters for Markdown.
     var uiState = TabUIState()
 
+    /// An admitted Markdown open travels with the tab while its old content
+    /// remains usable. Closing or replacing the session cancels delivery.
+    final class MarkdownOpen {
+        let url: URL
+        let access: MarkdownFileAccess
+        let read: Task<MarkdownDocumentManager.PreparedOpen, Error>
+        weak var owner: TabManager?
+        var task: Task<Void, Never>?
+
+        init(url: URL, isSecurityScoped: Bool, owner: TabManager) {
+            self.url = url
+            self.owner = owner
+            access = MarkdownFileAccess(url: url, requestSecurityScope: isSecurityScoped)
+            read = MarkdownDocumentManager.prepareOpen(access: access)
+        }
+
+        func cancel() { read.cancel(); task?.cancel() }
+    }
+
+    var pendingMarkdownOpen: MarkdownOpen?
+
     /// Pending password-unlock request, only meaningful for PDF content.
     var pendingUnlock: UnlockRequest? {
         get { content.pdf?.pendingUnlock }
@@ -382,7 +403,7 @@ final class TabSession {
     /// Whether an open may silently reuse this tab: a non-dirty placeholder with no
     /// durable identity. Once file-backed or edited, an open must not clobber it
     /// (ADR-0012 D6).
-    var canReplaceWithoutPrompt: Bool { content.document.canReplaceWithoutPrompt }
+    var canReplaceWithoutPrompt: Bool { pendingMarkdownOpen == nil && content.document.canReplaceWithoutPrompt }
 
     /// Whether Save (⌘S) applies.
     var canSave: Bool { content.document.canSave }
@@ -401,7 +422,11 @@ final class TabSession {
     // boundary — the guarantee the old exhaustive switches gave.
 
     /// Ordered teardown on tab close.
-    func cleanup() { content.document.cleanup() }
+    func cleanup() {
+        pendingMarkdownOpen?.cancel()
+        pendingMarkdownOpen = nil
+        content.document.cleanup()
+    }
 
     /// Captures the live view position into the activation snapshot when switching
     /// away (Markdown: no-op — deferred).

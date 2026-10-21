@@ -135,6 +135,16 @@ final class NativeTextView: NSTextView {
     var onPasteImage: ((NSPasteboard) -> String?)?
     /// Files dropped on the editor that the host opens as documents instead.
     var onDropDocuments: (([URL]) -> Bool)?
+    /// Whether the host opens a dropped file as a document (doc 26 §9.1).
+    var opensDroppedFile: ((URL) -> Bool)?
+    /// Stores dropped images and answers with one Markdown image link each.
+    var onImportImages: ((MarkdownImageDrop, @escaping ([String]) -> Void) -> Void)?
+    /// A file drag's kind while it is over the note; nil when it leaves or ends.
+    var onFileDragHover: ((MarkdownFileDragKind?) -> Void)?
+    /// The file drag over the note, from enter to drop or exit.
+    var fileDrag: FileDragSession?
+    /// Dropped images still being stored, each with its slot kept current.
+    var pendingImageImports: [PendingImageImport] = []
     weak var layoutBridge: LayoutBridge?
     var baseFont: NSFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
 
@@ -198,7 +208,16 @@ final class NativeTextView: NSTextView {
 
     // AppKit owns provisional input and its attributes until the native commit.
     override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        if !hasMarkedText() { (delegate as? NativeTextViewCoordinator)?.makeParagraphAfterTableGap(in: self) }
+        if !hasMarkedText() {
+            let range = replacementRange.location == NSNotFound ? self.selectedRange() : replacementRange
+            if let coordinator = delegate as? NativeTextViewCoordinator,
+               !coordinator.admitFoldedEdit(range, in: self) { return }
+            (delegate as? NativeTextViewCoordinator)?.makeParagraphAfterTableGap(in: self)
+        }
+        if !hasMarkedText() {
+            let range = replacementRange.location == NSNotFound ? self.selectedRange() : replacementRange
+            (delegate as? NativeTextViewCoordinator)?.beginFoldComposition(replacing: range, in: self)
+        }
         isSettingMarkedText = true
         defer {
             isSettingMarkedText = false
@@ -212,6 +231,10 @@ final class NativeTextView: NSTextView {
     }
 
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        if !hasMarkedText() {
+            let range = replacementRange.location == NSNotFound ? selectedRange() : replacementRange
+            guard (delegate as? NativeTextViewCoordinator)?.admitFoldedEdit(range, in: self) != false else { return }
+        }
         if !hasMarkedText(), replacementRange.location == NSNotFound {
             (delegate as? NativeTextViewCoordinator)?.makeParagraphAfterTableGap(in: self)
         }
@@ -237,6 +260,10 @@ final class NativeTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         let coordinator = delegate as? NativeTextViewCoordinator
+        if !event.isARepeat { coordinator?.foldBlockedKeyCode = nil }
+        if event.isARepeat, coordinator?.foldBlockedKeyCode == event.keyCode { return }
+        coordinator?.foldCurrentKeyEvent = event
+        defer { coordinator?.foldCurrentKeyEvent = nil }
         let bar = coordinator?.selectionBar
         bar?.rightClickSuppressed = false
         // F6 (the reference editor): the keyboard moves into the selection bar.
@@ -251,6 +278,9 @@ final class NativeTextView: NSTextView {
         guard let command = coordinator.keyBindings.command(for: event) else { return false }
         let inCell = coordinator.tableEditingSession.isActive
         switch command {
+        case .toggleFold, .collapseAll, .expandAll:
+            _ = coordinator.performFolding(command)
+            return true
         case .comment:
             guard let comments = coordinator.comments else { return false }
             comments.commandComment()

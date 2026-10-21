@@ -3,6 +3,9 @@ import AppKit
 extension NativeTextViewCoordinator {
     /// The one entry point for host and menu format commands.
     func apply(_ format: MarkdownFormat) {
+        // Text formats do not apply to an image selected as a whole: wrapping its
+        // token in markers would stop it rendering and show its Markdown.
+        if objectSelection != nil { return }
         switch format {
         case .bold: applyInlineStyle(.bold)
         case .italic: applyInlineStyle(.italic)

@@ -27,3 +27,22 @@ func utf16(_ units: [UInt16], equals text: NSString) -> Bool {
         return true
     }
 }
+
+/// Replace a known source span with bounded native copies, avoiding per-unit tail shifts.
+func replacingUTF16(_ source: [UInt16], range: NSRange, with replacement: [UInt16]) -> [UInt16] {
+    let length = source.count - range.length + replacement.count
+    return [UInt16](unsafeUninitializedCapacity: length + 4_096) { output, count in
+        source.withUnsafeBufferPointer { input in
+            if range.location > 0 { memcpy(output.baseAddress!, input.baseAddress!, range.location * 2) }
+            let tail = source.count - NSMaxRange(range)
+            if tail > 0 {
+                memcpy(output.baseAddress! + range.location + replacement.count,
+                       input.baseAddress! + NSMaxRange(range), tail * 2)
+            }
+        }
+        replacement.withUnsafeBufferPointer { input in
+            if !replacement.isEmpty { memcpy(output.baseAddress! + range.location, input.baseAddress!, replacement.count * 2) }
+        }
+        count = length
+    }
+}

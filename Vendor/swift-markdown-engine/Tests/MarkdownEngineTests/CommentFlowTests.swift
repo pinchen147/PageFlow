@@ -42,6 +42,46 @@ struct CommentFlowTests {
         await editor.settle()
     }
 
+    @Test("comment navigation waits for marked input and rejects changed source", arguments: ["ni", "你"])
+    func commentNavigationDefersThroughComposition(_ committed: String) async throws {
+        let editor = try await mount("# First\nsecret\n# Last\nvisible\n")
+        defer { editor.close() }
+        try await post("Review this", on: "secret", in: editor)
+        let comments = try comments(editor)
+        let id = try #require(editor.state.controller.commentThreads.first?.id)
+        comments.collapse(announce: false)
+        editor.main.setSelectedRange(NSRange(location: 0, length: 0))
+        try #require(editor.state.controller.performFoldingCommand(.toggleFold))
+        editor.window.makeFirstResponder(editor.main)
+        editor.main.setSelectedRange(NSRange(location: 24, length: 0))
+        editor.state.undo.beginUndoGrouping()
+        defer {
+            editor.main.breakUndoCoalescing()
+            editor.state.undo.endUndoGrouping()
+        }
+        editor.main.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0),
+                                  replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(editor.main.hasMarkedText())
+        let provisional = editor.main.string
+        editor.state.controller.openCommentThread(id)
+        #expect(editor.main.hasMarkedText())
+        #expect(editor.main.string == provisional)
+        #expect(editor.coordinator.foldSession.collapsedHeadings == [0])
+        #expect(comments.store.focusID == nil)
+
+        editor.main.insertText(committed, replacementRange: NSRange(location: NSNotFound, length: 0))
+        await editor.settle()
+        #expect(!editor.main.hasMarkedText())
+        if committed == "ni" {
+            #expect(editor.coordinator.foldSession.collapsedHeadings.isEmpty)
+            #expect(comments.store.focusID == id)
+            #expect(editor.main.lineFrame(at: 8) != nil)
+        } else {
+            #expect(editor.coordinator.foldSession.collapsedHeadings == [0])
+            #expect(comments.store.focusID == nil)
+        }
+    }
+
     @Test("Comment leads the bar, with no Add reaction; a code block's bar has only Comment")
     func barItems() async throws {
         let editor = try await mount("Text here.\n\n```\nlet x = 1\n```\n")

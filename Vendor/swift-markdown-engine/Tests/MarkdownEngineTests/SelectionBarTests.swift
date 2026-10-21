@@ -204,7 +204,7 @@ struct SelectionBarTests {
         window.isReleasedWhenClosed = false
         window.animationBehavior = .none
         window.contentView = scroll
-        window.makeKeyAndOrderFront(nil)
+        window.orderBack(nil)
         wrapper.updateNativeView(scroll, coordinator: coordinator)
         window.makeFirstResponder(view)
         coordinator.selectionBar?.requiresKeyWindow = false

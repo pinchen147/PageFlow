@@ -67,6 +67,67 @@ struct MarkdownSearchManagerTests {
         )
     }
 
+    @Test
+    func scheduledQueryTypingDoesNotScanTheDocumentBeforeReturning() async throws {
+        var reads = 0
+        let manager = MarkdownSearchManager(bus: MarkdownEditorBus(), documentId: "typing", textProvider: {
+            reads += 1
+            return "needle 😀 needle"
+        })
+        for query in ["n", "ne", "nee", "needle"] {
+            manager.setQuery(query)
+            manager.scheduleSearch()
+        }
+        #expect(reads == 0, "query keystrokes must not synchronously read or search the note")
+        try await waitUntil { manager.resultCount == 2 }
+        #expect(manager.searchResults == [NSRange(location: 0, length: 6), NSRange(location: 10, length: 6)])
+    }
+
+    @Test
+    func clearingAQueuedSearchPreventsHighlightDelivery() async throws {
+        let source = LiveSource("needle needle")
+        let name = Notification.Name("Find.cancel." + UUID().uuidString)
+        let token = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { event in
+            MainActor.assumeIsolated { source.scrollReceipts.append(event) }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        let manager = MarkdownSearchManager(bus: MarkdownEditorBus(findScrollToRange: name), documentId: "cancel",
+                                            textProvider: { source.text })
+        manager.setQuery("needle")
+        manager.scheduleSearch()
+        manager.clear()
+        manager.setQuery("absent")
+        manager.scheduleSearch()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(manager.resultCount == 0)
+        #expect(manager.query == "absent")
+        #expect(source.scrollReceipts.isEmpty)
+    }
+
+    @Test
+    func anEditDuringQueuedSearchCannotPublishOldSourceRanges() async throws {
+        let source = LiveSource("needle needle")
+        var reads = 0
+        let manager = MarkdownSearchManager(bus: MarkdownEditorBus(), documentId: "edited", textProvider: {
+            reads += 1
+            let snapshot = source.text
+            if reads == 1 { source.text = "😀 prefix needle" }
+            return snapshot
+        })
+        manager.setQuery("needle")
+        manager.scheduleSearch()
+        try await waitUntil { manager.searchResults == [NSRange(location: 10, length: 6)] }
+        #expect(manager.currentMatch == 1)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !condition(), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(condition(), "queued Find did not produce the current document's results")
+    }
+
     // MARK: - Pure range finding
 
     @Test

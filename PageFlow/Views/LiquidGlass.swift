@@ -222,12 +222,6 @@ extension GlassStyle {
         tint: .light, tintOpacity: 0.18, interactive: true, variant: .regular,
         strokeOpacity: 0.22, shadowRadius: 8, shadowY: 3
     )
-    /// The drag-and-drop target panel.
-    static let dropZone = GlassStyle(
-        cornerRadius: DesignTokens.spacingMD,
-        tint: .light, tintOpacity: 0.18, variant: .regular,
-        strokeOpacity: 0.4, shadowRadius: 16, shadowY: 6
-    )
 
     // Chrome surfaces (no built-in shadow; an external .shadow stays at the call site).
     static let pageIndicator = GlassStyle(

@@ -20,7 +20,10 @@ final class MarkdownTableGridView: NSView {
         NSColor.textBackgroundColor.setFill()
         dirtyRect.intersection(bounds).fill()
         // the reference editor draws no ring around the cell being edited; the caret marks it.
-        geometry.draw()
+        let editedCell = session.flatMap { session in
+            session.isRangeMode ? nil : CellCoord(row: session.row, column: session.column)
+        }
+        geometry.draw(omittingTextIn: editedCell)
         // A cell range: #2a78d6 at 10 % over each selected cell, no outline, no recolour.
         guard let selection = session?.cellSelection else { return }
         NSColor(srgbRed: 0x2A / 255, green: 0x78 / 255, blue: 0xD6 / 255, alpha: 0.10).setFill()

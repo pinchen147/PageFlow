@@ -17,11 +17,14 @@ enum MarkdownDetection {
     /// Edit Table Source keeps its source; the styler shows no other table.
     static let revealsForRangedSelection: Set<MarkdownTokenKind> = [.inlineLatex, .blockLatex, .imageEmbed, .imageLink, .codeBlock, .table]
 
+    /// `objectSelection` is the source of an image selected as a whole (doc 26
+    /// §3.3): the selection is its whole token, which stays rendered.
     static func computeActiveTokenIndices(
         selectionRange: NSRange,
         tokens: [MarkdownToken],
         in text: NSString,
-        suppressed: Bool = false
+        suppressed: Bool = false,
+        objectSelection: NSRange? = nil
     ) -> Set<Int> {
         // Read-only mode (no caret) hides all tokens regardless of any trailing selection.
         if suppressed { return [] }
@@ -40,7 +43,8 @@ enum MarkdownDetection {
         guard selectionRange.length == 0 else {
             for (index, token) in tokens.enumerated()
             where Self.revealsForRangedSelection.contains(token.kind)
-                && NSIntersectionRange(selectionRange, token.range) == selectionRange {
+                && NSIntersectionRange(selectionRange, token.range) == selectionRange
+                && token.range != objectSelection {
                 indices.insert(index)
             }
             return propagateActiveContainers(indices, tokens: tokens)

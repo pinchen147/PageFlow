@@ -56,6 +56,20 @@ final class TabManager {
     /// Whether this window floats above other apps. Scoped per-window, not persisted.
     var isAlwaysOnTop: Bool = false
 
+    /// Whether openable files are being dragged over this window's document:
+    /// `TabContainerView` draws the one window-wide indicator from it, above
+    /// the chrome. A Markdown editor's own report wins while a drag is over
+    /// its text (doc 26 §9.1).
+    var isFileDropHovering: Bool { editorFileDragShowsOverlay ?? isTabSurfaceDropHovering }
+
+    /// Whether files are over a tab surface's SwiftUI drop target (`FileDropTarget`).
+    var isTabSurfaceDropHovering = false
+
+    /// A file drag over a Markdown editor's text: `true` for documents only
+    /// (the overlay shows), `false` for images (the editor's drop line shows
+    /// instead), nil when no file drag is over an editor.
+    var editorFileDragShowsOverlay: Bool?
+
     /// Find presentation belongs to the window, including manually created windows.
     var showingSearch = false {
         didSet {
@@ -453,9 +467,11 @@ final class TabManager {
     /// (works for a still-accessible user-selected file, matching RecentFilesManager)
     /// → else `nil` (non-sandboxed build), where the canonical path is the fallback.
     private func restoreTab(for tab: TabModel) -> RestoreTab? {
-        guard let url = tab.documentURL else { return nil }
+        guard let url = tab.documentURL ?? sessions[tab.id]?.pendingMarkdownOpen?.url else { return nil }
         let path = url.pageFlowCanonicalDocumentURL.path
-        let bookmark = sessions[tab.id]?.restoreBookmark ?? mintedRestoreBookmark(for: url, path: path)
+        let bookmark = sessions[tab.id]?.restoreBookmark
+            ?? sessions[tab.id]?.pendingMarkdownOpen?.access.securityScopedBookmark
+            ?? mintedRestoreBookmark(for: url, path: path)
         return RestoreTab(path: path, bookmark: bookmark)
     }
 
@@ -489,22 +505,31 @@ final class TabManager {
             return tabID
         }
 
-        return tabs.first { $0.documentURL?.pageFlowCanonicalDocumentURL == canonicalURL }?.id
+        return tabs.first {
+            $0.documentURL?.pageFlowCanonicalDocumentURL == canonicalURL ||
+                sessions[$0.id]?.pendingMarkdownOpen?.url.pageFlowCanonicalDocumentURL == canonicalURL
+        }?.id
     }
 
     // MARK: - Tab Operations
 
+    @ObservationIgnored var pendingTabCloses: [UUID: Task<Void, Never>] = [:]
 
-    func closeTab(_ tabID: UUID) {
-        guard tabs.contains(where: { $0.id == tabID }) else { return }
-
-        // Unsaved-changes gate, exhaustive over content. Markdown reconciles the
-        // live editor (fork P1) BEFORE its dirty read, so a tab closed (⌘W) <1s
-        // after the last keystroke isn't judged clean on the engine's not-yet-
-        // drained deferred binding write and silently discarded.
-        if let session = sessions[tabID], !confirmDocumentClose(session) {
+    func closeTab(_ tabID: UUID, using prompt: DocumentClosePrompt? = nil) {
+        guard pendingTabCloses[tabID] == nil, tabs.contains(where: { $0.id == tabID }),
+              let session = sessions[tabID] else { return }
+        session.content.markdown?.reconcileLiveText()
+        session.content.markdown?.documentManager.noteMissingBackingFile()
+        if session.content.document.isDirty || session.content.document.hasPendingWrites {
+            beginClosingTab(session, using: prompt)
             return
         }
+        finishClosingTab(tabID)
+    }
+
+    /// Called immediately after approval; no suspension separates its final
+    /// identity/source check from removing the tab.
+    func finishClosingTab(_ tabID: UUID) {
         // A modal prompt may run queued tab mutations; resolve the index again.
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
 
@@ -661,7 +686,7 @@ final class TabManager {
         // and not while a password or a download is about to fill it.
         return !activeTab.hasDocument && !pdf.pdfManager.hasDocument &&
             !pdf.pdfManager.isDirty && !isAwaitingPassword(for: activeTabID) &&
-            downloadingURLs.isEmpty
+            downloadingURLs.isEmpty && sessions[activeTabID]?.pendingMarkdownOpen == nil
     }
 
     func updateTabDocument(_ tabID: UUID, url: URL) {
@@ -764,6 +789,11 @@ final class TabManager {
     @ObservationIgnored var isCloudOnly: (URL) -> Bool = \.pageFlowIsDataless
     /// Cloud-only files downloading before they open, so a repeated open waits.
     @ObservationIgnored var downloadingURLs: Set<URL> = []
+    @ObservationIgnored var downloadingTasks: [URL: Task<Void, Never>] = [:]
+    /// The newest drop owns automatic selection while cloud batches overlap.
+    @ObservationIgnored var currentDropBatch: DroppedDocumentBatch?
+    /// Latest explicit page reference while one download is in flight.
+    @ObservationIgnored var downloadingPDFPageIndices: [URL: Int] = [:]
     /// Asks before a link opens a local file in its own app; a test seam too.
     @ObservationIgnored var localFileLinkPrompt: (_ fileName: String) -> Bool = presentMarkdownLocalFileLinkPrompt
     /// Asks before a save writes U+FFFD over damaged UTF-8 bytes; a test seam too.
@@ -801,7 +831,7 @@ final class TabManager {
               let session = activeSession, let content = session.content.markdown,
               WindowRegistry.shared.window(for: self)?.isVisible == true,
               // A save landing mid-read would look external; its receipt re-checks.
-              !content.documentManager.hasPendingWrites,
+              !content.documentManager.hasPendingWrites, !content.isReloadingFromDisk,
               let probe = content.documentManager.diskProbe() else { return }
         externalChangeCheckGeneration &+= 1
         let generation = externalChangeCheckGeneration
@@ -834,7 +864,11 @@ final class TabManager {
             if activeSession !== session { scheduleMarkdownExternalChangeCheck() }
         }
         switch change {
-        case .modified: presentExternalChangePrompt(for: content, session: session)
+        case .modified:
+            let checked = MarkdownDocumentManager.DiskCheck(observation: observation, probe: probe)
+            if let decision = MarkdownExternalChangeDecision(content: content, session: session, owner: self, checked: checked) {
+                decision.applyAfterFocusPrompt()
+            }
         case .missing: presentMissingFilePrompt(for: content, session: session)
         case .unchanged: break
         }
@@ -865,45 +899,55 @@ final class TabManager {
     /// change. Returns whether the save may write: Keep writes this version over
     /// the change; Reload leaves nothing to save; Cancel stops.
     func confirmSaveOverExternalChange(_ content: MarkdownContent, session: TabSession) -> Bool {
-        guard content.shouldPromptForExternalChange else { return true }
+        guard !isPresentingExternalChangePrompt else { return false }
+        let manager = content.documentManager
+        guard let probe = manager.diskProbe() else { return !manager.isClosed }
+        let observation = MarkdownDocumentManager.observe(probe)
+        guard observation.hasReadableSourceOrMissingFile else { return false }
+        let change = manager.resolve(observation, for: probe)
+        if change == .missing { manager.keepAfterMissingFile() }
+        guard change == .modified else { return true }
         isPresentingExternalChangePrompt = true
         defer { isPresentingExternalChangePrompt = false }
-        return presentExternalChangePrompt(for: content, session: session) == .keepMine
+        selectTab(session.id)
+        WindowRegistry.shared.bringToFront(for: self)
+        let checked = MarkdownDocumentManager.DiskCheck(observation: observation, probe: probe)
+        guard let decision = MarkdownExternalChangeDecision(content: content, session: session, owner: self, checked: checked) else {
+            return false
+        }
+        return decision.applySynchronously()
     }
 
-    /// Owns the Reload-vs-Keep DECISION; the modal UI lives in `MarkdownPrompts`.
-    /// Reload re-reads the file and resets undo; Keep adopts the disk baseline so we
-    /// stop re-prompting while leaving the draft dirty. Returns the choice applied
-    /// (`.cancel` when the tab changed under the prompt).
-    @discardableResult
-    private func presentExternalChangePrompt(for content: MarkdownContent, session: TabSession) -> MarkdownExternalChangeChoice {
-        content.reconcileLiveText()
+    /// Command Save and native close/quit observe disk off main, after earlier
+    /// accepted writes. Explicit synchronous replacement boundaries remain separate.
+    func confirmSaveOverExternalChangeInBackground(_ content: MarkdownContent, session: TabSession,
+                                                  selectingForClose: Bool = false,
+                                                  whileApproved: @escaping () -> Bool = { true }) async -> Bool {
+        guard !Task.isCancelled, whileApproved() else { return false }
         let manager = content.documentManager
-        let source = manager.text
-        let url = manager.documentURL
-        let choice = externalChangePrompt(manager.documentTitle, manager.isDirty)
-        guard activeSession === session, session.content.markdown === content,
-              tabs.contains(where: { $0.id == session.id }), !manager.isClosed,
-              manager.documentURL == url else { return .cancel }
-        content.reconcileLiveText()
-        guard manager.text.utf8.elementsEqual(source.utf8) else { return .cancel }
-        switch choice {
-        case .cancel:
-            return .cancel
-        case .reload:
-            do {
-                try content.reloadFromDisk()
-                content.presentInvalidUTF8NoteIfNeeded()
-            } catch {
-                logger.error("markdown.reload.failed tab=\(content.documentId, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-                // Reload failed (e.g. file vanished mid-prompt): adopt the baseline so
-                // we don't spin re-prompting; leave the buffer as-is.
-                content.documentManager.keepLocalVersionIgnoringDisk()
-            }
-        case .keepMine:
-            content.documentManager.keepLocalVersionIgnoringDisk()
+        guard let checked = await manager.observeDiskForSave(), !Task.isCancelled, whileApproved(),
+              let owner = WindowRegistry.shared.owner(of: session, document: content, fallback: self) else { return false }
+        guard checked.observation.hasReadableSourceOrMissingFile else {
+            owner.postTransientToast("Couldn’t read “\(manager.documentTitle)”. Your edits are still open.")
+            return false
         }
-        return choice
+        content.reconcileLiveText()
+        let change = manager.resolve(checked.observation, for: checked.probe)
+        if change == .missing { manager.keepAfterMissingFile() }
+        guard change == .modified else { return true }
+        // A prompt must still refer to the displayed, exact document. Selecting
+        // another tab during a slow check must not expose it to this overwrite.
+        guard !owner.isPresentingExternalChangePrompt, selectingForClose || owner.activeSession === session else { return false }
+        if selectingForClose {
+            owner.selectTab(session.id)
+            WindowRegistry.shared.bringToFront(for: owner)
+        }
+        owner.isPresentingExternalChangePrompt = true
+        defer { owner.isPresentingExternalChangePrompt = false }
+        guard let decision = MarkdownExternalChangeDecision(content: content, session: session, owner: owner, checked: checked, whileApproved: whileApproved) else {
+            return false
+        }
+        return await decision.applyInBackground()
     }
 
     private func restoreTabState(_ tabID: UUID) {

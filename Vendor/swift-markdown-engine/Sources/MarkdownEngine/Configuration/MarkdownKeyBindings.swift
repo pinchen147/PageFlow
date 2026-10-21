@@ -17,6 +17,8 @@ public enum MarkdownEditorKeyCommand: String, CaseIterable, Hashable, Sendable {
     case focusSelectionBar
     /// Opens Cell actions at the caret in a table cell.
     case tableCellActions
+    /// View-only heading disclosure commands.
+    case toggleFold, collapseAll, expandAll
 
     /// The format the command applies, for the ones that are formats.
     var format: MarkdownFormat? {
@@ -41,7 +43,7 @@ public enum MarkdownEditorKeyCommand: String, CaseIterable, Hashable, Sendable {
         case .quote: .quote
         case .codeBlock: .codeBlock
         case .toggleChecked: .toggleChecked
-        case .comment, .toggleComments, .focusSelectionBar, .tableCellActions: nil
+        case .comment, .toggleComments, .focusSelectionBar, .tableCellActions, .toggleFold, .collapseAll, .expandAll: nil
         }
     }
 
@@ -119,6 +121,7 @@ public struct MarkdownKeyBindings: Equatable, Sendable {
     /// code, highlight and checklist start with no key, and Link and Quote
     /// are left to the host's menus unless it binds them here.
     public static let `default` = MarkdownKeyBindings([
+        .toggleFold: [MarkdownKeyChord("return", command: true, option: true)],
         .bold: [MarkdownKeyChord("b", command: true)],
         .italic: [MarkdownKeyChord("i", command: true)],
         .underline: [MarkdownKeyChord("u", command: true)],

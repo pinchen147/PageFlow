@@ -79,6 +79,8 @@ extension TabManager {
         }
         tabs.insert(attachedTab, at: clampedIndex)
         sessions[session.id] = session
+        // A new window may not have registered yet when its read completes.
+        session.pendingMarkdownOpen?.owner = self
 
         // If the moved tab is still awaiting a password, queue it for this
         // window's sheet (after any request already presented here).

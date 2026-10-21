@@ -14,8 +14,8 @@ extension MarkdownTableEditingSession {
     /// Make `selection` the range (nil returns to caret mode in the current cell).
     func setCellSelection(_ selection: TableCellSelection?) {
         guard let table else { return }
-        cellSelection = selection
-        if let selection {
+        cellSelection = selection?.clamped(to: table)
+        if let selection = cellSelection {
             finishInput()
             endTypingRun()
             rangeSnapshot = Dictionary(uniqueKeysWithValues: selection.cells.map { ($0, cellSource($0, in: table) ?? "") })
@@ -350,46 +350,44 @@ extension MarkdownTableEditingSession {
 
     // MARK: - Clipboard
 
-    /// Copy writes an HTML table, one line of plain text per cell, and the
-    /// cells' exact Markdown for PageFlow (deviation a). Cut also clears them.
+    /// Export Markdown for other editors, retaining exact cell values for an
+    /// internal grid paste. A whole-table selection preserves its literal source.
     func copyRange(cut: Bool) {
-        guard let selection = cellSelection, let table, let coordinator else { return }
-        let alignments = MarkdownTableScanner.alignments(in: (table.source as NSString).substring(with: table.rows[1].contentRange)) ?? []
-        var html = "<table>"
-        var plain: [String] = []
-        var raw: [[String]] = []
-        let theme = coordinator.configuration.theme
-        let latex = coordinator.configuration.services.latex
-        for row in selection.rows {
-            html += "<tr>"
-            var rawRow: [String] = []
-            for column in selection.columns {
-                let source = cellSource(CellCoord(row: row, column: column), in: table) ?? ""
-                rawRow.append(source)
-                let text = MarkdownStyler.formattedCellString(source, baseFont: .systemFont(ofSize: 13), header: row == 0, theme: theme,
-                                                              codeBackgroundColor: .clear, latex: latex).string
-                    .replacingOccurrences(of: "\u{2028}", with: "\n")
-                plain.append(text)
-                let tag = row == 0 ? "th" : "td"
-                var align = ""
-                if column < alignments.count {
-                    switch alignments[column] {
-                    case .center: align = " align=\"center\""
-                    case .right: align = " align=\"right\""
-                    case .left: align = ""
-                    }
-                }
-                html += "<\(tag)\(align)>\(Self.escapeHTML(text).replacingOccurrences(of: "\n", with: "<br>"))</\(tag)>"
+        guard let selection = cellSelection, let table else { return }
+        let source = table.source as NSString
+        let raw = selection.rows.map { row in
+            selection.columns.map { column in
+                cellSource(CellCoord(row: row, column: column), in: table) ?? ""
             }
-            raw.append(rawRow)
-            html += "</tr>"
         }
-        html += "</table>"
+        let markdown: String
+        if selection.isFullRows(columnCount: table.columnCount), selection.isFullColumns(rowCount: table.rowCount) {
+            markdown = source.substring(with: table.range)
+        } else {
+            func line(_ physicalRow: Int) -> String {
+                let cells = table.rows[physicalRow].cells
+                return "|" + selection.columns.map { column in
+                    var value = column < cells.count ? source.substring(with: cells[column].rawRange) : " "
+                    // A borderless final cell can end in an unpaired escape.
+                    // Separate it from the structural pipe we introduce.
+                    if value.utf16.reversed().prefix(while: { $0 == 0x5C }).count % 2 != 0 {
+                        value += " "
+                    }
+                    return value
+                }.joined(separator: "|") + "|"
+            }
+            var lines = selection.rows.map { line($0 == 0 ? 0 : $0 + 1) }
+            // The first selected row is the copied table's header. Keep the
+            // selected columns' original delimiter/alignment spellings.
+            lines.insert(line(1), at: 1)
+            let newline = table.rows.first(where: { $0.lineEndingRange.length > 0 })
+                .map { source.substring(with: $0.lineEndingRange) } ?? "\n"
+            markdown = lines.joined(separator: newline)
+        }
         let board = NSPasteboard.general
         board.clearContents()
-        board.declareTypes([.html, .string, Self.tableCellsPasteboardType], owner: nil)
-        board.setString(html, forType: .html)
-        board.setString(plain.joined(separator: "\n"), forType: .string)
+        board.declareTypes([.string, Self.tableCellsPasteboardType], owner: nil)
+        board.setString(markdown, forType: .string)
         if let data = try? JSONSerialization.data(withJSONObject: ["version": 1, "rows": raw]) {
             board.setData(data, forType: Self.tableCellsPasteboardType)
         }
@@ -489,11 +487,6 @@ extension MarkdownTableEditingSession {
             if !cells.isEmpty { grid.append(cells) }
         }
         return grid.isEmpty ? nil : grid
-    }
-
-    private static func escapeHTML(_ text: String) -> String {
-        text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     private static func unescapeHTML(_ text: String) -> String {

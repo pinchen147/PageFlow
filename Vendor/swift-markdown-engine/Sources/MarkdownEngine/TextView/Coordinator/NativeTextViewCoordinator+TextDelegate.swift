@@ -41,6 +41,9 @@ extension NativeTextViewCoordinator {
         if !tableEditingSession.applyingSource, !isApplyingSpanEdit { tableEditingSession.sourceMayHaveChanged() }
         selectionBar?.setNeedsUpdate()
         guard let tv = notification.object as? NSTextView, !isUpdatingSourceOrStyle else { return }
+        // Last, after the restyle below: the object selection follows the edit.
+        defer { reconcileObjectSelectionAfterEdit(in: tv) }
+        if objectSelection != nil { imageChrome?.setNeedsRefresh() }
         retireFindAfterSourceEdit(in: tv)
         if isComposing(in: tv) {
             pendingCompositionRefresh = true
@@ -69,6 +72,10 @@ extension NativeTextViewCoordinator {
 
         guard let textStorage = tv.textStorage else { return }
         defer {
+            synchronizeFolding(edit: committedFoldComposition(in: tv) ?? pendingTextChange)
+            if tv.undoManager?.isUndoing == true || tv.undoManager?.isRedoing == true {
+                _ = revealFoldedSource(tv.selectedRange())
+            }
             pendingEditedRange = nil
             pendingTextChange = nil
             pendingEditMayChangeBlockStructure = false
@@ -161,13 +168,19 @@ extension NativeTextViewCoordinator {
         let latexTokens = parsed.latexTokens
         let preEditActiveTokenIndices = pendingPreEditActiveTokenIndices ?? previousActiveTokenIndices
 
+        // A selection the edit left on an image's line (Undo of Delete Image)
+        // keeps the image rendered; the reconcile after the restyle selects it.
+        let imageObject = rawSelRange.length > 0
+            ? Self.imageToken(around: rawSelRange, tokens: tokens, in: fullText)?.range : nil
         activeTokenIndices = MarkdownDetection.computeActiveTokenIndices(
-            selectionRange: safeSelRange,
+            selectionRange: imageObject ?? safeSelRange,
             tokens: tokens,
             in: fullText,
-            suppressed: !tv.isEditable
+            suppressed: !tv.isEditable,
+            objectSelection: imageObject
         )
-        filterImageEmbedActiveTokens(parsed: parsed, text: fullText, selectionLocation: safeSelRange.location)
+        filterImageEmbedActiveTokens(parsed: parsed, text: fullText, selectionLocation: safeSelRange.location,
+                                     excluding: imageObject)
         updateAutocorrectSettings(
             tv,
             caretLocation: safeSelRange.location,
@@ -256,9 +269,22 @@ extension NativeTextViewCoordinator {
     }
 
     func publishSource(_ source: String) {
-        if !(lastSyncedText as NSString).isEqual(to: source) {
+        #if DEBUG
+        let comparisonStart = CFAbsoluteTimeGetCurrent()
+        #endif
+        let unchanged = (lastSyncedText as NSString).isEqual(to: source)
+        #if DEBUG
+        PerfTrace.add("source.publish.compare", since: comparisonStart)
+        #endif
+        if !unchanged {
             lastSyncedText = source
+            #if DEBUG
+            let bindingStart = CFAbsoluteTimeGetCurrent()
+            #endif
             text = source
+            #if DEBUG
+            PerfTrace.add("source.publish.binding", since: bindingStart)
+            #endif
         }
     }
 
@@ -300,6 +326,8 @@ extension NativeTextViewCoordinator {
             pendingCompositionRefresh = true
             return
         }
+        notifyFoldingStateChange()
+        foldControls?.refresh()
         let selRange = tv.selectedRange()
         let currentEventType = NSApp.currentEvent?.type
         if skipNextSelectionChangeAfterPlainEdit {
@@ -310,6 +338,14 @@ extension NativeTextViewCoordinator {
         skipNextSelectionChangeAfterPlainEdit = false
         if pendingEditedRange != nil {
             previousCaretLocation = selRange.location
+            return
+        }
+        // A selection on a rendered image's line selects the image (doc 26 §3.2);
+        // that selection change runs this handler again and does the rest. A
+        // drag leaves the selection to AppKit until mouse-up.
+        if currentEventType == .leftMouseDragged || currentEventType == .periodic {
+            if objectSelectionRange(for: selRange) == nil { objectSelection = nil }
+        } else if selectImageUnderSelection(selRange, in: tv) {
             return
         }
         // Bridge the document to String/NSString exactly once. This handler runs on
@@ -351,8 +387,10 @@ extension NativeTextViewCoordinator {
         }
 
         let prevActive = activeTokenIndices
-        activeTokenIndices = MarkdownDetection.computeActiveTokenIndices(selectionRange: selRange, tokens: tokens, in: nsText, suppressed: !tv.isEditable)
-        filterImageEmbedActiveTokens(parsed: parsed, text: nsText, selectionLocation: selRange.location)
+        let imageObject = objectSelectionRange(for: selRange)
+        activeTokenIndices = MarkdownDetection.computeActiveTokenIndices(selectionRange: selRange, tokens: tokens, in: nsText,
+                                                                         suppressed: !tv.isEditable, objectSelection: imageObject)
+        filterImageEmbedActiveTokens(parsed: parsed, text: nsText, selectionLocation: selRange.location, excluding: imageObject)
         updateAutocorrectSettings(
             tv,
             caretLocation: selLoc,
@@ -454,7 +492,8 @@ extension NativeTextViewCoordinator {
 
         let nsString = nsText
         let selLocation = tv.selectedRange().location
-        let inlineContext = inlineTokenContext(
+        // An image selected as a whole is not an inline token being edited.
+        let inlineContext = imageObject != nil ? nil : inlineTokenContext(
             at: selLocation,
             parsed: parsed,
             codeTokens: codeTokens,
@@ -518,6 +557,7 @@ extension NativeTextViewCoordinator {
     }
 
     public func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        guard admitFoldedEdit(affectedCharRange, in: textView) else { return false }
         // Prose typing never writes into a rendered table's hidden source; only
         // cell edits, span edits and Undo do. Unguarded, a keystroke there
         // corrupted the table invisibly (`Q| Case | Source |`).
@@ -536,46 +576,9 @@ extension NativeTextViewCoordinator {
         if isProgrammaticEdit || isComposing(in: textView) { return true }
         if isWritingToolsActive { return true }
         guard let textStorage = textView.textStorage else { return true }
+        guard captureSourceEdit(in: textView, range: affectedCharRange, replacement: replacementString ?? "") else { return false }
         let currentText = textStorage.mutableString
         let replacement = replacementString ?? ""
-        pendingTextChange = TextChange(oldRange: affectedCharRange, replacement: replacement)
-        pendingEditMayChangeBlockStructure = editMayChangeBlockStructure(
-            in: currentText,
-            affectedCharRange: affectedCharRange,
-            replacementString: replacementString
-        )
-        pendingEditRequiresFullDocumentRestyle = editMayRequireFullDocumentRestyle(
-            in: currentText,
-            affectedCharRange: affectedCharRange,
-            replacementString: replacementString
-        )
-        pendingPreEditActiveTokenIndices = previousActiveTokenIndices
-
-        if let nativeTextView = textView as? NativeTextView {
-            if affectedCharRange.location != NSNotFound,
-               NSMaxRange(affectedCharRange) <= currentText.length {
-                let oldText = currentText.substring(with: affectedCharRange)
-                nativeTextView.pendingTextEditLineDelta += lineBreakCount(in: replacement) - lineBreakCount(in: oldText)
-            }
-        }
-        pendingEditedRange = NSRange(location: affectedCharRange.location, length: replacement.utf16.count)
-        let currentLen = currentText.length
-        let maxR = affectedCharRange.location + affectedCharRange.length
-        if affectedCharRange.location > currentLen || maxR > currentLen {
-            pendingPreEditActiveTokenIndices = nil
-            return false
-        }
-        pendingPreEditRestyleRanges.removeAll(keepingCapacity: true)
-        // A deferred table-cell edit restyles nothing now, so it needs no pre-edit tokens.
-        if pendingEditMayChangeBlockStructure || pendingEditRequiresFullDocumentRestyle, !isDeferringTableRender {
-            let before = parsedDocument(for: currentText as String)
-            pendingPreEditRestyleRanges = before.tokens.enumerated().compactMap { index, token in
-                let intersects = NSIntersectionRange(token.range, affectedCharRange).length > 0
-                    || (affectedCharRange.length == 0 && affectedCharRange.location >= token.range.location
-                        && affectedCharRange.location <= NSMaxRange(token.range))
-                return intersects || previousActiveTokenIndices.contains(index) ? token.range : nil
-            }
-        }
         if textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true {
             pendingPreEditActiveTokenIndices = nil
             return true
@@ -617,6 +620,54 @@ extension NativeTextViewCoordinator {
         )
     }
 
+    /// Capture the actual source mutation, independently of policy admission. Atomic
+    /// block moves admit both locations first, but each edit needs its own old coordinates.
+    func captureSourceEdit(in textView: NSTextView, range affectedCharRange: NSRange,
+                           replacement replacementString: String) -> Bool {
+        guard let textStorage = textView.textStorage else { return true }
+        let currentText = textStorage.mutableString
+        let replacement = replacementString
+        pendingTextChange = TextChange(oldRange: affectedCharRange, replacement: replacement)
+        pendingEditMayChangeBlockStructure = editMayChangeBlockStructure(
+            in: currentText,
+            affectedCharRange: affectedCharRange,
+            replacementString: replacementString
+        )
+        pendingEditRequiresFullDocumentRestyle = editMayRequireFullDocumentRestyle(
+            in: currentText,
+            affectedCharRange: affectedCharRange,
+            replacementString: replacementString
+        )
+        pendingPreEditActiveTokenIndices = previousActiveTokenIndices
+
+        if let nativeTextView = textView as? NativeTextView {
+            if affectedCharRange.location != NSNotFound,
+               NSMaxRange(affectedCharRange) <= currentText.length {
+                let oldText = currentText.substring(with: affectedCharRange)
+                nativeTextView.pendingTextEditLineDelta += lineBreakCount(in: replacement) - lineBreakCount(in: oldText)
+            }
+        }
+        pendingEditedRange = NSRange(location: affectedCharRange.location, length: replacement.utf16.count)
+        let currentLen = currentText.length
+        let maxR = affectedCharRange.location + affectedCharRange.length
+        if affectedCharRange.location > currentLen || maxR > currentLen {
+            pendingPreEditActiveTokenIndices = nil
+            return false
+        }
+        pendingPreEditRestyleRanges.removeAll(keepingCapacity: true)
+        // A deferred table-cell edit restyles nothing now, so it needs no pre-edit tokens.
+        if pendingEditMayChangeBlockStructure || pendingEditRequiresFullDocumentRestyle, !isDeferringTableRender {
+            let before = parsedDocument(for: currentText as String)
+            pendingPreEditRestyleRanges = before.tokens.enumerated().compactMap { index, token in
+                let intersects = NSIntersectionRange(token.range, affectedCharRange).length > 0
+                    || (affectedCharRange.length == 0 && affectedCharRange.location >= token.range.location
+                        && affectedCharRange.location <= NSMaxRange(token.range))
+                return intersects || previousActiveTokenIndices.contains(index) ? token.range : nil
+            }
+        }
+        return true
+    }
+
     private func lineBreakCount(in text: String) -> Int {
         text.unicodeScalars.reduce(0) { partial, scalar in
             partial + (scalar == "\n" ? 1 : 0)
@@ -624,6 +675,7 @@ extension NativeTextViewCoordinator {
     }
 
     public func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if let handled = handleImageCommand(commandSelector, in: textView) { return handled }
         if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
             return handleBacktab(textView)
         }

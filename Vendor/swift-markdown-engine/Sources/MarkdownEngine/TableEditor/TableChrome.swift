@@ -227,7 +227,7 @@ final class TableChromeView: NSView {
 /// pointer move never edits the text or lays anything out.
 final class TableChromeController: NSResponder, NSDraggingSource {
     /// The pasteboard type of a table handle drag: the table's source location.
-    static let tableMoveType = NSPasteboard.PasteboardType("com.pageflow.table-move")
+    static let tableMoveType = BlockMovePasteboard.moveType
     private weak var coordinator: NativeTextViewCoordinator?
     private weak var scrollView: NSScrollView?
     let view = TableChromeView()
@@ -288,6 +288,7 @@ final class TableChromeController: NSResponder, NSDraggingSource {
 
     /// The text, its layout or a wide table's scroll changed: rebuild on the next hover.
     func invalidate() {
+        coordinator?.blockMover.invalidate()
         entries = nil
         trackWideTables()
         guard !pressing, gripMenu == nil else { return }
@@ -309,6 +310,7 @@ final class TableChromeController: NSResponder, NSDraggingSource {
     }
 
     private func contentDidScroll() {
+        coordinator?.blockMover.invalidate()
         entries = nil
         trackWideTables()
         // A scroll the bars did not cause hides them.
@@ -362,6 +364,7 @@ final class TableChromeController: NSResponder, NSDraggingSource {
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
 
     override func mouseExited(with event: NSEvent) {
+        coordinator?.blockMover.hide()
         guard !pressing, gripMenu == nil else { return }
         remove()
     }
@@ -376,6 +379,7 @@ final class TableChromeController: NSResponder, NSDraggingSource {
     /// the reference editor's hover machine: a cell shows its table's chrome in the same
     /// frame; the gutter and bands keep it; anywhere else removes it.
     func hover(at point: NSPoint) {
+        coordinator?.blockMover.hover(at: point)
         guard !pressing, gripMenu == nil, let main, main.isEditable else { return }
         if let layout = view.layout, let hovered = view.hovered, !view.isHidden,
            layout.zone(at: point, hovered: hovered, showsAddRow: view.showsAddRow, showsAddColumn: view.showsAddColumn) != nil {
@@ -606,17 +610,7 @@ final class TableChromeController: NSResponder, NSDraggingSource {
         guard let table, let main, let layout = view.layout else { return }
         let session = coordinator?.tableEditingSession
         if session?.owns(table) == true, session?.isRangeMode == true { session?.setCellSelection(nil) }
-        let item = NSPasteboardItem()
-        item.setString(String(table.location), forType: Self.tableMoveType)
-        let text = main.string as NSString
-        if NSMaxRange(table) <= text.length { item.setString(text.substring(with: table), forType: .string) }
-        let image = tableAnchor.flatMap { main.textStorage?.attribute(.renderedBlockImage, at: $0, effectiveRange: nil) as? NSImage }
-            ?? NSImage(size: layout.table.size)
-        let pointer = view.convert(event.locationInWindow, from: nil)
-        let dragging = NSDraggingItem(pasteboardWriter: item)
-        // the reference editor holds the snapshot 24 pt in from its top-left corner.
-        dragging.setDraggingFrame(NSRect(x: pointer.x - 24, y: pointer.y - 24, width: image.size.width, height: image.size.height), contents: image)
-        view.beginDraggingSession(with: [dragging], event: event, source: self)
+        coordinator?.blockMover.begin(range: table, kind: .table, event: event, rect: layout.table)
     }
 
     func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {

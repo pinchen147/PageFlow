@@ -71,6 +71,27 @@ struct ShortcutCatalogTests {
     }
 
     @Test
+    func foldingChordsReachTheEditorAndFollowRebinding() throws {
+        for id in ["markdown.toggleFold", "markdown.collapseAll", "markdown.expandAll"] {
+            let action = try #require(ShortcutCatalog.action(for: id))
+            #expect(action.scope == .markdown)
+        }
+        let defaults = ShortcutCatalog.editorKeyBindings(current: { ShortcutCatalog.defaults[$0] ?? .none })
+        #expect(defaults.command(for: try key("\r", 36, [.command, .option])) == .toggleFold)
+        #expect(defaults.command(for: try key("\r", 36, [.command])) == .toggleChecked)
+        #expect(defaults[.collapseAll].isEmpty)
+        #expect(defaults[.expandAll].isEmpty)
+
+        let custom = ["markdown.toggleFold": ShortcutModel.none,
+                      "markdown.collapseAll": ShortcutModel(key: "j", control: true),
+                      "markdown.expandAll": ShortcutModel(key: "j", shift: true, control: true)]
+        let rebound = ShortcutCatalog.editorKeyBindings(current: { custom[$0] ?? ShortcutCatalog.defaults[$0] ?? .none })
+        #expect(rebound.command(for: try key("\r", 36, [.command, .option])) == nil)
+        #expect(rebound.command(for: try key("j", 38, [.command, .control])) == .collapseAll)
+        #expect(rebound.command(for: try key("j", 38, [.command, .shift, .control])) == .expandAll)
+    }
+
+    @Test
     func findAndReplaceOwnsOptionCommandFAndZoomToFitMovesToOptionCommandZero() {
         #expect(ShortcutCatalog.defaults["findAndReplace"] == ShortcutModel(key: "f", option: true))
         #expect(ShortcutCatalog.defaults["zoomToFit"] == ShortcutModel(key: "0", option: true))

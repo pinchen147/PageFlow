@@ -389,7 +389,8 @@ extension NativeTextView {
         var seenSourceIDs: Set<Int> = []
         var staleStrips: [NSRange] = []
         storage.enumerateAttribute(.scrollableBlockSourceID, in: viewport, options: []) { value, attrRange, _ in
-            guard let sourceID = value as? Int,
+            guard (self.delegate as? NativeTextViewCoordinator)?.foldLayout.hiddenRange(containing: attrRange.location) == nil,
+                  let sourceID = value as? Int,
                   let image = storage.attribute(.renderedBlockImage, at: attrRange.location, effectiveRange: nil) as? NSImage else { return }
             if let tcs,
                let start = tcs.location(tcs.documentRange.location, offsetBy: attrRange.location),
@@ -629,6 +630,10 @@ extension NativeTextView {
             }
         }
         for (sourceID, overlay) in wideTableOverlays {
+            if (delegate as? NativeTextViewCoordinator)?.foldLayout.hiddenRange(containing: overlay.anchorTextLocation) != nil {
+                overlay.isHidden = true
+                continue
+            }
             // An edit above the table shifts the text under the stored
             // location; follow the attribute to where it lives now rather than
             // hide a grid that is still right (the table blinked off and on

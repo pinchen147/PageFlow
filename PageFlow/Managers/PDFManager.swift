@@ -93,8 +93,14 @@ final class PDFManager {
     @ObservationIgnored var documentStateStore: DocumentStateStore = .shared
     var documentURL: URL?
     var isDirty: Bool = false {
-        didSet { if isDirty { editRevision &+= 1 } }
+        didSet {
+            if isDirty {
+                editRevision &+= 1
+                markdownExportJob.cancel()
+            }
+        }
     }
+    @ObservationIgnored private let markdownExportJob = MarkdownExportJob()
     @ObservationIgnored private var editRevision: UInt64 = 0
     @ObservationIgnored private var documentEpoch: UInt64 = 0
     @ObservationIgnored private var savingDocumentID: ObjectIdentifier?
@@ -122,6 +128,7 @@ final class PDFManager {
     // Password-protected PDF state
     var pendingLockedDocument: PDFDocument?
     var pendingLockedURL: URL?
+    private var pendingLockedPageIndex: Int?
 
     // Back/forward page history (pure value type; see NavigationHistory).
     private var navigationHistory = NavigationHistory()
@@ -277,6 +284,27 @@ final class PDFManager {
         navigationHistory.clear()
     }
 
+    func copyMarkdown(scope: ExportScope, comments: [CommentModel] = []) {
+        guard document != nil, permissions.copy else { return }
+        let clipboard = MarkdownClipboard.shared
+        let request = clipboard.beginRequest()
+        exportMarkdown(scope: scope, comments: comments) {
+            clipboard.copy($0, for: request)
+        }
+    }
+
+    /// Admit a conversion against this exact source revision; closing, loading,
+    /// editing or submitting another export cancels any older request.
+    func exportMarkdown(scope: ExportScope, comments: [CommentModel] = [], completion: @escaping (String) -> Void) {
+        guard let document, permissions.copy else { return }
+        let epoch = documentEpoch
+        let revision = editRevision
+        markdownExportJob.start(scope: scope, document: document, comments: comments, isCurrent: { [weak self, weak document] in
+            guard let self, let document else { return false }
+            return self.document === document && self.documentEpoch == epoch && self.editRevision == revision
+        }, completion: completion)
+    }
+
     // MARK: - Document Loading
 
     func loadDocument(from url: URL, isSecurityScoped: Bool = false) -> DocumentLoadResult {
@@ -318,10 +346,12 @@ final class PDFManager {
             return false
         }
 
+        let linkedPageIndex = pendingLockedPageIndex
         finishPendingWrites()
         finalizeDocumentLoad(pdfDocument, url: url,
                              access: pendingFileAccess ?? PDFFileAccess(url: url))
         resetPendingLockedDocument()
+        if let linkedPageIndex { followPageLink(linkedPageIndex, for: url) }
         return true
     }
 
@@ -332,6 +362,7 @@ final class PDFManager {
     private func resetPendingLockedDocument() {
         pendingLockedDocument = nil
         pendingLockedURL = nil
+        pendingLockedPageIndex = nil
         pendingFileAccess = nil
     }
 
@@ -340,6 +371,7 @@ final class PDFManager {
     }
 
     private func finalizeDocumentLoad(_ pdfDocument: PDFDocument, url: URL, access: PDFFileAccess) {
+        markdownExportJob.cancel()
         clearUndoHistory()
         clearNavigationHistory()
         documentEpoch &+= 1
@@ -355,6 +387,7 @@ final class PDFManager {
     }
 
     func closeDocument() {
+        markdownExportJob.cancel()
         finishPendingWrites()
         documentEpoch &+= 1
         savingDocumentID = nil
@@ -460,6 +493,22 @@ final class PDFManager {
     func goToLastPage() {
         guard pageCount > 0 else { return }
         goToPage(pageCount - 1)
+    }
+
+    /// A linked page belongs to this exact document, including a pending unlock.
+    /// The pending target travels with the PDF manager through a window transfer.
+    func followPageLink(_ pageIndex: Int, for url: URL) {
+        guard pageIndex >= 0 else { return }
+        let target = url.pageFlowCanonicalDocumentURL
+        if pendingLockedURL?.pageFlowCanonicalDocumentURL == target {
+            pendingLockedPageIndex = pageIndex
+            return
+        }
+        guard documentURL?.pageFlowCanonicalDocumentURL == target,
+              let document, pageIndex < document.pageCount,
+              let page = document.page(at: pageIndex) else { return }
+        let bounds = page.bounds(for: .mediaBox)
+        goToDestination(PDFDestination(page: page, at: CGPoint(x: bounds.minX, y: bounds.maxY)))
     }
 
     /// Jump to an explicit destination (a point on a page) — e.g. bringing a
@@ -835,6 +884,13 @@ final class PDFManager {
     }
 
     func finishPendingWrites() { applySaved(fileSession.drain()) }
+
+    /// Native close/quit await physical I/O without blocking the UI actor.
+    func finishPendingWritesInBackground() async {
+        let session = fileSession
+        let saved = await Task.detached(priority: .userInitiated) { session.drain() }.value
+        applySaved(saved)
+    }
 
     private func applySaved(_ saved: PDFFileSession.Saved?) {
         guard let saved, saved.epoch == documentEpoch, saved.sequence > lastAppliedWrite,

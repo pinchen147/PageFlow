@@ -14,6 +14,28 @@ extension NativeTextView {
         "md", "markdown", "mdown", "mkd", "txt", "text"
     ]
 
+    override func copy(_ sender: Any?) {
+        if !copySelectedMarkdownBlock(to: .general) { super.copy(sender) }
+    }
+
+    override func cut(_ sender: Any?) {
+        guard isEditable, !hasMarkedText() else { return }
+        guard (delegate as? NativeTextViewCoordinator)?.admitFoldedEdit(selectedRange(), in: self) != false else { return }
+        if copySelectedMarkdownBlock(to: .general), let coordinator = delegate as? NativeTextViewCoordinator {
+            _ = coordinator.replaceSourceRanges([selectedRange()], with: "", expectedSource: string, actionName: "Cut")
+        } else { super.cut(sender) }
+    }
+
+    func copySelectedMarkdownBlock(to pasteboard: NSPasteboard) -> Bool {
+        guard let coordinator = delegate as? NativeTextViewCoordinator,
+              let object = coordinator.objectSelection, selectedRange() == object.token,
+              let payload = coordinator.blockMovePayload(range: object.token, kind: .image) else { return false }
+        let item = NSPasteboardItem()
+        payload.write(to: item)
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
+    }
+
     override func paste(_ sender: Any?) {
         guard isEditable, !hasMarkedText() else { return }
         if !paste(from: .general) { pasteAsPlainText(sender) }
@@ -22,6 +44,9 @@ extension NativeTextView {
     /// Reads a paste representation and inserts it through the native edit transaction.
     func paste(from pasteboard: NSPasteboard) -> Bool {
         guard isEditable, !hasMarkedText() else { return false }
+
+        guard (delegate as? NativeTextViewCoordinator)?.admitFoldedEdit(selectedRange(), in: self) != false else { return true }
+        if (delegate as? NativeTextViewCoordinator)?.pasteMarkdownBlock(from: pasteboard) == true { return true }
 
         if let imageEmbed = onPasteImage?(pasteboard), !imageEmbed.isEmpty {
             insertBlockEmbed(imageEmbed)
@@ -58,21 +83,16 @@ extension NativeTextView {
         insertText(text, replacementRange: selectedRange())
     }
 
-    /// A file dragged onto the editor arrives here (AppKit routes drops and
-    /// pastes through the same reader). The host's image hook gets the first
-    /// look, exactly as for a paste, so an image file becomes a rendering
-    /// image link instead of its path as plain text.
+    /// AppKit's own pasteboard reader (Services, Paste and Match Style). The
+    /// host's image hook gets the first look at files, exactly as for a
+    /// paste, so an image file becomes a rendering image link instead of its
+    /// path as plain text. Dropped files never come here: the note routes
+    /// every file drag itself (`NativeTextView+FileDrop`).
     override func readSelection(from pboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
-        // A Finder drag offers its files under more than one type (the modern
-        // file URL and the legacy filenames list); whichever AppKit picked, the
-        // pasteboard is what the hook reads.
-        // Documents the host opens (a dropped PDF or note) open as tabs rather
-        // than inserting their paths.
-        if let urls = pboard.readObjects(forClasses: [NSURL.self],
-                                         options: [.urlReadingFileURLsOnly: true]) as? [URL],
-           !urls.isEmpty, onDropDocuments?(urls) == true {
-            return true
-        }
+        guard (delegate as? NativeTextViewCoordinator)?.admitFoldedEdit(selectedRange(), in: self) != false else { return true }
+        // Files arrive under more than one type (the modern file URL and the
+        // legacy filenames list); whichever AppKit picked, the pasteboard is
+        // what the hook reads.
         if isEditable,
            pboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]),
            let embed = onPasteImage?(pboard), !embed.isEmpty {

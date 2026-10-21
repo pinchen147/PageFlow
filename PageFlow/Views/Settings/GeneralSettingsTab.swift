@@ -80,6 +80,7 @@ struct GeneralSettingsTab: View {
                             settingsManager.resetToolbarScale()
                         }
                         .buttonStyle(.plain)
+                        .pageFlowClickCursor()
                         .padding(.horizontal, DesignTokens.spacingMD)
                         .padding(.vertical, DesignTokens.spacingXS)
                         .pageFlowLiquidGlassSurface(
@@ -147,6 +148,7 @@ struct GeneralSettingsTab: View {
 
                 Toggle("Page look (centered reading column)", isOn: $settings.markdownPageLook)
                 Toggle("Center document when zoomed out", isOn: $settings.markdownCentersZoomedOut)
+                Toggle("Show hidden-content row", isOn: $settings.markdownShowsHiddenContentRow)
             } header: {
                 Text("Markdown")
             } footer: {

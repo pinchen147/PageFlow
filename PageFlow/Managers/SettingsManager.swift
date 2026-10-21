@@ -161,6 +161,7 @@ final class SettingsManager {
         static let markdownFontSize = "settings.markdownFontSize"
         static let markdownCentersZoomedOut = "settings.markdownCentersZoomedOut"
         static let markdownPageLook = "settings.markdownPageLook"
+        static let markdownShowsHiddenContentRow = "settings.markdownShowsHiddenContentRow"
     }
 
     /// The app-default Markdown editor font. PINNED to the engine's own default
@@ -360,6 +361,15 @@ final class SettingsManager {
         }
     }
 
+    /// Whether collapsed Markdown sections show their hidden-content summary row.
+    var markdownShowsHiddenContentRow = true {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownShowsHiddenContentRow, forKey: Keys.markdownShowsHiddenContentRow)
+            }
+        }
+    }
+
     // MARK: - Init
 
     init(defaults: UserDefaults = .standard) {
@@ -497,6 +507,9 @@ final class SettingsManager {
 
         markdownCentersZoomedOut = defaults.bool(forKey: Keys.markdownCentersZoomedOut)
         markdownPageLook = defaults.object(forKey: Keys.markdownPageLook) == nil ? true : defaults.bool(forKey: Keys.markdownPageLook)
+        if defaults.object(forKey: Keys.markdownShowsHiddenContentRow) != nil {
+            markdownShowsHiddenContentRow = defaults.bool(forKey: Keys.markdownShowsHiddenContentRow)
+        }
     }
 
     private func savePresets(_ presets: [ColorPreset], forKey key: String) {

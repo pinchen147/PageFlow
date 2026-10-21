@@ -97,6 +97,86 @@ struct MarkdownSaveOrderingTests {
         MarkdownDocumentManager(scheduleWrite: { scheduler.enqueue($0) })
     }
 
+    @Test
+    func saveDiskCheckWaitsForAnAlreadyAcceptedSaveAs() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("save-check-fence-\(UUID()).md")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let scheduler = ManualScheduler()
+        let manager = scheduledManager(scheduler)
+        manager.text = "Already accepted source\n"
+        let write = Task { await manager.saveAsWithCompletion(to: url) }
+        try #require(await scheduler.waitForAdmission(1))
+        var checkStarted = false
+        let checking = Task { checkStarted = true; return await manager.observeDiskForSave() }
+        while !checkStarted { await Task.yield() }
+        scheduler.drain()
+        #expect(await write.value.didWrite)
+        let checked = try #require(await checking.value)
+        #expect(manager.resolve(checked.observation, for: checked.probe) == .unchanged)
+        #expect(manager.documentURL == url)
+        #expect(try Data(contentsOf: url) == Data("Already accepted source\n".utf8))
+    }
+
+    @Test(arguments: [false, true])
+    func commandSaveKeepsItsDocumentWhileWaitingForSaveAs(moveToAnotherWindow: Bool) async throws {
+        let files = try fixture()
+        defer { try? FileManager.default.removeItem(at: files.directory) }
+        let destinationURL = files.directory.appendingPathComponent("accepted-destination.md")
+        let source = TabManager()
+        source.newMarkdownDocument()
+        let session = try #require(source.activeSession)
+        session.content.document.cleanup()
+        let scheduler = ManualScheduler()
+        let manager = scheduledManager(scheduler)
+        try manager.load(from: files.source)
+        let content = MarkdownContent(documentId: UUID().uuidString, documentManager: manager)
+        session.content = .markdown(content)
+        source.applyOpenedDocument(tabID: session.id, url: files.source, isSecurityScoped: false, title: "source")
+        let destination = TabManager(createInitialTab: false)
+        let windows = [source, destination].map { owner in
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                                  styleMask: [.titled], backing: .buffered, defer: true)
+            window.isReleasedWhenClosed = false
+            WindowRegistry.shared.register(owner, window: window)
+            return window
+        }
+        defer {
+            scheduler.drain()
+            for (owner, window) in zip([source, destination], windows) {
+                WindowRegistry.shared.unregister(owner)
+                for session in owner.sessions.values { session.cleanup() }
+                window.close()
+            }
+        }
+        manager.text = "First queued source\n"
+        let first = Task { await manager.saveAsWithCompletion(to: destinationURL) }
+        try #require(await scheduler.waitForAdmission(1))
+        manager.text = "Trailing edit e\u{301}\n"
+        var saveStarted = false
+        content.liveStorageText = { saveStarted = true; return nil }
+        let save = Task { await source.saveActiveDocument() }
+        while !saveStarted { await Task.yield() }
+        let owner: TabManager
+        if moveToAnotherWindow {
+            try #require(source.moveTab(session.id, to: destination, at: 0))
+            owner = destination
+        } else { owner = source }
+        owner.newMarkdownDocument()
+        let active = try #require(owner.activeSession)
+        active.content.markdown?.documentManager.text = "Other unsaved document"
+        scheduler.drain()
+        #expect(await first.value.didWrite)
+        try #require(await scheduler.waitForAdmission(2))
+        scheduler.drain()
+        if case .success = await save.value {} else { Issue.record("The original document's command Save failed") }
+        #expect(owner.activeSession === active)
+        #expect(owner.sessions[session.id]?.content.markdown === content)
+        #expect(owner.tabs.first { $0.id == session.id }?.documentURL == destinationURL)
+        #expect(try Data(contentsOf: destinationURL) == Data("Trailing edit e\u{301}\r\n".utf8))
+        #expect(try Data(contentsOf: files.source) == Data("original\r\n".utf8))
+        #expect(active.content.markdown?.documentManager.text == "Other unsaved document" && active.isDirty)
+    }
+
     private func fixture() throws -> (directory: URL, source: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("markdown-save-order-\(UUID().uuidString)", isDirectory: true)
@@ -170,7 +250,9 @@ struct MarkdownSaveOrderingTests {
         let save = Task { await manager.save() }
         #expect(await gate.waitForFirstWrite())
         try Data("external\n".utf8).write(to: files.source)
-        manager.keepLocalVersionIgnoringDisk()
+        let probe = try #require(manager.diskProbe())
+        let observation = MarkdownDocumentManager.observe(probe)
+        #expect(manager.keepObservedVersionForSynchronousSave(.init(observation: observation, probe: probe)))
         gate.release()
         #expect(await save.value)
         #expect(try Data(contentsOf: files.source) == Data("original\r\n".utf8))
@@ -200,7 +282,9 @@ struct MarkdownSaveOrderingTests {
         try externalBytes.write(to: files.source, options: .atomic)
         try #require(Data(contentsOf: files.source) == externalBytes)
         try #require(manager.diskWasModifiedExternally())
-        manager.keepLocalVersionIgnoringDisk()
+        let probe = try #require(manager.diskProbe())
+        let observation = MarkdownDocumentManager.observe(probe)
+        try #require(manager.keepObservedVersionForSynchronousSave(.init(observation: observation, probe: probe)))
         try #require(!manager.diskWasModifiedExternally(), "Keep must acknowledge the actual external source")
         try #require(manager.isDirty && manager.hasPendingWrites)
         let finalDiskBytes = newerExternal ? Data("unacknowledged external C\r\n".utf8) : externalBytes
@@ -482,7 +566,7 @@ struct MarkdownSaveOrderingTests {
         defer { try? FileManager.default.removeItem(at: files.directory) }
         let destination = files.directory.appendingPathComponent("renamed.md")
         let source = TabManager()
-        source.openDocument(url: files.source, isSecurityScoped: false)
+        await source.openDocument(url: files.source, isSecurityScoped: false)?.value
         let tabID = try #require(source.activeTabID)
         let session = try #require(source.activeSession)
         let content = try #require(source.activeMarkdownContent)
@@ -515,7 +599,7 @@ struct MarkdownSaveOrderingTests {
         let firstURL = files.directory.appendingPathComponent("first.md")
         let latestURL = files.directory.appendingPathComponent("latest.md")
         let owner = TabManager()
-        owner.openDocument(url: files.source, isSecurityScoped: false)
+        await owner.openDocument(url: files.source, isSecurityScoped: false)?.value
         let tabID = try #require(owner.activeTabID)
         let session = try #require(owner.activeSession)
         let content = try #require(owner.activeMarkdownContent)
@@ -538,7 +622,7 @@ struct MarkdownSaveOrderingTests {
         let replacement = files.directory.appendingPathComponent("replacement.md")
         try Data("replacement source\n".utf8).write(to: replacement)
         let owner = TabManager()
-        owner.openDocument(url: files.source, isSecurityScoped: false)
+        await owner.openDocument(url: files.source, isSecurityScoped: false)?.value
         let tabID = try #require(owner.activeTabID)
         let session = try #require(owner.activeSession)
         let oldContent = try #require(owner.activeMarkdownContent)
@@ -547,7 +631,7 @@ struct MarkdownSaveOrderingTests {
         if closeInsteadOfReplace {
             owner.closeTab(tabID)
         } else {
-            owner.openDocument(url: replacement, isSecurityScoped: false, replaceCurrent: true)
+            await owner.openDocument(url: replacement, isSecurityScoped: false, replaceCurrent: true)?.value
             try #require(owner.activeTabID == tabID)
             try #require(owner.activeMarkdownContent !== oldContent)
         }

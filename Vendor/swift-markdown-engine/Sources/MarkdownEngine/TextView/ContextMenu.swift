@@ -21,6 +21,11 @@ extension NativeTextViewWrapper.Coordinator {
             let session = tableEditingSession
             return session.contextMenu(for: event) { session.editor.standardMenu(for: event) }
         }
+        // A right-click on a rendered image selects it first (doc 26 §5.5); Cut and Copy act on it.
+        if let native = textView as? NativeTextView, native.isEditable,
+           let hit = native.renderedImage(at: native.convert(event.locationInWindow, from: nil)) {
+            selectImage(hit.image, in: native)
+        }
         if selectionBar != nil, showInsertBlockMenu(for: event, at: charIndex, in: textView) { return nil }
         let customMenu = menu.copy() as? NSMenu ?? NSMenu()
 
@@ -64,7 +69,20 @@ extension NativeTextViewWrapper.Coordinator {
             customMenu.insertItem(NSMenuItem.separator(), at: fontIndex + 3)
         }
 
+        if objectSelection != nil {
+            let copy = NSMenuItem(title: "Copy image", action: #selector(copyImageFromMenu(_:)), keyEquivalent: "")
+            copy.target = self
+            let delete = NSMenuItem(title: "Delete image", action: #selector(deleteImageFromMenu(_:)), keyEquivalent: "")
+            delete.target = self
+            customMenu.insertItem(NSMenuItem.separator(), at: 0)
+            customMenu.insertItem(delete, at: 0); customMenu.insertItem(copy, at: 0)
+        }
         return customMenu
+    }
+
+    @objc private func copyImageFromMenu(_ sender: Any?) { copySelectedImage() }
+    @objc private func deleteImageFromMenu(_ sender: Any?) {
+        guard let objectSelection, let textView else { return }; deleteImage(objectSelection, in: textView)
     }
 
     /// the reference editor's Insert block menu (doc 24 §5.4.8): a right-click on a line
@@ -229,6 +247,7 @@ extension NativeTextViewWrapper.Coordinator {
     }
 
     func applyInlineStyle(_ style: MarkdownInlineStyle) {
+        if objectSelection != nil { return }   // see `apply(_:)`
         if tableEditingSession.isActive {
             tableEditingSession.format(style)
             return
@@ -356,6 +375,12 @@ extension NativeTextViewWrapper.Coordinator {
         /// False for a table cell keystroke inside a typing run, whose one Undo
         /// step the cell session registered before the run's first keystroke.
         var registersUndo = true
+        /// Both locations of an atomic block move were admitted before its first mutation.
+        var preflighted = false
+        /// Only closed, complete blocks inserted/deleted at validated top-level boundaries.
+        /// Their delimiters cannot change the interpretation of the rest of the note.
+        var preservesBlockStructure = false
+        var commentMove: MarkdownCommentMove? = nil
     }
 
     /// Applies `edit` through the same pinned, viewport-first path forwards
@@ -382,10 +407,25 @@ extension NativeTextViewWrapper.Coordinator {
         defer { isApplyingSpanEdit = false }
         let wasLiteral = isLiteralInsertion
         isLiteralInsertion = true
-        let admitted = tv.shouldChangeText(in: edit.range, replacementString: edit.replacement)
+        let admitted = edit.preflighted || tv.shouldChangeText(in: edit.range, replacementString: edit.replacement)
         isLiteralInsertion = wasLiteral
         admissionUndo?.enableUndoRegistration()
         guard admitted else { return false }
+        if edit.preflighted {
+            var captured = false
+            PerfTrace.time("apply.capture") { captured = captureSourceEdit(in: tv, range: edit.range, replacement: edit.replacement) }
+            guard captured else { return false }
+        }
+        if edit.preservesBlockStructure {
+            var prepared = false
+            PerfTrace.time("apply.blockTokens") {
+                prepared = prepareStandaloneBlockTokens(in: textStorage.mutableString, range: edit.range, replacement: edit.replacement)
+            }
+            if prepared {
+                pendingEditRequiresFullDocumentRestyle = false
+                pendingPreEditActiveTokenIndices = []
+            }
+        }
         let previous = textStorage.mutableString.substring(with: edit.range)
         let newRange = NSRange(location: edit.range.location, length: (edit.replacement as NSString).length)
         let oldRange = edit.range
@@ -398,7 +438,9 @@ extension NativeTextViewWrapper.Coordinator {
                 ?? Self.paragraphPreservingMap(from: edit.replacement, to: previous, spanStart: oldRange.location),
             inverseMapLocation: edit.mapLocation,
             inverseSelection: edit.selectionAfter,
-            reflowsParagraphChain: edit.reflowsParagraphChain
+            reflowsParagraphChain: edit.reflowsParagraphChain,
+            preflighted: edit.preflighted, preservesBlockStructure: edit.preservesBlockStructure,
+            commentMove: edit.commentMove
         )
         if edit.registersUndo, let undoManager = tv.undoManager {
             undoManager.registerUndo(withTarget: self) { coordinator in
@@ -434,6 +476,10 @@ extension NativeTextViewWrapper.Coordinator {
                                       || (textStorage.length > NativeTextView.estimatedLayoutChainThreshold
                                           && edit.range.length > Self.deferredRestyleThreshold)) {
             tv.breakUndoCoalescing()
+            MainActor.assumeIsolated {
+                comments?.store.prepareMoveEdit(receipt: edit.commentMove, range: edit.range,
+                                                replacement: edit.replacement, in: textStorage.mutableString)
+            }
             PerfTrace.time("apply.replace") {
                 textStorage.beginEditing()
                 textStorage.replaceCharacters(in: edit.range, with: edit.replacement)

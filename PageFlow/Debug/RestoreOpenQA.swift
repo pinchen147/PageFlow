@@ -89,7 +89,7 @@ enum RestoreOpenQA {
 
     private static func observe(delegate: AppDelegate, scenario: String, sources: [URL: String],
                                 directory: URL, preconditions: [String: Bool]) async {
-        NSApp.activate(ignoringOtherApps: true)
+        QAPresentation.activateIfAllowed()
         let started = Date()
         var last = snapshot()
         var stableSince = Date()

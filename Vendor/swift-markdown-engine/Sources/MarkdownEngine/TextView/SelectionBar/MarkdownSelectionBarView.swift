@@ -9,6 +9,7 @@ import AppKit
 final class MarkdownSelectionBarView: NSView {
     enum Item: Hashable {
         case comment, textStyle, bold, italic, underline, strikethrough, code, highlight, list, link
+        case alignLeft, alignCenter, alignRight, crop, imageMore
     }
 
     static let height: CGFloat = 34
@@ -32,6 +33,11 @@ final class MarkdownSelectionBarView: NSView {
         setAccessibilityRole(.toolbar)
         setAccessibilityLabel("Formatting")
         let specs: [(Item, SelectionBarButton.Content, String, Bool)] = [
+            (.alignLeft, .symbol("text.alignleft"), "Align left", false),
+            (.alignCenter, .symbol("text.aligncenter"), "Align center", false),
+            (.alignRight, .symbol("text.alignright"), "Align right", false),
+            (.crop, .symbol("crop"), "Crop", false),
+            (.imageMore, .symbol("ellipsis"), "Image options", false),
             (.comment, .symbol("plus.bubble"), "Comment", false),
             (.textStyle, .symbol("textformat"), "Text style", true),
             (.bold, .symbol("bold"), "Bold", false),
@@ -48,6 +54,10 @@ final class MarkdownSelectionBarView: NSView {
             buttons[item] = button
             addSubview(button)
         }
+        for item in [Item.alignLeft, .alignCenter, .alignRight] { buttons[item]?.setAccessibilityRole(.radioButton) }
+        buttons[.crop]?.setAccessibilityLabel("Crop image")
+        buttons[.imageMore]?.setAccessibilityRole(.menuButton)
+        buttons[.imageMore]?.setAccessibilityLabel("More actions")
         buttons[.list]?.compactTrigger = true
         moreButton.isHidden = true
         addSubview(moreButton)
@@ -101,7 +111,7 @@ final class MarkdownSelectionBarView: NSView {
         case 115: focusedItem = order.first                                    // Home
         case 119: focusedItem = order.last                                     // End
         case 36, 76, 49: _ = buttons[current]?.accessibilityPerformPress()     // Return, Enter, Space
-        case 125: if buttons[current]?.hasCaret == true { _ = buttons[current]?.accessibilityPerformPress() } // ↓
+        case 125: if buttons[current]?.hasCaret == true || current == .imageMore { _ = buttons[current]?.accessibilityPerformPress() } // ↓
         case 126, 116, 121: break                                              // ↑, PageUp, PageDown
         case 53, 48:                                                           // Escape, Tab
             endKeyboardFocus()
@@ -123,11 +133,13 @@ final class MarkdownSelectionBarView: NSView {
 
     /// The controls for a text selection, for text in a table cell (no Text
     /// style, no List: deviation a), or for a code block (only Comment).
-    func arrange(inTable: Bool, inCode: Bool = false) {
+    func arrange(inTable: Bool, inCode: Bool = false, image: Bool = false) {
         lastArrangement = (inTable, inCode)
         let comments: [Item?] = showsComments ? [.comment] : []
         let wanted: [Item?]
-        if inCode {
+        if image {
+            wanted = comments + (showsComments ? [nil] : []) + [.alignLeft, .alignCenter, .alignRight, nil, .crop, nil, .imageMore]
+        } else if inCode {
             wanted = comments
         } else if inTable {
             wanted = comments + (showsComments ? [nil] : []) + [.bold, .italic, .underline, .strikethrough, .code, .highlight, nil, .link]

@@ -58,7 +58,12 @@ extension NativeTextViewCoordinator {
         parsed: ParsedDocument,
         in text: NSString
     ) -> (token: MarkdownToken, index: Int)? {
-        for token in parsed.imageEmbedTokens {
+        // Only an embed on the selection's line can hold it (at the very end of
+        // a note, that line is the last one). Measuring every embed's paragraph
+        // took milliseconds per selection change on an image-heavy note.
+        let window = text.paragraphRange(for: NSRange(location: min(max(0, selectionLocation), text.length), length: 0))
+        for token in parsed.imageEmbedTokens
+        where NSMaxRange(token.range) >= window.location && token.range.location <= NSMaxRange(window) {
             guard token.containsSelectionOrStandaloneParagraph(selectionLocation, in: text) else {
                 continue
             }
@@ -95,12 +100,14 @@ extension NativeTextViewCoordinator {
 
     // MARK: - Image Embed Activation
 
-    func filterImageEmbedActiveTokens(parsed: ParsedDocument, text: NSString, selectionLocation: Int) {
+    /// `excluding` is an embed selected as a whole: it stays rendered (doc 26 §3.3).
+    func filterImageEmbedActiveTokens(parsed: ParsedDocument, text: NSString, selectionLocation: Int,
+                                      excluding object: NSRange? = nil) {
         let activeImageEmbedIndex = imageEmbedToken(
             at: selectionLocation,
             parsed: parsed,
             in: text
-        )?.index
+        ).flatMap { $0.token.range == object ? nil : $0.index }
 
         for (idx, token) in parsed.tokens.enumerated() where token.kind == .imageEmbed {
             if idx != activeImageEmbedIndex {

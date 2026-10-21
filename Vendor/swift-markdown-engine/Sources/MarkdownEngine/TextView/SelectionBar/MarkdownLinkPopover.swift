@@ -111,7 +111,7 @@ final class MarkdownLinkPopover: NSView, NSTextFieldDelegate {
     }
 
     private func makeButton(_ title: String, action: Selector) -> NSButton {
-        let button = NSButton(title: title, target: self, action: action)
+        let button = ActionButton(title: title, target: self, action: action)
         button.bezelStyle = .rounded
         button.controlSize = .regular
         addSubview(button)

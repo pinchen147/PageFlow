@@ -95,6 +95,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         super.init()
         editor.session = self
         editor.delegate = self
+        editor.drawsBackground = false
         editor.isRichText = false
         editor.importsGraphics = false
         editor.allowsUndo = false
@@ -116,6 +117,13 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     }
 
     func owns(_ range: NSRange) -> Bool { table?.range.location == range.location }
+
+    /// A draw-time remount request is unnecessary while the retained input
+    /// already belongs to this canvas; avoid an idle draw/reconcile loop.
+    func isMounted(in canvas: NSView) -> Bool {
+        guard let grid else { return false }
+        return grid.superview === canvas && editorScroll.superview === grid
+    }
 
     func isSourceRevealed(_ range: NSRange) -> Bool { revealedSourceTableLocation == range.location }
 
@@ -146,11 +154,15 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     /// keyboard, Find, Undo or a caret placed in the table's source. A table
     /// that is not laid out yet takes the keyboard when it mounts.
     @discardableResult
-    func begin(range: NSRange, row: Int, column: Int, selecting entry: Entry) -> Bool {
+    func begin(range: NSRange, row: Int, column: Int, selecting entry: Entry, validatedSource: MarkdownTableSource? = nil) -> Bool {
         finishInput()
         renderTableNow()
         var table: (MarkdownTableSource, MarkdownTableLayout)?
-        PerfTrace.time("tableEntry.table") { table = editableTable(at: range) }
+        PerfTrace.time("tableEntry.table") {
+            if let validatedSource, validatedSource.range == range, let geometry = geometry(for: validatedSource) {
+                table = (validatedSource, geometry)
+            } else { table = editableTable(at: range) }
+        }
         guard let (source, geometry) = table,
               let span = Self.cellSpan(in: source, row: row, column: column),
               let main = coordinator?.textView as? NativeTextView else { return false }
@@ -512,7 +524,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         let shown = Self.decodedCell(encoded.text, selection: encoded.selection)
         run?.length += delta
         run?.caret = shown.selection.location
-        let heightBefore = grid?.geometry.size.height
+        let sizeBefore = grid?.geometry.size
         span = CellSpan(range: NSRange(location: span.range.location + (span.prefix.isEmpty ? 0 : (span.prefix as NSString).length),
                                        length: (encoded.text as NSString).length))
         guard let refreshed = MarkdownTableSource(
@@ -529,9 +541,11 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         editor.setSelectedRange(shown.selection)
         refreshing = false
         remount()
-        // A row that grew or shrank would let the grid overlap the text below
-        // until the deferred render: re-render the table now, pinned.
-        if deferred != nil, let heightBefore, let heightAfter = grid?.geometry.size.height, heightAfter != heightBefore {
+        // A shorter/narrower grid exposes stale raster borders; a taller row
+        // overlaps the text below. Width growth remains deferred: the live
+        // grid already covers the old raster, so ordinary typing stays cheap.
+        if deferred != nil, let sizeBefore, let sizeAfter = grid?.geometry.size,
+           sizeAfter.height != sizeBefore.height || sizeAfter.width < sizeBefore.width {
             renderTimer?.invalidate()
             renderTimer = nil
             renderRange = nil
@@ -645,6 +659,9 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
               }),
               let refreshed = MarkdownTableSource(source: main.string, range: token.range) else { retire(); return }
         adopt(refreshed)
+        // Undo can remove cells still covered by a range. Keep its snapshot so
+        // changed content still refuses destructive commands until reselection.
+        cellSelection = cellSelection?.clamped(to: refreshed)
         row = min(row, refreshed.rowCount - 1)
         column = min(column, refreshed.columnCount - 1)
         guard let span = Self.cellSpan(in: refreshed, row: row, column: column) else { retire(); return }
@@ -685,8 +702,8 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         showCommittedCell()
     }
 
-    /// The editor over the focused cell paints the page colour; the grid
-    /// draws the cell's text under it. A cell range hides it (it keeps the
+    /// The transparent editor supplies the focused cell's text; the grid
+    /// retains its existing fill. A cell range hides it (it keeps the
     /// keyboard) so the range's tint shows over the anchor cell too.
     func setEditorShown(_ shown: Bool) {
         editorScroll.alphaValue = shown ? 1 : 0
@@ -711,7 +728,6 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         refreshing = true
         editor.string = Self.decodedCell((table.source as NSString).substring(with: span.range)).text
         applyCellStyle(coordinator: coordinator, table: table)
-        editor.backgroundColor = .textBackgroundColor
         editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
         editor.setAccessibilityLabel(row == 0 ? "Table header, column \(column + 1)" : "Table row \(row), column \(column + 1)")
         refreshing = false

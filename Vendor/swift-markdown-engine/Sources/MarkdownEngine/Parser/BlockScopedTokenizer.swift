@@ -198,7 +198,7 @@ extension MarkdownTokenizer {
     }
 }
 
-private extension MarkdownToken {
+extension MarkdownToken {
     /// Returns a copy with every range moved forward by `delta` UTF-16 units.
     func shifted(by delta: Int) -> MarkdownToken {
         func move(_ r: NSRange) -> NSRange {

@@ -73,6 +73,7 @@ struct MarkdownFormatToolbar: View {
                 GlassToolbarLabel(icon: "plus", interactive: true)
             }
             .menuStyle(.borderlessButton)
+            .pageFlowClickCursor()
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Insert")

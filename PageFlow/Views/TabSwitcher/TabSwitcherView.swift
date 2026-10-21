@@ -367,6 +367,7 @@ struct TabSwitcherView: View {
             }
         }
         .onTapGesture(perform: action)
+        .pageFlowClickCursor()
         .id(id)
     }
 

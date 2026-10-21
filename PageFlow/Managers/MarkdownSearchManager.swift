@@ -47,8 +47,10 @@ final class MarkdownSearchManager: FindReplacing {
     private let bus: MarkdownEditorBus
     private let documentId: String
 
-    @ObservationIgnored private var searchedSource: [UInt16]?
-    @ObservationIgnored private var searchedQuery: [UInt16]?
+    @ObservationIgnored private var searchedSource: String?
+    @ObservationIgnored private var searchedQuery: String?
+    @ObservationIgnored private var pendingSearch: Task<Void, Never>?
+    @ObservationIgnored private var searchGeneration: UInt64 = 0
 
     init(
         bus: MarkdownEditorBus,
@@ -67,13 +69,14 @@ final class MarkdownSearchManager: FindReplacing {
     /// All ranges of `query` in `text`, case-insensitive, non-overlapping, in
     /// document order. Empty for an empty query or no match. Pure: no editor, no
     /// notifications — the unit-test seam for result count + ordering.
-    static func matchRanges(of query: String, in text: String) -> [NSRange] {
+    nonisolated static func matchRanges(of query: String, in text: String) -> [NSRange] {
         guard !query.isEmpty else { return [] }
         let haystack = text as NSString
         var ranges: [NSRange] = []
         var searchStart = 0
         let total = haystack.length
         while searchStart < total {
+            guard !Task.isCancelled else { return [] }
             let scope = NSRange(location: searchStart, length: total - searchStart)
             let found = haystack.range(of: query, options: .caseInsensitive, range: scope)
             guard found.location != NSNotFound else { break }
@@ -102,6 +105,7 @@ final class MarkdownSearchManager: FindReplacing {
     /// Replace the current live match and continue past the inserted text.
     @discardableResult
     func replaceCurrent() -> Bool {
+        cancelPendingSearch()
         guard !searchQuery.isEmpty, let editorController else { return false }
         let source = textProvider()
         refreshResultsIfNeeded(force: false, source: source)
@@ -120,6 +124,7 @@ final class MarkdownSearchManager: FindReplacing {
     /// Apply the initial match snapshot once as one native Undo operation.
     @discardableResult
     func replaceAll() -> Int {
+        cancelPendingSearch()
         guard !searchQuery.isEmpty, let editorController else { return 0 }
         let source = textProvider()
         refreshResultsIfNeeded(force: false, source: source)
@@ -138,6 +143,7 @@ final class MarkdownSearchManager: FindReplacing {
     /// Recompute matches for `searchQuery` over the live text and focus the first.
     /// An empty query routes to `clear()`.
     func runSearch() {
+        cancelPendingSearch()
         guard !searchQuery.isEmpty else {
             clear()
             return
@@ -146,11 +152,62 @@ final class MarkdownSearchManager: FindReplacing {
         postCurrentMatch()
     }
 
+    /// Query typing never scans on the main actor. Coalesce bursts, cancel
+    /// obsolete scans and accept only ranges for the current exact source.
+    func scheduleSearch() {
+        cancelPendingSearch()
+        let hadResults = !searchResults.isEmpty
+        searchResults = []
+        currentResultIndex = 0
+        if hadResults { clearHighlights() }
+        guard !searchQuery.isEmpty else {
+            searchedSource = nil
+            searchedQuery = nil
+            return
+        }
+        let generation = searchGeneration
+        let query = searchQuery
+        pendingSearch = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(80)) }
+            catch { return }
+            guard !Task.isCancelled, self?.searchGeneration == generation,
+                  let source = self?.textProvider() else { return }
+            let worker = Task.detached(priority: .userInitiated) {
+                Self.matchRanges(of: query, in: source)
+            }
+            let ranges = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled, let self,
+                  self.searchGeneration == generation,
+                  self.searchQuery.hasSameSource(as: query) else { return }
+            self.pendingSearch = nil
+            guard source.hasSameSource(as: self.textProvider()) else {
+                self.scheduleSearch()
+                return
+            }
+            self.searchResults = ranges
+            self.currentResultIndex = 0
+            self.searchedSource = source
+            self.searchedQuery = query
+            self.postCurrentMatch()
+        }
+    }
+
+    private func cancelPendingSearch() {
+        searchGeneration &+= 1
+        pendingSearch?.cancel()
+        pendingSearch = nil
+    }
+
     func next() { move(by: 1) }
 
     func previous() { move(by: -1) }
 
     private func move(by step: Int) {
+        cancelPendingSearch()
         guard !searchQuery.isEmpty else { return }
         if !refreshResultsIfNeeded(force: false), hasResults {
             let count = searchResults.count
@@ -160,22 +217,22 @@ final class MarkdownSearchManager: FindReplacing {
     }
 
     /// Changed source starts a fresh search; unchanged source retains navigation.
-    /// Literal UTF16 snapshots keep ranges valid across canonical-equivalent edits.
+    /// Literal source equality keeps ranges valid across canonical-equivalent edits.
     @discardableResult
     private func refreshResultsIfNeeded(force: Bool, source: String? = nil) -> Bool {
         let source = source ?? textProvider()
-        let sourceUnits = Array(source.utf16)
-        let queryUnits = Array(searchQuery.utf16)
-        guard force || searchedSource != sourceUnits || searchedQuery != queryUnits else { return false }
+        guard force || searchedSource?.hasSameSource(as: source) != true
+                || searchedQuery?.hasSameSource(as: searchQuery) != true else { return false }
         searchResults = Self.matchRanges(of: searchQuery, in: source)
         currentResultIndex = 0
-        searchedSource = sourceUnits
-        searchedQuery = queryUnits
+        searchedSource = source
+        searchedQuery = searchQuery
         return true
     }
 
     /// Clear the query, results, and the editor's highlights.
     func clear() {
+        cancelPendingSearch()
         searchQuery = ""
         searchResults = []
         currentResultIndex = 0

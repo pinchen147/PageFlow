@@ -18,6 +18,23 @@ import SwiftUI
 /// in extensions (Autocorrect, CodeBlocks, Find, InlineSelection,
 /// Notifications, Restyling, TextDelegate, WritingTools).
 public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
+    let blockEditorID = UUID().uuidString
+    let localFoldSession = MarkdownFoldSession()
+    let foldLayout = MarkdownFoldLayout()
+    var foldControls: MarkdownFoldControls?
+    var foldBlockedKeyCode: UInt16?
+    var lastFoldingCommandState: FoldingCommandState?
+    var foldSourceGeneration = -1
+    weak var foldBoundSession: MarkdownFoldSession?
+    var foldCurrentKeyEvent: NSEvent?
+    var foldCompositionStart: (range: NSRange, length: Int, generation: Int)?
+    var foldIndexTask: Task<Void, Never>?
+    var foldIndexNeedsReconciliation = false
+    var foldStorageObserver: NSObjectProtocol?
+    var foldPresentationNeedsRefresh = false
+    var lastFoldClosedHeadings: Set<Int> = []
+    var lastFoldSummaryPreference: Bool?
+    lazy var blockMover = BlockMover(coordinator: self)
     var documentId: String?
     /// Remembered scroll offset (`bounds.origin.y`) per `documentId` — saved on
     /// switch-away, restored on switch-back.
@@ -139,6 +156,20 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var tableProxy: TableProxyScroller?
     /// the reference editor's comments (with the selection bar and a host controller).
     var comments: MarkdownCommentsController?
+    /// The image selected as a whole (doc 26 §3): the text view's selection is
+    /// its token, which stays rendered (+ObjectSelection).
+    var objectSelection: ObjectSelection? {
+        didSet { if objectSelection != oldValue { objectSelectionDidChange(from: oldValue) } }
+    }
+    /// Set while this editor moves the selection onto an image itself, so the
+    /// selection handler does not convert that selection again.
+    var isSettingObjectSelection = false
+    /// The selected image's ring (doc 26 §3.5), made on first use.
+    var imageChrome: ImageChromeController?
+    var imageControls: ImageControlsController?
+    /// The text view's Writing Tools behaviour (raw value) while an image is
+    /// selected as a whole: off then, so Writing Tools never rewrites its Markdown.
+    var writingToolsBehaviorBeforeObject: Int?
     /// Called when the selection's formatting changes (bar, Format menu, toolbar).
     var onFormatStateChange: ((MarkdownFormatState) -> Void)?
     var publishedFormatState = MarkdownFormatState()
@@ -306,6 +337,8 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
         viewObserverTokens.removeAll(keepingCapacity: true)
     }
 
+    var cachedBlockParse: BlockParser.Snapshot?
+
     struct ParsedDocument {
         let tokens: [MarkdownToken]
         let codeTokens: [MarkdownToken]
@@ -443,6 +476,8 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     // `NativeTextViewCoordinator+Find.swift`.
 
     deinit {
+        if let foldStorageObserver { NotificationCenter.default.removeObserver(foldStorageObserver) }
+        foldIndexTask?.cancel()
         NotificationCenter.default.removeObserver(self)
         busObservers.forEach(NotificationCenter.default.removeObserver(_:))
         viewObserverTokens.forEach(NotificationCenter.default.removeObserver(_:))

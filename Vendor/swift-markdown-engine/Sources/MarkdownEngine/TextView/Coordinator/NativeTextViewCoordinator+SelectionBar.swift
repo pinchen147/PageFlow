@@ -3,6 +3,10 @@ import AppKit
 extension NativeTextViewCoordinator {
     /// Shows or removes the selection bar to match the configuration.
     func reconcileSelectionBar(in scrollView: NSScrollView) {
+        blockMover.install(in: scrollView)
+        if imageControls == nil, let main = textView as? NativeTextView {
+            imageControls = ImageControlsController(coordinator: self, textView: main, scrollView: scrollView)
+        }
         let wanted = configuration.showsSelectionBar
         if wanted, selectionBar == nil, let main = textView {
             selectionBar = MarkdownSelectionBarController(coordinator: self, scrollView: scrollView)
@@ -51,6 +55,13 @@ extension NativeTextViewCoordinator {
     /// document's, read from the cached parse (never a new parse).
     func currentFormatState() -> MarkdownFormatState? {
         guard let main = textView else { return nil }
+        if let image = selectedImageTarget() {
+            var state = MarkdownFormatState()
+            state.context = .image(alignment: image.tokens.alignment, hasCrop: image.tokens.crop != nil, width: image.tokens.width)
+            state.textStyle = nil
+            state.isEditable = main.isEditable
+            return state
+        }
         let session = tableEditingSession
         if session.isRangeMode {
             var state = session.rangeFormatState()

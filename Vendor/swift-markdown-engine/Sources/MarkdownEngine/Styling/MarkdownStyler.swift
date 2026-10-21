@@ -86,7 +86,8 @@ enum MarkdownStyler {
     /// rebase pass below.
     static let anchorRelativeRangeKeys: Set<NSAttributedString.Key> = [
         .scrollableBlockFullRange,
-        .markdownTableSourceRange
+        .markdownTableSourceRange,
+        .markdownBlockSourceRange
     ]
 
     static func styleAttributes(
@@ -236,6 +237,9 @@ extension MarkdownStyler {
         paragraphSpacing: CGFloat,
         alignment: NSTextAlignment,
         mode: RenderedStandaloneBlockMode,
+        // How the fragment draws an image (crop, corners, alignment): on the
+        // anchor when collapsed, on the source when revealed.
+        imageAttrs: [NSAttributedString.Key: Any] = [:],
         ctx: StylingContext,
         attrs: inout [StyledRange]
     ) -> Bool {
@@ -248,6 +252,13 @@ extension MarkdownStyler {
 
         switch mode {
         case .collapsedSource(let markerTexts):
+            var anchorAttrs = imageAttrs
+            if token.kind == .table {
+                anchorAttrs[.markdownTableSourceRange] = NSValue(range: token.range)
+            } else if let kind = MarkdownBlockKind(collapsing: token.kind) {
+                anchorAttrs[.markdownBlockSourceRange] = NSValue(range: token.range)
+                anchorAttrs[.markdownBlockKind] = kind.rawValue
+            }
             emitCollapsedAttrs(
                 token: token,
                 rawContent: rawContent,
@@ -258,8 +269,7 @@ extension MarkdownStyler {
                 paraRange: paraRange,
                 advanceWidth: imageBounds.width,
                 neededLineHeight: imageBounds.height,
-                extraAnchorAttrs: token.kind == .table
-                    ? [.markdownTableSourceRange: NSValue(range: token.range)] : [:],
+                extraAnchorAttrs: anchorAttrs,
                 markerTexts: markerTexts,
                 ctx: ctx,
                 attrs: &attrs
@@ -301,7 +311,7 @@ extension MarkdownStyler {
                 .latexBounds: NSValue(rect: imageBounds),
                 .latexIsBlock: true,
                 .latexBlockOffsetY: baseLineHeight + imageGap
-            ]))
+            ].merging(imageAttrs) { _, new in new }))
             appendSecondaryMarkers(for: token, to: &attrs, theme: ctx.configuration.theme)
         }
 
@@ -341,7 +351,11 @@ extension MarkdownStyler {
             return CharacterSet.whitespacesAndNewlines.contains(scalar)
         }.count
         let contentEnd = NSMaxRange(token.contentRange)
-        let anchorLocation = min(token.contentRange.location + leadingWhitespaceUnits, contentEnd - 1)
+        // `![](x.png)` has no content character to carry the image, so its `!`
+        // does (doc 26 §2.5); otherwise the first non-blank content character.
+        let anchorLocation = token.contentRange.length == 0
+            ? token.range.location
+            : min(token.contentRange.location + leadingWhitespaceUnits, contentEnd - 1)
 
         var paragraphAttributes: [StyledRange] = []
         ctx.nsText.enumerateSubstrings(in: paraRange, options: .byParagraphs) { _, _, enclosingRange, _ in
@@ -384,9 +398,9 @@ extension MarkdownStyler {
                 anchorAttrs[key] = value
             }
         }
-        attrs.append((anchorRange, anchorAttrs))
 
-        let trailingStart = anchorLocation + 1
+        // The content after the anchor (none when the anchor is an empty-alt `!`).
+        let trailingStart = max(anchorLocation + 1, token.contentRange.location)
         let trailingLength = contentEnd - trailingStart
         if trailingLength > 0 {
             let trailingRange = NSRange(location: trailingStart, length: trailingLength)
@@ -419,6 +433,10 @@ extension MarkdownStyler {
                 .kern: -HeadingHelpers.hiddenRunWidth(preTokenText, font: ctx.latexMarkerFont)
             ]))
         }
+
+        // Last, so no hidden run or marker that covers the anchor (the `!` of
+        // an empty-alt image) overwrites its kern, which reserves the width.
+        attrs.append((anchorRange, anchorAttrs))
     }
 }
 

@@ -33,7 +33,13 @@ final class NativeTextViewContainer: NSView {
 
     /// The body. Sizes its OWN height (content + overscroll); the container only moves
     /// it below the header band and sizes itself to the sum.
-    weak var textView: NativeTextView?
+    weak var textView: NativeTextView? {
+        didSet {
+            // The page-look gutters take the note's file drags and block moves
+            // too (doc 26 §9.6); text drags stay the text view's own.
+            registerForDraggedTypes(NativeTextView.fileDropTypes + [TableChromeController.tableMoveType])
+        }
+    }
 
     /// Reserved header band height (mirrors the clip's resolved height). Sole driver of
     /// the vertical stack: the text view sits at `y = headerHeight`.
@@ -171,6 +177,39 @@ final class NativeTextViewContainer: NSView {
         super.setFrameSize(newSize)
         // Width came from the scroll view's clip view (autoresizing); propagate it.
         restack(propagateWidth: true)
+    }
+
+    // MARK: Drags over the gutters (doc 26 §9.6)
+
+    // A drag beside the reading column is the text view's: it lands at the
+    // line level with the pointer (`NativeTextView.dragPoint` clamps x).
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        textView?.draggingEntered(sender) ?? []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        textView?.draggingUpdated(sender) ?? []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        textView?.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        textView?.prepareForDragOperation(sender) ?? false
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        textView?.performDragOperation(sender) ?? false
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        textView?.concludeDragOperation(sender)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        textView?.draggingEnded(sender)
     }
 }
 

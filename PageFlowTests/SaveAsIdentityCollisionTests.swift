@@ -48,7 +48,7 @@ struct SaveAsIdentityCollisionTests {
 
         let sourceOwner = TabManager(createInitialTab: false)
         let targetOwner = differentWindow ? TabManager(createInitialTab: false) : sourceOwner
-        targetOwner.openDocument(url: targetURL, isSecurityScoped: false)
+        await targetOwner.openDocument(url: targetURL, isSecurityScoped: false)?.value
         let targetSession = try #require(targetOwner.activeSession)
         let targetContent = try #require(targetSession.content.markdown)
         let targetDraft = "# Target\n\nunsaved target e\u{301} 😀\n"
@@ -127,7 +127,7 @@ struct SaveAsIdentityCollisionTests {
     /// A saved quit handle must publish the file identity even when termination
     /// is later cancelled. The other draft remains live throughout this boundary.
     @Test(arguments: [false, true])
-    func quitSaveAsPublishesIdentityAndFollowsTheMovedSession(transfer: Bool) throws {
+    func quitSaveAsPublishesIdentityAndFollowsTheMovedSession(transfer: Bool) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("quit-save-identity-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -166,7 +166,7 @@ struct SaveAsIdentityCollisionTests {
         #expect(liveOwner.captureWindowSession()?.tabs.contains { $0.path == destination.pageFlowCanonicalDocumentURL.path } == true)
         #expect(other.documentManager.documentURL == nil && other.documentManager.isDirty)
         #expect(other.documentManager.text == otherSource)
-        opener.openDocument(url: destination, isSecurityScoped: false)
+        await opener.openDocument(url: destination, isSecurityScoped: false)?.value
         #expect(opener.tabs.map(\.id) == openerIDs, "Reopening the saved file must focus its existing session")
         #expect(liveOwner.activeTabID == session.id)
         #expect(owners.flatMap(\.tabs).filter { $0.documentURL?.pageFlowCanonicalDocumentURL == destination.pageFlowCanonicalDocumentURL }.map(\.id) == [session.id])
@@ -307,7 +307,7 @@ struct SaveAsIdentityCollisionTests {
         }
         let liveOwner = transfer ? target : source
         #expect(WindowRegistry.shared.isDocumentOpen(destination), "The accepted destination must be reserved before disk replacement")
-        opener.openDocument(url: destination, isSecurityScoped: false)
+        await opener.openDocument(url: destination, isSecurityScoped: false)?.value
         #expect(opener.tabs.map(\.id) == openerIDs, "Opening during Save As must not read a stale second editing session")
         #expect(liveOwner.activeTabID == session.id)
         #expect(liveOwner.sessions[session.id] === session)
@@ -320,7 +320,7 @@ struct SaveAsIdentityCollisionTests {
         #expect(liveOwner.tabID(for: destination) == session.id)
         #expect(liveOwner.tabs.first { $0.id == session.id }?.documentURL == destination)
         #expect(!content.documentManager.isDirty)
-        opener.openDocument(url: destination, isSecurityScoped: false)
+        await opener.openDocument(url: destination, isSecurityScoped: false)?.value
         #expect(opener.tabs.map(\.id) == openerIDs)
         #expect(liveOwner.activeTabID == session.id)
         #expect(owners.flatMap(\.tabs).filter { $0.documentURL?.pageFlowCanonicalDocumentURL == destination.pageFlowCanonicalDocumentURL }.map(\.id) == [session.id])
@@ -371,7 +371,7 @@ struct SaveAsIdentityCollisionTests {
         try FileManager.default.removeItem(at: targetDirectory)
         try FileManager.default.moveItem(at: preservedDirectory, to: targetDirectory)
         try #require(Data(contentsOf: destination) == diskBytes)
-        opener.openDocument(url: destination, isSecurityScoped: false)
+        await opener.openDocument(url: destination, isSecurityScoped: false)?.value
         let opened = try #require(opener.activeMarkdownContent)
         #expect(opened !== content)
         #expect(opener.tabID(for: destination) == opener.activeTabID)
@@ -393,7 +393,7 @@ struct SaveAsIdentityCollisionTests {
             chosen = alias.appendingPathComponent("source.md")
         } else { chosen = destination }
         let owner = TabManager(createInitialTab: false)
-        owner.openDocument(url: destination, isSecurityScoped: false)
+        await owner.openDocument(url: destination, isSecurityScoped: false)?.value
         let windows = register([owner])
         defer { cleanup([owner], windows: windows) }
         let session = try #require(owner.activeSession)

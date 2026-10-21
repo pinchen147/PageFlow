@@ -12,6 +12,8 @@
 
 import Foundation
 import PDFKit
+import MarkdownEngine
+import SwiftUI
 import Testing
 @testable import PageFlow
 
@@ -354,7 +356,7 @@ struct MarkdownLifecycleTests {
     func saveNeverOverwritesAnUnseenExternalChange() async throws {
         try await withTempMarkdown(bytes: Data("v1\n".utf8)) { url in
             let manager = TabManager()
-            manager.openDocument(url: url, isSecurityScoped: false)
+            await manager.openDocument(url: url, isSecurityScoped: false)?.value
             let session = try #require(manager.activeSession)
             let content = try #require(session.content.markdown)
             content.documentManager.text = "local\n"
@@ -379,9 +381,98 @@ struct MarkdownLifecycleTests {
         }
     }
 
-    /// Reload re-reads the changed bytes, drops the local draft (clean again), and
-    /// resets the editor undo stack (⌘Z can't cross an external rewrite). The baseline
-    /// advances so the tab stops re-prompting.
+    /// Keep acknowledges the version that caused the prompt, not a later write.
+    @Test
+    func synchronousKeepDoesNotAcknowledgeAWriteThatArrivesInsideItsPrompt() async throws {
+        try await withTempMarkdown(bytes: Data("Original\n".utf8)) { url in
+            let owner = TabManager()
+            await owner.openDocument(url: url, isSecurityScoped: false, bringsToFront: false)?.value
+            let session = try #require(owner.activeSession)
+            let content = try #require(owner.activeMarkdownContent)
+            defer { for session in owner.sessions.values { session.cleanup() } }
+            content.documentManager.text = "Local draft\n"
+            try Data("Observed external version\n".utf8).write(to: url)
+            var prompts = 0
+            owner.externalChangePrompt = { _, _ in
+                prompts += 1
+                try? Data("New unseen external version\n".utf8).write(to: url)
+                return .keepMine
+            }
+            #expect(owner.confirmSaveOverExternalChange(content, session: session))
+            #expect(prompts == 1)
+            #expect(content.documentManager.diskChange() == .modified)
+            #expect(content.documentManager.text == "Local draft\n" && content.documentManager.isDirty)
+            #expect(try Data(contentsOf: url) == Data("New unseen external version\n".utf8))
+        }
+    }
+
+    @Test
+    func aSaveLandingInsideTheClosePromptRevokesItsOldObservation() async throws {
+        try await withTempMarkdown(bytes: Data("Original\n".utf8)) { url in
+            let owner = TabManager()
+            await owner.openDocument(url: url, isSecurityScoped: false, bringsToFront: false)?.value
+            let session = try #require(owner.activeSession)
+            let content = try #require(owner.activeMarkdownContent)
+            defer { for session in owner.sessions.values { session.cleanup() } }
+            content.documentManager.text = "Local draft\n"
+            try Data("Observed external version\n".utf8).write(to: url)
+            var saved = false
+            owner.externalChangePrompt = { _, _ in
+                saved = content.documentManager.saveSync()
+                try? Data("New unseen external version\n".utf8).write(to: url)
+                return .keepMine
+            }
+            #expect(!owner.confirmSaveOverExternalChange(content, session: session))
+            #expect(saved)
+            #expect(content.documentManager.diskChange() == .modified)
+            #expect(try Data(contentsOf: url) == Data("New unseen external version\n".utf8))
+        }
+    }
+
+    /// Close Save completes Keep/Reload before returning and preserves Cancel.
+    @Test(arguments: ["keep", "reload", "cancel"])
+    func closeSaveChoicesKeepTheirSynchronousBehavior(choice: String) async throws {
+        try await withTempMarkdown(bytes: Data("Original\n".utf8)) { url in
+            let owner = TabManager()
+            await owner.openDocument(url: url, isSecurityScoped: false, bringsToFront: false)?.value
+            let session = try #require(owner.activeSession)
+            let content = try #require(owner.activeMarkdownContent)
+            defer { for session in owner.sessions.values { session.cleanup() } }
+            content.documentManager.text = "Local draft\n"
+            content.undoManager.beginUndoGrouping()
+            content.undoManager.registerUndo(withTarget: content) { _ in }
+            content.undoManager.endUndoGrouping()
+            try Data("External version\n".utf8).write(to: url)
+            var prompts = 0
+            owner.externalChangePrompt = { _, _ in
+                prompts += 1
+                switch choice {
+                case "keep": return .keepMine
+                case "reload": return .reload
+                default: return .cancel
+                }
+            }
+            let saved = DirtyDoc(session: session, owner: owner).saveSync()
+            #expect(prompts == 1)
+            switch choice {
+            case "keep":
+                #expect(saved && !content.documentManager.isDirty)
+                #expect(content.documentManager.text == "Local draft\n")
+                #expect(try Data(contentsOf: url) == Data("Local draft\n".utf8))
+            case "reload":
+                #expect(saved && !content.documentManager.isDirty)
+                #expect(content.documentManager.text == "External version\n")
+                #expect(!content.undoManager.canUndo)
+                #expect(try Data(contentsOf: url) == Data("External version\n".utf8))
+            default:
+                #expect(!saved && content.documentManager.isDirty)
+                #expect(content.documentManager.text == "Local draft\n")
+                #expect(try Data(contentsOf: url) == Data("External version\n".utf8))
+            }
+        }
+    }
+
+    /// Reload resets undo and advances the baseline to the newly loaded source.
     @Test
     func reloadFromDiskClearsDirtyAndResetsUndo() async throws {
         try await withTempMarkdown(bytes: Data("original\n".utf8)) { url in
@@ -406,6 +497,42 @@ struct MarkdownLifecycleTests {
             #expect(!content.documentManager.isDirty)               // draft discarded
             #expect(!content.undoManager.canUndo)                   // undo reset
             #expect(!content.shouldPromptForExternalChange)         // baseline advanced
+        }
+    }
+
+    @Test(arguments: ["sync-same", "sync-changed", "background-same", "background-changed", "background-stale", "background-failed"])
+    func externalReloadResetsFoldsOnlyAfterApplyingChangedSource(_ scenario: String) async throws {
+        let source = "# First\nbody\n# Last\nend\n"
+        try await withTempMarkdown(bytes: Data(source.utf8)) { url in
+            let content = MarkdownContent(documentId: UUID().uuidString)
+            try content.documentManager.load(from: url)
+            let wrapper = NativeTextViewWrapper(
+                text: Binding(get: { content.documentManager.text }, set: { content.documentManager.text = $0 }),
+                documentId: content.documentId, editorController: content.editorController, undoManager: content.undoManager)
+            let coordinator = wrapper.makeCoordinator()
+            let scroll = wrapper.makeNativeView(coordinator: coordinator)
+            scroll.frame = NSRect(x: 0, y: 0, width: 650, height: 500)
+            defer { NativeTextViewWrapper.dismantleNSView(scroll, coordinator: coordinator) }
+            wrapper.updateNativeView(scroll, coordinator: coordinator)
+            let view = try #require(scroll.documentView?.subviews.compactMap { $0 as? NSTextView }.first)
+            view.setSelectedRange(NSRange(location: 0, length: 0))
+            try #require(content.editorController.performFoldingCommand(.toggleFold))
+            if scenario.hasSuffix("failed") { try FileManager.default.removeItem(at: url) }
+            else if !scenario.hasSuffix("same") { try Data("# First\nchanged\n# Last\nend\n".utf8).write(to: url) }
+            if scenario.hasPrefix("sync") { try content.reloadFromDisk() }
+            else if scenario.hasSuffix("failed") {
+                do {
+                    _ = try await content.reloadFromDiskInBackground(whileCurrent: { true })
+                    Issue.record("A missing source file must fail reload")
+                } catch { }
+            } else {
+                let applied = try await content.reloadFromDiskInBackground(whileCurrent: { !scenario.hasSuffix("stale") })
+                #expect(applied == !scenario.hasSuffix("stale"))
+            }
+            wrapper.updateNativeView(scroll, coordinator: coordinator)
+            view.setSelectedRange(NSRange(location: 0, length: 0))
+            #expect(content.editorController.isCurrentSectionFolded == !scenario.hasSuffix("changed"))
+            #expect(!content.documentManager.isDirty)
         }
     }
 

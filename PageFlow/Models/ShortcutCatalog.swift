@@ -131,6 +131,13 @@ enum ShortcutCatalog {
         ShortcutAction(id: "toggleToolbar", title: "Toggle Toolbar", category: .view, defaultShortcut: ShortcutModel(key: "t", shift: true)),
         ShortcutAction(id: "togglePageIndicator", title: "Toggle Page Number", category: .view, defaultShortcut: ShortcutModel(key: "p", shift: true)),
 
+        ShortcutAction(id: "markdown.toggleFold", title: "Toggle Section", category: .view,
+                       defaultShortcut: ShortcutModel(key: "↩", option: true), scope: .markdown, editorCommand: .toggleFold),
+        ShortcutAction(id: "markdown.collapseAll", title: "Collapse All Sections", category: .view,
+                       defaultShortcut: .none, scope: .markdown, editorCommand: .collapseAll),
+        ShortcutAction(id: "markdown.expandAll", title: "Expand All Sections", category: .view,
+                       defaultShortcut: .none, scope: .markdown, editorCommand: .expandAll),
+
         // Zoom
         ShortcutAction(id: "zoomIn", title: "Zoom In", category: .zoom, defaultShortcut: ShortcutModel(key: "+")),
         ShortcutAction(id: "zoomOut", title: "Zoom Out", category: .zoom, defaultShortcut: ShortcutModel(key: "-")),

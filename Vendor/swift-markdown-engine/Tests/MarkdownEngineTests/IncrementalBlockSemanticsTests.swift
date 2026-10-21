@@ -20,6 +20,38 @@ struct IncrementalBlockSemanticsTests {
         #expect(incremental == fresh)
     }
 
+    @Test("validated whole-block splices reparse only adjacent seams and round-trip their block structure")
+    func standaloneSplices() throws {
+        for newline in ["\n", "\r\n"] {
+            for lines in [["```swift", "let x = 1", "", "let y = 2", "```"],
+                          ["$$", "x+y", "", "z", "$$"],
+                          ["| a | b |", "| --- | --- |", "| c | d |"],
+                          ["![image](test.png)"]] {
+            let block = lines.joined(separator: newline)
+            let source = "\u{FEFF}Lead" + newline + newline + block + newline + newline
+                + "- following list" + newline + "  continued" + newline + newline
+                + String(repeating: "unrelated prose" + newline + newline, count: 1_000)
+            let range = (source as NSString).range(of: block + newline + newline)
+            let receipt = BlockParser.snapshot(parsing: source as NSString)
+            let deleted = try #require(BlockParser.prepareStandaloneEdit(in: source as NSString, range: range,
+                replacement: "", snapshot: receipt))
+            #expect(deleted.oldWindow.length < 200)
+            let changed = (source as NSString).replacingCharacters(in: range, with: "")
+            #expect(deleted.snapshot.blocks == BlockParser.parse(changed, memoizing: false))
+            let restored = try #require(BlockParser.prepareStandaloneEdit(in: changed as NSString,
+                range: NSRange(location: range.location, length: 0), replacement: block + newline + newline, snapshot: deleted.snapshot))
+            #expect(restored.newWindow.length < 200)
+            #expect(restored.snapshot.blocks == BlockParser.parse(source, memoizing: false))
+            }
+        }
+        let source = "before\n\n```swift\nlet a = 1\n```\n\nafter\n"
+        let receipt = BlockParser.snapshot(parsing: source as NSString)
+        #expect(BlockParser.prepareStandaloneEdit(in: source as NSString,
+            range: (source as NSString).range(of: "let a"), replacement: "let b", snapshot: receipt) == nil)
+        #expect(BlockParser.prepareStandaloneEdit(in: source as NSString,
+            range: NSRange(location: 0, length: 0), replacement: "```swift\n", snapshot: receipt) == nil)
+    }
+
     @Test("inline fence-looking runs do not force whole-document tokenization")
     func inlineRunsRemainLocal() {
         for source in ["before ```inline``` after", "before ~~~~inline~~~~ after", "    ```indented code"] {

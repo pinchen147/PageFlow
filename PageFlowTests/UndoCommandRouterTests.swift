@@ -115,7 +115,7 @@ struct UndoCommandRouterTests {
         container.heightAnchor.constraint(equalToConstant: 280).isActive = true
         container.widthAnchor.constraint(equalToConstant: 700).isActive = true
         surface.attach(to: container, editor: editor)
-        window.orderFront(nil)
+        window.orderBack(nil)
         func textView(in view: NSView) -> NSTextView? {
             if let textView = view as? NSTextView { return textView }
             return view.subviews.lazy.compactMap { textView(in: $0) }.first
@@ -179,7 +179,8 @@ struct UndoCommandRouterTests {
     /// to the front; unattended it is reported as skipped, not passed.
     @Test("Find and replacement Undo republishes the field binding",
           .enabled("needs an active test host") {
-              await MainActor.run { NSApp.activate(ignoringOtherApps: true) }
+              guard await MainActor.run(body: { !QAPresentation.runsInBackground }) else { return false }
+              await MainActor.run { QAPresentation.activateIfAllowed() }
               try await Task.sleep(for: .milliseconds(500))
               return await MainActor.run { NSApp.isActive }
           },
@@ -189,7 +190,7 @@ struct UndoCommandRouterTests {
         defer { fixture.close() }
         // The host is active here (see the trait); SwiftUI publishes a field
         // Undo from the real key window only, so make this one key for real.
-        fixture.window.makeKeyAndOrderFront(nil)
+        QAPresentation.show(fixture.window)
         try await fixture.settle { NSApp.keyWindow === fixture.window }
         let editor = try await fixture.focus(placeholder)
         let driver = fixture.content.searchManager

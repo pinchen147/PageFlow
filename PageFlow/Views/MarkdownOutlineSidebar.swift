@@ -54,8 +54,6 @@ struct MarkdownOutlineSidebar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
+        .pageFlowClickCursor()
     }
 }

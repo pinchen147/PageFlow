@@ -33,6 +33,34 @@ public final class MarkdownEditorController {
     /// Weak so the controller never keeps a torn-down editor alive.
     weak var coordinator: NativeTextViewCoordinator?
 
+    let foldSession = MarkdownFoldSession()
+
+    /// Called when disclosure state or command availability changes.
+    public var onFoldingStateChange: (() -> Void)?
+
+    /// Whether the section containing the caret is collapsed.
+    public var isCurrentSectionFolded: Bool {
+        guard let region = coordinator?.currentFoldRegion else { return false }
+        return foldSession.collapsedHeadings.contains(region.heading.location)
+    }
+
+    /// Whether the view can safely perform this disclosure command now.
+    public func canPerformFoldingCommand(_ command: MarkdownEditorKeyCommand) -> Bool {
+        coordinator?.canPerformFolding(command) ?? false
+    }
+
+    /// Toggle one section, collapse all, or expand all without changing source or text Undo.
+    @discardableResult
+    public func performFoldingCommand(_ command: MarkdownEditorKeyCommand) -> Bool {
+        coordinator?.performFolding(command) ?? false
+    }
+
+    /// Clear session disclosure choices after an authoritative source-changing reload.
+    public func resetFolds() {
+        foldSession.reset()
+        coordinator?.applyFoldPresentation()
+    }
+
     public init() {
         commentStore.onPersist = { [weak self] threads in self?.onCommentThreadsChange?(threads) }
         commentStore.onModeChange = { [weak self] mode in self?.onCommentsModeChange?(mode) }
@@ -193,6 +221,30 @@ public final class MarkdownEditorController {
         coordinator?.replaceSourceRanges(
             ranges, with: replacement, expectedSource: expectedSource, actionName: actionName
         ) ?? false
+    }
+
+    // MARK: - Image drops (doc 26 §9)
+
+    /// The places near the viewport where a dropped image can land, as source
+    /// offsets, top to bottom. Empty when no editor is bound.
+    public var dropSlotsNearViewport: [Int] {
+        (coordinator?.textView as? NativeTextView)?.dropSlotsNearViewport().map(\.offset) ?? []
+    }
+
+    /// Imports `drop` at `slot` through the same entry a real drop uses: the
+    /// host's image hook, then the insertion at the slot mapped through any
+    /// edit made meanwhile. Replays drive it; a synthetic drag cannot.
+    public func importImages(_ drop: MarkdownImageDrop, at slot: Int) {
+        (coordinator?.textView as? NativeTextView)?.importImages(drop, at: slot)
+    }
+
+    /// Moves a source block through the same validated transaction used by native drags.
+    /// `kind` is image, equation, diagram, code, or table; offsets are UTF-16.
+    @discardableResult
+    public func moveBlock(kind: String, sourceRange: NSRange, to slot: Int, copying: Bool = false) -> Bool {
+        guard let coordinator, let kind = BlockMovePasteboard.Kind(rawValue: kind),
+              let payload = coordinator.blockMovePayload(range: sourceRange, kind: kind) else { return false }
+        return coordinator.moveBlock(payload, to: slot, copying: copying)
     }
 
     // MARK: - Reading position (D7)

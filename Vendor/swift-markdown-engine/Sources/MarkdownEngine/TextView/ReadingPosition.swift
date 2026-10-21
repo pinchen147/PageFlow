@@ -86,6 +86,7 @@ extension NativeTextView {
     func restore(_ position: ReadingPosition) -> Bool {
         let length = (string as NSString).length
         guard position.anchorOffset >= 0, position.anchorOffset <= length else { return false }
+        _ = (delegate as? NativeTextViewCoordinator)?.revealFoldedSource(NSRange(location: position.anchorOffset, length: 0))
         let anchor = min(position.anchorOffset, max(0, length - 1))
         guard let top = lineFrame(at: anchor)?.minY else { return false }
         ScrollTrace.stamp(String(format: "readingPositionRestore(anchor=%d)", position.anchorOffset))

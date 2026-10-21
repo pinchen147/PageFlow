@@ -232,6 +232,19 @@ struct DesignTokens {
     static let defaultWindowWidth: CGFloat = 900
     static let defaultWindowHeight: CGFloat = 700
 
+    /// The file-drop indicator: a dashed outline around the whole window and a fan
+    /// of document glyphs over "Drop files here" in the middle.
+    static let fileDropOutlineInset: CGFloat = 8
+    static let fileDropOutlineCornerRadius: CGFloat = 12
+    static let fileDropOutlineWidth: CGFloat = 2
+    static let fileDropOutlineDash: [CGFloat] = [6, 6]
+    static let fileDropGlyphSize: CGFloat = 19
+    static let fileDropGlyphSpacing: CGFloat = 18
+    /// How far the outer glyphs of the fan lean away from the middle one, in degrees.
+    static let fileDropGlyphTilt: Double = 16
+    /// How much higher the middle glyph sits than the outer two.
+    static let fileDropGlyphLift: CGFloat = 9
+
     // MARK: - Tabs
 
     static let tabBarHeight: CGFloat = 32

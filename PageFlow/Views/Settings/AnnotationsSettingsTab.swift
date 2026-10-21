@@ -53,6 +53,7 @@ struct AnnotationsSettingsTab: View {
                             .pageFlowLiquidGlassSurface(.settingsRow)
                     }
                     .buttonStyle(.plain)
+                    .pageFlowClickCursor()
                 }
             }
 
@@ -96,6 +97,7 @@ struct AnnotationsSettingsTab: View {
                             .pageFlowLiquidGlassSurface(.settingsRow)
                     }
                     .buttonStyle(.plain)
+                    .pageFlowClickCursor()
                 }
             }
 
@@ -139,6 +141,7 @@ struct AnnotationsSettingsTab: View {
                             .pageFlowLiquidGlassSurface(.settingsRow)
                     }
                     .buttonStyle(.plain)
+                    .pageFlowClickCursor()
                 }
             }
 
@@ -147,6 +150,7 @@ struct AnnotationsSettingsTab: View {
                     SettingsManager.shared.resetColors()
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .padding(.horizontal, DesignTokens.spacingMD)
                 .padding(.vertical, DesignTokens.spacingXS)
                 .pageFlowLiquidGlassSurface(.settingsRow)
@@ -181,6 +185,7 @@ struct PresetRow: View {
                         .pageFlowLiquidGlassSurface(.settingsRow.with(strokeOpacity: 0.12))
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

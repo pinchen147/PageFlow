@@ -125,6 +125,7 @@ struct FloatingToolbar: View {
             GlassToolbarLabel(icon: "paintpalette", interactive: pdfManager.hasDocument)
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .disabled(!pdfManager.hasDocument)
         .opacity(pdfManager.hasDocument ? 1 : 0.3)
         .toolbarTooltip("Choose underline and highlight colors", enabled: settingsManager.showTooltips)

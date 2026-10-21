@@ -10,6 +10,8 @@ import AppKit
 
 struct TabContainerView: View {
     @Environment(RecentFilesManager.self) private var recentFilesManager
+    @Environment(\.colorScheme) private var systemColorScheme
+    @State private var settingsManager = SettingsManager.shared
 
     /// Holds this window's `TabManager`, constructed lazily on first use.
     ///
@@ -35,6 +37,15 @@ struct TabContainerView: View {
 
     /// This window's TabManager, stable for the view's lifetime.
     private var tabManager: TabManager { holder.manager }
+
+    /// A Markdown tab can be forced light or dark (Settings); the drop indicator
+    /// follows the page it is drawn over, else the Mac's appearance.
+    private var dropIndicatorColorScheme: ColorScheme {
+        guard let id = tabManager.activeTabID, tabManager.contentKind(for: id) == .markdown else {
+            return systemColorScheme
+        }
+        return settingsManager.markdownColorScheme.forcedColorScheme ?? systemColorScheme
+    }
 
     private var showingSearch: Binding<Bool> {
         Binding(get: { tabManager.showingSearch }, set: { tabManager.showingSearch = $0 })
@@ -93,6 +104,12 @@ struct TabContainerView: View {
         // content-agnostic, mounted once so PDF and Markdown can't drift.
         .overlay(alignment: .bottom) {
             TransientToastOverlay(tabManager: tabManager)
+        }
+        // The ONE file-drop indicator for this window, around the whole window
+        // and above the chrome, in the active document's light or dark.
+        .overlay {
+            FileDropOverlay(isVisible: tabManager.isFileDropHovering)
+                .environment(\.colorScheme, dropIndicatorColorScheme)
         }
         .toolbar(.hidden)
         .background(WindowConfigurator(isAlwaysOnTop: tabManager.isAlwaysOnTop))

@@ -18,6 +18,7 @@ public enum PerfTrace {
     /// Guards the totals and stamps: the background parse records off main.
     private static let lock = NSLock()
     nonisolated(unsafe) private static var totals: [String: Double] = [:]
+    nonisolated(unsafe) private static var samples: [String: (count: Int, maximum: Double)] = [:]
 
     /// Runs `body` and adds its wall-clock milliseconds to `label`'s total.
     @inline(__always)
@@ -32,7 +33,11 @@ public enum PerfTrace {
     public static func add(_ label: String, since start: CFAbsoluteTime) {
         guard enabled else { return }
         let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-        lock.withLock { totals[label, default: 0] += elapsed }
+        lock.withLock {
+            totals[label, default: 0] += elapsed
+            let previous = samples[label] ?? (count: 0, maximum: 0)
+            samples[label] = (previous.count + 1, max(previous.maximum, elapsed))
+        }
     }
 
     /// Wall-clock milestones (ms since the first stamp), printed with the
@@ -61,6 +66,11 @@ public enum PerfTrace {
             .map { String(format: "%@=%.1f", $0.key, $0.value) }
             .joined(separator: " ")
         FileHandle.standardError.write(Data("PERF \(prefix): \(line)\n".utf8))
+        let sampleLine = samples.sorted { $0.key < $1.key }
+            .map { String(format: "%@.count=%d %@.max=%.3f", $0.key, $0.value.count, $0.key, $0.value.maximum) }
+            .joined(separator: " ")
+        FileHandle.standardError.write(Data("PERF-SAMPLES \(prefix): \(sampleLine)\n".utf8))
         totals = [:]
+        samples = [:]
     }
 }

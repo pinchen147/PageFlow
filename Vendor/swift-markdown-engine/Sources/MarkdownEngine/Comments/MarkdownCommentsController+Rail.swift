@@ -207,6 +207,9 @@ extension MarkdownCommentsController {
         let id = card.threadID
         // the reference editor's margin cap: min(456, 55 % of the viewport + 16).
         if let height = scrollView?.contentView.bounds.height { card.heightCap = min(456, height * 0.55 + 16) }
+        if store.mode == .margin, let range = store.ranges[id], let main = textView, imageRect(range, in: main) != nil {
+            if card.quote?.text != "[image]" { card.quote = ("[image]", false) }
+        }
         card.isExpanded = store.focusID == id
         card.isLit = store.activeID == id || store.focusID == id
         card.editing = store.editing.flatMap { editing in

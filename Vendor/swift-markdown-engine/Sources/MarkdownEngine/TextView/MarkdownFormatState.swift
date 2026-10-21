@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import CoreGraphics
 
 /// The formatting at the editor's selection.
 public struct MarkdownFormatState: Equatable, Sendable {
@@ -18,6 +19,7 @@ public struct MarkdownFormatState: Equatable, Sendable {
         case cellText
         case cellRange(cells: Int)
         case codeBlock
+        case image(alignment: ImageAltTokens.Alignment, hasCrop: Bool, width: CGFloat?)
     }
 
     /// The Text style trigger's label: "Aa" for text, "H1"…"H6" for a heading.

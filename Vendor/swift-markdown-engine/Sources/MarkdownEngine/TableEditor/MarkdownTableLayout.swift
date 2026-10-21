@@ -234,7 +234,7 @@ struct MarkdownTableLayout {
         return rects
     }
 
-    func draw(selection: SelectionPaint? = nil) {
+    func draw(selection: SelectionPaint? = nil, omittingTextIn editedCell: CellCoord? = nil) {
         if let first = cellRects.first?.first, let last = cellRects.first?.last {
             headerFill.setFill()
             first.union(last).fill()
@@ -256,6 +256,7 @@ struct MarkdownTableLayout {
         path.stroke()
         for (row, values) in cells.enumerated() {
             for (column, value) in values.enumerated() where column < alignments.count {
+                guard editedCell != CellCoord(row: row, column: column) else { continue }
                 let content = cellRects[row][column].insetBy(dx: Self.horizontalPadding, dy: Self.verticalPadding)
                 NSGraphicsContext.saveGraphicsState()
                 NSBezierPath(rect: cellRects[row][column]).addClip()
