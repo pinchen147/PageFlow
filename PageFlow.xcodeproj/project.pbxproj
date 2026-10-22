@@ -278,15 +278,25 @@
 			inputPaths = (
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle/Contents/Info.plist",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle/Contents/Info.plist",
 			);
 			name = "Seal Codeless Package Resources";
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle/Contents/_CodeSignature",
 				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle/Contents/_CodeSignature",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle/Contents/_CodeSignature/CodeResources",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle/Contents/_CodeSignature/CodeResources",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle/Contents/_CodeSignature/CodeDirectory",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle/Contents/_CodeSignature/CodeRequirements",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle/Contents/_CodeSignature/CodeSignature",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle/Contents/_CodeSignature/CodeDirectory",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle/Contents/_CodeSignature/CodeRequirements",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle/Contents/_CodeSignature/CodeSignature",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -eu\n# Codeless package resources are sealed by the containing app. A development\n# signature here survives App Store export and conflicts with its profile.\nfor bundle in \"$SCRIPT_INPUT_FILE_0\" \"$SCRIPT_INPUT_FILE_1\"; do\n    /usr/bin/plutil -lint \"$bundle/Contents/Info.plist\" >/dev/null\n    if /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$bundle/Contents/Info.plist\" >/dev/null 2>&1; then\n        echo \"error: Refusing to strip an executable bundle: $bundle\" >&2\n        exit 1\n    fi\n    /usr/bin/codesign --remove-signature \"$bundle\"\ndone\n";
+			shellScript = "set -eu\n# Codeless package resources are sealed by the containing app. A development\n# signature here survives App Store export and conflicts with its profile.\nfor bundle in \"$SCRIPT_INPUT_FILE_0\" \"$SCRIPT_INPUT_FILE_1\"; do\n    /usr/bin/plutil -lint \"$bundle/Contents/Info.plist\" >/dev/null\n    if /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$bundle/Contents/Info.plist\" >/dev/null 2>&1; then\n        echo \"error: Refusing to strip an executable bundle: $bundle\" >&2\n        exit 1\n    fi\n    signature=\"$bundle/Contents/_CodeSignature\"\n    if [ -d \"$signature\" ]; then\n        /bin/rm -f \"$signature/CodeDirectory\" \"$signature/CodeRequirements\" \"$signature/CodeResources\" \"$signature/CodeSignature\"\n        /bin/rmdir \"$signature\"\n    fi\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -460,7 +470,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 17;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -496,7 +506,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 17;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -675,7 +685,7 @@
 				CODE_SIGN_ENTITLEMENTS = "PageFlow/PageFlow-Direct.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 16;
+				CURRENT_PROJECT_VERSION = 17;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = NO;

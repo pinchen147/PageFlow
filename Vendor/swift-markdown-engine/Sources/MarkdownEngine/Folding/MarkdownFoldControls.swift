@@ -88,6 +88,16 @@ final class MarkdownFoldControls {
         }
     }
 
+    func chevronFrame(for heading: Int) -> NSRect? {
+        buttons[heading]?.chevron.frame
+    }
+
+    func setHoveredHeading(_ heading: Int?) {
+        for (offset, pair) in buttons {
+            pair.chevron.blockHovered = offset == heading
+        }
+    }
+
     /// Resolve native text-view cursor callbacks before they can replace the button's hand.
     func applyCursor(for event: NSEvent) -> Bool {
         guard let view else { return false }
@@ -128,6 +138,7 @@ private final class FoldButton: NSButton {
     private var count = 0
     private var hovered = false { didSet { if oldValue != hovered { needsDisplay = true } } }
     private var headingHovered = false { didSet { if oldValue != headingHovered { needsDisplay = true } } }
+    var blockHovered = false { didSet { if oldValue != blockHovered { needsDisplay = true } } }
     private weak var headingView: NSView?
     private var headingTracking: NSTrackingArea?
 
@@ -228,7 +239,7 @@ private final class FoldButton: NSButton {
                 let size = expand.size(withAttributes: attrs)
                 expand.draw(at: NSPoint(x: bounds.maxX - size.width - 10, y: (bounds.height - size.height) / 2), withAttributes: attrs)
             }
-        } else if closed || headingHovered || active {
+        } else if headingHovered || blockHovered || active {
             if active && isEnabled {
                 (dark ? NSColor.white : NSColor(srgbRed: 11/255, green: 11/255, blue: 11/255, alpha: 1))
                     .withAlphaComponent(dark ? 19/255 : 13/255).setFill()

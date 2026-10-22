@@ -9,14 +9,16 @@ struct TableChromeLayout: Equatable {
     let cells: [[NSRect]]
     /// The part of the table the editor shows (a wide table's scroller span).
     let clip: NSRect
+    let minimumHandleX: CGFloat?
 
     enum Zone: Equatable {
         case columnGrip, rowGrip, handle, addRow, addColumn, resize
     }
 
-    init(cells: [[NSRect]], clip: NSRect = .infinite) {
+    init(cells: [[NSRect]], clip: NSRect = .infinite, minimumHandleX: CGFloat? = nil) {
         self.cells = cells
         self.clip = clip
+        self.minimumHandleX = minimumHandleX
     }
 
     var table: NSRect {
@@ -41,7 +43,7 @@ struct TableChromeLayout: Equatable {
     }
 
     /// The table handle: 26 × 26, 44 left of the table, level with its top.
-    var handle: NSRect { NSRect(x: visibleLeft - 44, y: table.minY, width: 26, height: 26) }
+    var handle: NSRect { NSRect(x: max(visibleLeft - 44, minimumHandleX ?? (visibleLeft - 44)), y: table.minY, width: 26, height: 26) }
 
     /// The add-row bar: the table's (visible) width, 18 under the bottom border.
     var addRowBar: NSRect { NSRect(x: visibleLeft, y: table.maxY, width: visibleRight - visibleLeft, height: 18) }

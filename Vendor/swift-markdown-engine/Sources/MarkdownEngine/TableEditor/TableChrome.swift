@@ -36,6 +36,23 @@ final class TableChromeView: NSView {
         return layout.zone(at: point, hovered: hovered, showsAddRow: showsAddRow, showsAddColumn: showsAddColumn) != nil ? self : nil
     }
 
+    @discardableResult
+    func applyCursor(at point: NSPoint) -> Bool {
+        guard !isHiddenOrHasHiddenAncestor, let layout, let hovered,
+              let zone = layout.zone(at: point, hovered: hovered,
+                                     showsAddRow: showsAddRow, showsAddColumn: showsAddColumn) else { return false }
+        switch zone {
+        case .columnGrip, .rowGrip, .handle: NSCursor.openHand.set()
+        case .addRow, .addColumn: NSCursor.pointingHand.set()
+        case .resize: Self.columnResizeCursor.set()
+        }
+        return true
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if controller?.applyCursor(for: event) != true { super.cursorUpdate(with: event) }
+    }
+
     override func resetCursorRects() {
         guard let layout, let hovered else { return }
         for zone in [TableChromeLayout.Zone.columnGrip, .rowGrip, .handle] {
@@ -351,7 +368,8 @@ final class TableChromeController: NSResponder, NSDraggingSource {
         if canvas.view !== main, let overlay = canvas.view.enclosingScrollView {
             clip = overlay.contentView.convert(overlay.contentView.bounds, to: main)
         }
-        return TableChromeLayout(cells: cells, clip: clip)
+        let minimumHandleX = scrollView.map { $0.contentView.convert($0.contentView.bounds, to: main).minX }
+        return TableChromeLayout(cells: cells, clip: clip, minimumHandleX: minimumHandleX)
     }
 
     // MARK: - Hover
@@ -359,6 +377,16 @@ final class TableChromeController: NSResponder, NSDraggingSource {
     override func mouseMoved(with event: NSEvent) {
         guard let main else { return }
         hover(at: main.convert(event.locationInWindow, from: nil))
+        if coordinator?.blockMover.applyCursor(for: event) != true { _ = applyCursor(for: event) }
+    }
+
+    /// Honor the same hit zones as table actions before image/text cursor routing.
+    @discardableResult
+    func applyCursor(for event: NSEvent) -> Bool {
+        guard let main, let coordinator, main.isEditable,
+              !coordinator.isUpdatingSourceOrStyle, !coordinator.isComposing(in: main),
+              !coordinator.isWritingToolsActive else { return false }
+        return view.applyCursor(at: main.convert(event.locationInWindow, from: nil))
     }
 
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
@@ -721,7 +749,13 @@ final class TableChromeController: NSResponder, NSDraggingSource {
 final class PassThroughView: NSView {
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? {
-        let hit = super.hitTest(point)
-        return hit === self ? nil : hit
+        guard !isHidden else { return nil }
+        // Controls may extend into the gutter outside this column-sized host.
+        // Only a child's actual hit target may consume that pointer event.
+        let local = convert(point, from: superview)
+        for child in subviews.reversed() {
+            if let hit = child.hitTest(local) { return hit }
+        }
+        return nil
     }
 }

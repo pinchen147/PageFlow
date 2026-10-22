@@ -26,6 +26,7 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var lastFoldingCommandState: FoldingCommandState?
     var foldSourceGeneration = -1
     weak var foldBoundSession: MarkdownFoldSession?
+    var foldedBlockMoveRange: NSRange?
     var foldCurrentKeyEvent: NSEvent?
     var foldCompositionStart: (range: NSRange, length: Int, generation: Int)?
     var foldIndexTask: Task<Void, Never>?
@@ -138,6 +139,7 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// A span edit is being applied; the table session follows it afterwards
     /// (`sourceDidChange`) instead of ending.
     var isApplyingSpanEdit = false
+    var isTransferringFoldState = false
     /// The arrow key moving the document caret now, so a caret it puts in a
     /// rendered table enters the cell the reference editor would (+TableEntry).
     var pendingTableEntry: TableEntryIntent?
@@ -337,7 +339,13 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
         viewObserverTokens.removeAll(keepingCapacity: true)
     }
 
-    var cachedBlockParse: BlockParser.Snapshot?
+    private(set) var cachedBlockParseRevision: (source: Int, document: Int)?
+    var cachedBlockParse: BlockParser.Snapshot? {
+        didSet {
+            cachedBlockParseRevision = cachedBlockParse.map { _ in (nativeSourceGeneration, documentGeneration) }
+            blockMover.prepareIndex()
+        }
+    }
 
     struct ParsedDocument {
         let tokens: [MarkdownToken]

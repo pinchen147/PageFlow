@@ -108,6 +108,33 @@ struct TableChromeTests {
         #expect(editor.coordinator.tableActions?.hoveredTable == nil)
     }
 
+    @Test("the visible table handle receives native pointer hits", arguments: [false, true], [CGFloat(0), 24, 30])
+    func handleReceivesNativeHit(pageLook: Bool, margin: CGFloat) async throws {
+        var configuration = MarkdownEditorConfiguration.default
+        configuration.showsSelectionBar = true
+        configuration.readingWidth = pageLook ? 672 : nil
+        configuration.textInsets = TextInsets(horizontal: margin, vertical: 0)
+        configuration.safeAreaInsets = SafeAreaInsets(top: 90, leading: 0, trailing: 0, bottom: 0)
+        let editor = try MountedTableEditor(source: Self.source, configuration: configuration)
+        defer { editor.close() }
+        editor.window.setContentSize(NSSize(width: 1000, height: 650))
+        await editor.settle()
+        editor.scroll.contentView.scroll(to: .zero)
+        editor.scroll.reflectScrolledClipView(editor.scroll.contentView)
+        editor.main.textLayoutManager?.textViewportLayoutController.layoutViewport()
+        let chrome = try #require(editor.coordinator.tableChrome)
+        chrome.hover(at: try cellCenter(editor, row: 1, column: 0))
+        let layout = try #require(chrome.view.layout)
+        #expect(layout.handle.maxX <= layout.visibleLeft, "the drag handle must leave table content unobstructed")
+        let point = NSPoint(x: layout.handle.midX, y: layout.handle.midY)
+        chrome.hover(at: point)
+        try #require(!chrome.view.isHidden)
+        let root = try #require(editor.window.contentView)
+        let windowPoint = editor.main.convert(point, to: nil)
+        let hit = root.hitTest(root.superview?.convert(windowPoint, from: nil) ?? windowPoint)
+        #expect(hit === chrome.view, "visible handle hit \(String(describing: hit)); handle=\(layout.handle), main=\(editor.main.frame), host=\(chrome.host.frame)")
+    }
+
     // MARK: - Grips and bars
 
     @Test("a grip click selects the whole column and opens its 188 pt menu; Insert acts on the hovered cell")

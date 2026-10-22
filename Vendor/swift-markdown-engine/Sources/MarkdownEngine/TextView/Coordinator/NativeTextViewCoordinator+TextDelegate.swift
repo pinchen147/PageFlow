@@ -73,7 +73,7 @@ extension NativeTextViewCoordinator {
         guard let textStorage = tv.textStorage else { return }
         defer {
             synchronizeFolding(edit: committedFoldComposition(in: tv) ?? pendingTextChange)
-            if tv.undoManager?.isUndoing == true || tv.undoManager?.isRedoing == true {
+            if !isTransferringFoldState, tv.undoManager?.isUndoing == true || tv.undoManager?.isRedoing == true {
                 _ = revealFoldedSource(tv.selectedRange())
             }
             pendingEditedRange = nil
