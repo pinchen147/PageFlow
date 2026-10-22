@@ -23,11 +23,11 @@ Every tool stays out of sight until you reach for it.
 ## Markdown (new in 2.0)
 
 - **Live preview** — notes render as you type; the markup shows only where you are editing.
-- **Collapsible sections** — fold a heading with its chevron or ⌥⌘↩. The quiet hidden-content row can be switched off in Settings; folding leaves the Markdown file unchanged.
+- **[Collapsible sections](docs/heading-folding.md)** — fold a heading with its chevron or ⌥⌘↩. The quiet hidden-content row can be switched off in Settings; folding leaves the Markdown file unchanged.
 - **Tables you edit as tables** — click a cell and type, Tab to move on (Tab past the last cell adds a row), right-click to insert, delete, move, sort or align. Select a range of cells to copy, paste, clear or format them.
 - **Math, diagrams, code** — `$…$` and `$$…$$` LaTeX, Mermaid flowchart, sequence, class, state, ER and XY charts, and syntax colouring for about 190 languages.
 - **Images you can edit** — select an image to change its description, size, alignment or crop, or attach a margin comment. Crops preserve the original file.
-- **Move whole blocks** — hover to reveal grips for paragraphs, headings, quotes, list groups, tables, images, code, formulas and diagrams. A collapsed heading carries its entire hidden section and nested fold choices; an expanded heading moves only its heading text. Drops, copies, Undo and Redo preserve those choices.
+- **[Move whole blocks](docs/block-dragging.md)** — hover to reveal grips for paragraphs, headings, quotes, list groups, tables, images, code, formulas and diagrams. A collapsed heading carries its entire hidden section and nested fold choices; an expanded heading moves only its heading text. Drops, copies, Undo and Redo preserve those choices.
 - **Comments in the file** — select text and press ⌥⌘M. Threads sit in the margin, can be replied to and resolved, and are saved in a hidden block at the end of the `.md`, so they travel with it.
 - **Plain files** — `.md` and `.markdown` anywhere on your Mac; line endings kept. `[next](other.md)` opens the linked note or PDF, `[see](#heading)` jumps within the note, a pasted screenshot lands in an `attachments` folder beside the note.
 - **Outline, Find and Replace, zoom, print** — a heading outline with Back and Forward, Find and Replace (⌥⌘F), PDF-style zoom, and printing that keeps math, tables and diagrams.
@@ -38,7 +38,7 @@ Every tool stays out of sight until you reach for it.
 - **Annotations** — highlight (⌘Y), underline (⌘U) and comment (⌘E) in colours you choose; comments render LaTeX. Annotations are written into the PDF.
 - **Bookmarks** — ⌘D; stored on your Mac.
 - **Pages** — rotate, copy, cut, paste, delete, duplicate and reorder pages from the thumbnail sidebar, all undoable.
-- **PDF to Markdown** — copy a page (⇧⌘M), an outline section or the whole document (⌥⇧⌘M) as Markdown.
+- **PDF to Markdown** — copy a page (⇧⌘M), an outline section or the whole document (⌥⇧⌘M) as Markdown. Extraction uses the PDF’s existing text; scanned pages need OCR before conversion.
 - **Reading** — single, continuous and two-page layouts, password-protected PDFs, and a PDF's own copy, print and edit restrictions respected.
 
 ## Everywhere
@@ -52,15 +52,18 @@ Every tool stays out of sight until you reach for it.
 
 ## Install
 
-Download PageFlow from [pageflow.pinchen.me](https://pageflow.pinchen.me), or build from source:
+Download the [2.0 build 17 DMG containing the signed, notarized app](https://github.com/pinchen147/PageFlow/releases/download/v2.0/PageFlow-2.0-build17.dmg), or visit [pageflow.pinchen.me](https://pageflow.pinchen.me).
+
+For a local unsigned build with Xcode installed:
 
 ```bash
 git clone https://github.com/pinchen147/PageFlow.git
 cd PageFlow
-xcodebuild -project PageFlow.xcodeproj -scheme PageFlow -configuration Release build
+xcodebuild -project PageFlow.xcodeproj -scheme "PageFlow Direct" \
+  -configuration Release-Direct CODE_SIGNING_ALLOWED=NO build
 ```
 
-Requires macOS 15 (Sequoia) or later, on Apple Silicon or Intel.
+Requires macOS 15 (Sequoia) or later, on Apple Silicon or Intel. To sign or distribute your own build, select your own development team in Xcode before archiving.
 
 ## Keyboard shortcuts
 
@@ -75,7 +78,8 @@ Requires macOS 15 (Sequoia) or later, on Apple Silicon or Intel.
 | Check or uncheck item / Comment on selection | `⌘↩` / `⌥⌘M` |
 | Highlight / Underline / Comment (PDF) | `⌘Y` / `⌘U` / `⌘E` |
 | Bookmark / Copy page as Markdown | `⌘D` / `⇧⌘M` |
-| Zoom in / out / to fit | `⌘+` / `⌘-` / `⌥⌘0` |
+| Zoom in / out | `⌘+` / `⌘-` |
+| Zoom to Fit (PDF only) | `⌥⌘0` |
 | Fold or expand current section | `⌥⌘↩` |
 | Search Tabs | `⇧⌘A` |
 
