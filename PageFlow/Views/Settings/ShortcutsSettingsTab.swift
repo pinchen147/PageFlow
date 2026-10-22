@@ -9,9 +9,34 @@ import SwiftUI
 import AppKit
 
 struct ShortcutsSettingsTab: View {
+    @State private var query = ""
+    @State private var settingsManager = SettingsManager.shared
+
+    /// The sections with the shortcuts the search matches (all of them when it is empty).
+    private var groups: [(ShortcutAction.Category, [ShortcutAction])] {
+        _ = settingsManager.customShortcuts   // a rebinding re-runs a key search
+        return ShortcutCatalog.grouped().compactMap { category, actions in
+            let matching = actions.filter { ShortcutCatalog.matches($0, query: query) }
+            return matching.isEmpty ? nil : (category, matching)
+        }
+    }
+
     var body: some View {
         Form {
-            ForEach(ShortcutCatalog.grouped(), id: \.0) { group in
+            Section {
+                TextField("Search by name or keys, like Bold or ⌘B", text: $query)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Search shortcuts")
+            }
+
+            if groups.isEmpty {
+                Section {
+                    Text("No shortcuts match \u{201C}\(query)\u{201D}.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ForEach(groups, id: \.0) { group in
                 Section(group.0.rawValue) {
                     ForEach(group.1) { action in
                         ShortcutRow(actionID: action.id, label: action.title)
@@ -24,11 +49,12 @@ struct ShortcutsSettingsTab: View {
                     SettingsManager.shared.resetShortcuts()
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .padding(.horizontal, DesignTokens.spacingMD)
                 .padding(.vertical, DesignTokens.spacingXS)
                 .pageFlowLiquidGlassSurface(.settingsRow)
 
-                Text("Changes require restarting PageFlow.")
+                Text("Changes apply at once. While recording, ⌫ leaves a command with no shortcut.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -53,7 +79,7 @@ struct ShortcutRow: View {
 
             if isRecording {
                 HStack(spacing: DesignTokens.spacingXS) {
-                    Text(pendingShortcut?.displayString ?? "Press keys...")
+                    Text(pendingShortcut?.displayString ?? "Press keys, or ⌫ for none")
                         .foregroundStyle(.secondary)
                         .frame(width: DesignTokens.shortcutKeyDisplayWidth)
 
@@ -68,6 +94,7 @@ struct ShortcutRow: View {
                         confirmShortcut()
                     }
                     .buttonStyle(.plain)
+                    .pageFlowClickCursor()
                     .padding(.horizontal, DesignTokens.spacingSM)
                     .padding(.vertical, DesignTokens.spacingXS)
                     .pageFlowLiquidGlassSurface(.settingsAction(enabled: canConfirm, activeTint: 0.10))
@@ -77,6 +104,7 @@ struct ShortcutRow: View {
                         cancelRecording()
                     }
                     .buttonStyle(.plain)
+                    .pageFlowClickCursor()
                     .padding(.horizontal, DesignTokens.spacingSM)
                     .padding(.vertical, DesignTokens.spacingXS)
                     .pageFlowLiquidGlassSurface(.settingsRow.with(strokeOpacity: 0.14))
@@ -86,6 +114,7 @@ struct ShortcutRow: View {
                     startRecording()
                 }
                 .buttonStyle(.plain)
+                .pageFlowClickCursor()
                 .frame(width: DesignTokens.shortcutButtonWidth)
                 .padding(.vertical, DesignTokens.spacingXS)
                 .pageFlowLiquidGlassSurface(.settingsRow)
@@ -118,8 +147,13 @@ struct ShortcutRow: View {
         pendingShortcut = nil
 
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 { // Escape
+            let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            if event.keyCode == 53, modifiers.isEmpty { // Escape
                 cancelRecording()
+                return nil
+            }
+            if event.keyCode == 51 || event.keyCode == 117, modifiers.isEmpty { // Delete: no shortcut
+                pendingShortcut = ShortcutModel.none
                 return nil
             }
 

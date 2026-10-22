@@ -268,7 +268,7 @@ struct ThumbnailGridView: View {
                             }
                             .modifier(DragDropModifier(
                                 index: index,
-                                isEditing: isEditing,
+                                isEditing: isEditing && pdfManager.permissions.editPages,
                                 reorderState: $reorderState,
                                 onDragStart: { captureDragPreview(pageIndex: index) },
                                 onDrop: { commitReorder() },
@@ -530,6 +530,7 @@ private struct ThumbnailCellView: View {
             pdfManager.pushNavigationState()
             pdfManager.goToPage(pageIndex)
         }
+        .pointerStyle(isDragging ? .grabActive : (isEditing ? .grabIdle : .link))
         .contextMenu { contextMenu }
         .task(id: thumbnailLoadID(revision: thumbnailRevision)) {
             await loadThumbnail(revision: thumbnailRevision)
@@ -631,36 +632,42 @@ private struct ThumbnailCellView: View {
 
     @ViewBuilder
     private var contextMenu: some View {
+        let permissions = pdfManager.permissions
         if isEditing {
             Button { pdfManager.copyPage(at: pageIndex) } label: {
                 Label("Copy Page", systemImage: "doc.on.doc")
             }
+            .disabled(!permissions.copy)
             Button { _ = pdfManager.pastePage(after: pageIndex) } label: {
                 Label("Paste Page", systemImage: "doc.on.clipboard")
             }
-            .disabled(!pdfManager.canPaste)
+            .disabled(!permissions.editPages || !pdfManager.canPaste)
             Divider()
-            Button { rotatePage(clockwise: true) } label: {
-                Label("Rotate Clockwise", systemImage: "rotate.right")
+            Group {
+                Button { rotatePage(clockwise: true) } label: {
+                    Label("Rotate Clockwise", systemImage: "rotate.right")
+                }
+                Button { rotatePage(clockwise: false) } label: {
+                    Label("Rotate Counter-Clockwise", systemImage: "rotate.left")
+                }
+                Divider()
+                Button { pdfManager.duplicatePage(at: pageIndex) } label: {
+                    Label("Duplicate Page", systemImage: "doc.badge.plus")
+                }
             }
-            Button { rotatePage(clockwise: false) } label: {
-                Label("Rotate Counter-Clockwise", systemImage: "rotate.left")
-            }
-            Divider()
-            Button { pdfManager.duplicatePage(at: pageIndex) } label: {
-                Label("Duplicate Page", systemImage: "doc.badge.plus")
-            }
+            .disabled(!permissions.editPages)
             Divider()
             Button(role: .destructive) { pdfManager.deletePage(at: pageIndex) } label: {
                 Label("Delete Page", systemImage: "trash")
             }
-            .disabled(pdfManager.pageCount <= 1)
+            .disabled(!permissions.editPages || pdfManager.pageCount <= 1)
             Divider()
         }
 
         Button { copyPageAsMarkdown() } label: {
             Label("Copy Page as Markdown", systemImage: "doc.text")
         }
+        .disabled(!permissions.copy)
         Divider()
         Button { bookmarkManager.toggleBookmark(at: pageIndex) } label: {
             Label(isBookmarked ? "Remove Bookmark" : "Add Bookmark",
@@ -673,8 +680,6 @@ private struct ThumbnailCellView: View {
     }
 
     private func copyPageAsMarkdown() {
-        guard let document = pdfManager.document else { return }
-        let markdown = MarkdownExporter.export(scope: .currentPage(pageIndex), document: document)
-        MarkdownExporter.copyToClipboard(markdown)
+        pdfManager.copyMarkdown(scope: .currentPage(pageIndex))
     }
 }

@@ -17,13 +17,16 @@
 //  `.pill`   — tab is hidden in `dragHost`'s bar, a floating NSPanel
 //              renders the pill under the cursor, hover over any tab bar
 //              shows an insertion gap.
-//  `.window` — tab has been torn off into a brand-new NSWindow whose
-//              origin follows the cursor. The pill panel is gone. Hover
-//              over any other bar re-merges: destroy the window, restore
-//              the pill, resume `.pill` drag.
+//  `.window` — tab has been torn off into a window whose origin follows
+//              the cursor: a brand-new NSWindow, or — when the dragged tab
+//              is its window's only tab — the source window itself, moved
+//              under the cursor (no new window or manager). The rendered pill
+//              is hidden. Hover over any other bar re-merges: retire the window
+//              if empty, restore the pill, resume `.pill` drag.
 //
 //  `dragHost` — the TabManager currently holding the dragged tab. Begin:
-//  the source bar's manager. After tear-off: the new torn-off manager.
+//  the source bar's manager. After tear-off: the new torn-off manager (or,
+//  for a single-tab window, still the source manager).
 //  After re-merge: the manager whose bar received the merge. Tracking the
 //  CURRENT host (rather than just the original source) is what lets
 //  re-merge land directly in the resolved target, and what lets a
@@ -51,6 +54,12 @@ protocol TabBarHandle: AnyObject {
     /// Full bar rect in screen coordinates. The controller measures
     /// tear-off distance against this rect.
     func screenFrame() -> CGRect
+    /// Measured tab rect, including the bar's current scroll position.
+    func tabScreenFrame(for tabID: UUID) -> CGRect?
+}
+
+extension TabBarHandle {
+    func tabScreenFrame(for tabID: UUID) -> CGRect? { nil }
 }
 
 @MainActor
@@ -76,11 +85,9 @@ final class TabDragController {
 
     struct ActiveDrag: Equatable {
         let tabID: UUID
-        /// Identifier of the manager currently holding the dragged tab.
-        /// In `.pill` mode the tab is hidden (opacity 0) in this manager's
-        /// bar; views key off this to know which slot to vacate. Updated
-        /// on re-merge so the new host vacates the correct slot.
-        var sourceManagerID: ObjectIdentifier
+        /// Manager whose tab is replaced by the floating pill. Nil during
+        /// window movement, when the real tab stays visible in its own bar.
+        var sourceManagerID: ObjectIdentifier?
         let draggedWidth: CGFloat
         var insertionTargetID: ObjectIdentifier?
         var insertionIndex: Int?
@@ -97,10 +104,12 @@ final class TabDragController {
 
     func registerBar(_ handle: TabBarHandle, for tabManager: TabManager) {
         bars[ObjectIdentifier(tabManager)] = Entry(tabManager: tabManager, handle: handle)
+        if cachedDropEntry?.tabManager === tabManager { cachedDropEntry = nil }
     }
 
     func unregisterBar(for tabManager: TabManager) {
         bars.removeValue(forKey: ObjectIdentifier(tabManager))
+        if cachedDropEntry?.tabManager === tabManager { cachedDropEntry = nil }
     }
 
     // MARK: - Internal Drag State
@@ -114,11 +123,16 @@ final class TabDragController {
     /// Manager currently holding the dragged tab. Updated on tear-off and
     /// re-merge.
     private weak var dragHost: TabManager?
+    /// The original mouse-down window must survive until release, including
+    /// when that same window is reused for a one-tab drag and later merged.
+    private weak var captureWindow: NSWindow?
+    private var originalCollectionBehavior: NSWindow.CollectionBehavior?
     /// Host bar rect in screen coords. Updated whenever `dragHost`
     /// changes so the tear-off threshold uses the correct anchor.
     private var hostBarScreenRect: CGRect = .zero
     /// Host window frame size. Inherited by torn-off windows.
     private var hostWindowFrameSize: NSSize = .zero
+    private var grabOffset: CGPoint = .zero
     private var preview: TabDragPreviewWindow?
     private var cachedDropEntry: Entry?
     private var cursorPushed = false
@@ -144,14 +158,18 @@ final class TabDragController {
         tabID: UUID,
         in tabManager: TabManager,
         snapshot: TabDragPreviewSnapshot,
-        screenPoint: CGPoint
+        screenPoint: CGPoint,
+        grabOffset: CGPoint? = nil
     ) {
         // Defensive: if a previous drag was somehow not torn down, drop it.
         cleanup()
 
         adoptHost(tabManager)
+        captureWindow = bars[ObjectIdentifier(tabManager)]?.handle?.window
+            ?? WindowRegistry.shared.window(for: tabManager)
+        self.grabOffset = grabOffset ?? CGPoint(x: snapshot.width / 2, y: DesignTokens.tabHeight / 2)
 
-        let preview = TabDragPreviewWindow(snapshot: snapshot)
+        let preview = TabDragPreviewWindow(snapshot: snapshot, grabOffset: self.grabOffset)
         preview.move(to: screenPoint)
         preview.show()
         self.preview = preview
@@ -184,14 +202,31 @@ final class TabDragController {
     }
 
     func endDrag(at screenPoint: CGPoint) {
-        guard isActive, let drag = activeDrag else {
+        guard isActive else {
+            cleanup()
+            return
+        }
+
+        // Mouse-up can carry a newer position than the last drag event.
+        // Resolve it before committing so the release point decides the host.
+        let phaseBeforeRelease = phase
+        updateDrag(to: screenPoint)
+        guard let drag = activeDrag else {
             cleanup()
             return
         }
 
         switch phase {
         case .pill:
-            commitPillDrop(drag: drag, at: screenPoint)
+            if case .window = phaseBeforeRelease, let host = dragHost {
+                // This event already resolved the target and moved the tab.
+                // A retained torn-off window must not change that decision
+                // merely because the transfer changed the drag phase.
+                host.selectTab(drag.tabID)
+                WindowRegistry.shared.bringToFront(for: host)
+            } else {
+                commitPillDrop(drag: drag, at: screenPoint)
+            }
         case .window(let window, _):
             finalizeTornOffWindow(window, at: screenPoint)
         }
@@ -200,7 +235,7 @@ final class TabDragController {
 
     /// `dropPoint` is the cursor location when the cancel was driven by an ESC
     /// keystroke; nil for app-resign-active or source-window-close, where the
-    /// torn-off window is still fit on-screen using its own screen.
+    /// inaccessible torn-off chrome is recovered using the window's own screen.
     func cancelDrag(at dropPoint: CGPoint? = nil) {
         // ESC during `.window`: drop the window where it is (option 5b).
         // Everywhere else cancel is a pure state reset.
@@ -275,6 +310,10 @@ final class TabDragController {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
                 host.commitTabReorder(drag.tabID, toIndex: resolution.index)
             }
+            // Live re-merge preserves the target's selection while hovering.
+            // Once dropped, the transferred document becomes the active tab.
+            host.selectTab(drag.tabID)
+            WindowRegistry.shared.bringToFront(for: host)
         } else {
             // Not animated: a cross-window move does session detach/attach,
             // state persistence, and a view-state restore — wrapping all of
@@ -308,22 +347,45 @@ final class TabDragController {
     }
 
     private func finalizeTornOffWindow(_ window: NSWindow, at dropPoint: CGPoint?) {
-        window.collectionBehavior.remove(.canJoinAllSpaces)
-        constrainOnScreen(window, at: dropPoint)
+        restoreCollectionBehavior(of: window)
+        recoverInaccessibleWindow(window, at: dropPoint)
     }
 
-    /// During a `.window` drag the torn-off window follows the cursor via
-    /// `setFrameOrigin`, which — unlike `setFrame(_:display:)` or window
-    /// creation — does NOT constrain the frame to the screen. So on drop the
-    /// window can hang off a screen edge, or (dropped on a display smaller than
-    /// the one it was sized for) be larger than the drop screen entirely. Fit it
-    /// fully onto the screen it now occupies, shrinking if necessary.
-    ///
-    /// The drop screen is resolved by `dropPoint` (the cursor — the same anchor
-    /// the tear-off uses to size the window, so the two never disagree across
-    /// displays), falling back to the window's own screen when no cursor is
-    /// known (ESC / app-resign-active / source-window-close).
-    private func constrainOnScreen(_ window: NSWindow, at dropPoint: CGPoint?) {
+    private func restoreCollectionBehavior(of window: NSWindow) {
+        guard let originalCollectionBehavior else { return }
+        window.collectionBehavior = originalCollectionBehavior
+        self.originalCollectionBehavior = nil
+    }
+
+    private func beginWindowPhase(_ window: NSWindow, offset: CGPoint, drag: ActiveDrag) {
+        originalCollectionBehavior = window.collectionBehavior
+        window.collectionBehavior.insert(.canJoinAllSpaces)
+        preview?.hide()
+        cachedDropEntry = nil
+        phase = .window(window, cursorOffset: offset)
+        var next = drag
+        next.sourceManagerID = nil
+        next.insertionTargetID = nil
+        next.insertionIndex = nil
+        activeDrag = next
+    }
+
+    /// A user-placed window may extend beyond a display without losing its
+    /// draggable chrome. Preserve that placement; fitting the entire frame at
+    /// release would make the window jump away from the cursor. Check every
+    /// display so a window spanning a boundary is not pulled onto just one.
+    /// If the bar is unavailable or inaccessible, retain the existing recovery
+    /// path for cancellation, display changes, and offscreen placement.
+    private func recoverInaccessibleWindow(_ window: NSWindow, at dropPoint: CGPoint?) {
+        if let handle = bars.values.compactMap(\.handle).first(where: { $0.window === window }) {
+            let chrome = handle.screenFrame()
+            let isReachable = chrome.width > 0 && chrome.height > 0 && NSScreen.screens.contains { screen in
+                let visibleChrome = chrome.intersection(screen.visibleFrame)
+                return !visibleChrome.isNull && visibleChrome.width >= min(80, chrome.width) &&
+                    visibleChrome.height >= chrome.height - 1
+            }
+            if isReachable { return }
+        }
         let screen = dropPoint.flatMap { NSScreen.containing($0) } ?? window.screen ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
         let fitted = NSScreen.onScreenFrame(window.frame, in: visible)
@@ -334,8 +396,6 @@ final class TabDragController {
     // MARK: - Tear Off
 
     private func tearOff(at screenPoint: CGPoint, drag: ActiveDrag, host: TabManager) {
-        guard let appDelegate = AppDelegate.shared else { return }
-
         let rawSize = hostWindowFrameSize == .zero
             ? NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight)
             : hostWindowFrameSize
@@ -344,16 +404,37 @@ final class TabDragController {
             visibleFrame: NSScreen.containing(screenPoint)?.visibleFrame.size
         )
 
-        let offset = Self.cursorToWindowOffset(
-            draggedWidth: drag.draggedWidth,
-            windowHeight: frameSize.height
-        )
+        let sourceWindow = WindowRegistry.shared.window(for: host)
+        var offset = cursorToWindowOffset(for: drag, in: host, windowHeight: frameSize.height)
         let origin = CGPoint(
             x: screenPoint.x + offset.x,
             y: screenPoint.y + offset.y
         )
         let frame = NSRect(origin: origin, size: frameSize)
 
+        if host.tabs.count == 1, let sourceWindow, sourceWindow.isVisible,
+           !sourceWindow.styleMask.contains(.fullScreen), sourceWindow.attachedSheet == nil {
+            // A sole tab already owns the complete native surface it needs.
+            // Preserve its actual slot, including any remaining scroll offset.
+            if let tabFrame = bars[ObjectIdentifier(host)]?.handle?.tabScreenFrame(for: drag.tabID) {
+                offset.x = -(tabFrame.minX - sourceWindow.frame.minX + grabOffset.x)
+            }
+            let reusedFrame = NSRect(
+                origin: CGPoint(x: screenPoint.x + offset.x, y: screenPoint.y + offset.y), size: frameSize
+            )
+            beginWindowPhase(sourceWindow, offset: offset, drag: drag)
+            withoutOrderingAnimation(of: sourceWindow) {
+                WindowRegistry.shared.bringToFront(for: host)
+            }
+            if sourceWindow.frame.size == reusedFrame.size {
+                sourceWindow.setFrameOrigin(reusedFrame.origin)
+            } else {
+                sourceWindow.setFrame(reusedFrame, display: false)
+            }
+            return
+        }
+
+        guard let appDelegate = AppDelegate.shared else { return }
         // Move the tab into a fresh empty manager. `closeIfEmpty: false`
         // keeps the original host's window alive even if it just lost its
         // last tab — closing it now would break the macOS implicit
@@ -370,24 +451,35 @@ final class TabDragController {
             deferredCloseManagers.append(host)
         }
 
-        guard let newWindow = appDelegate.createNewWindow(with: newTabManager, frame: frame) else {
+        // Transfer event ownership before mounting the new root: its layout can
+        // tear down the old bar synchronously and invoke cancelDragIfSource.
+        adoptHost(newTabManager)
+        guard let newWindow = appDelegate.createNewWindow(
+            with: newTabManager, frame: frame, animatePresentation: false
+        ) else {
             // Window creation failed — put the tab back where it came from so
             // it (and any unsaved edits) can't strand in an unanchored manager.
             _ = newTabManager.moveTab(drag.tabID, to: host, at: 0)
+            adoptHost(host)
             return
         }
-        newWindow.collectionBehavior.insert(.canJoinAllSpaces)
-
-        preview?.close()
-        preview = nil
-        cachedDropEntry = nil
+        if let tabFrame = bars[ObjectIdentifier(newTabManager)]?.handle?.tabScreenFrame(for: drag.tabID),
+           !tabFrame.isEmpty {
+            offset = CGPoint(
+                x: -(tabFrame.minX - newWindow.frame.minX + grabOffset.x),
+                y: -(tabFrame.minY - newWindow.frame.minY + grabOffset.y)
+            )
+            newWindow.setFrameOrigin(CGPoint(x: screenPoint.x + offset.x, y: screenPoint.y + offset.y))
+        }
 
         adoptHost(newTabManager)
-        // The tab is now visibly in the torn-off window — sourceManagerID
-        // intentionally stays the original host so the new bar's view
-        // doesn't try to render the tab as hidden.
-        phase = .window(newWindow, cursorOffset: offset)
-        clearInsertion(drag: drag)
+        beginWindowPhase(newWindow, offset: offset, drag: drag)
+
+        // Keep the mouse-down window alive until release, but remove its empty
+        // content and shadow once the detached document has a visible home.
+        if host.tabs.isEmpty, let sourceWindow {
+            withoutOrderingAnimation(of: sourceWindow) { sourceWindow.orderOut(nil) }
+        }
     }
 
     // MARK: - Re-merge
@@ -398,27 +490,41 @@ final class TabDragController {
         window: NSWindow,
         resolution: Resolution
     ) {
-        guard let host = dragHost else { return }
+        guard let host = dragHost, let preview else { return }
+
+        // Cover the held tab before moving its session or retiring its window.
+        // Reuse the rendered pickup surface so merge has no new SwiftUI mount.
+        preview.move(to: screenPoint)
+        preview.show()
 
         // Move tab from torn-off manager directly into the resolved
         // target. `select: false` so the target's active tab isn't
-        // disturbed mid-drag. This also closes the torn-off window
-        // (its only tab is now gone).
+        // disturbed mid-drag. If no other tabs remain, moving the tab also
+        // schedules the torn-off window to close.
         guard host.moveTab(
             drag.tabID,
             to: resolution.tabManager,
             at: resolution.index,
-            select: false
+            select: false,
+            closeIfEmpty: window !== captureWindow
         ) else {
+            preview.hide()
             return
         }
 
-        // Rebuild pill UI for the next pill-phase pass.
-        if let snapshot = makePreviewSnapshot(for: drag, in: resolution.tabManager) {
-            let preview = TabDragPreviewWindow(snapshot: snapshot)
-            preview.move(to: screenPoint)
-            preview.show()
-            self.preview = preview
+        // Empty windows close asynchronously; hide them as soon as they retire.
+        // A window that gained another tab stays open with normal placement.
+        if host.tabs.isEmpty {
+            if window === captureWindow, !deferredCloseManagers.contains(where: { $0 === host }) {
+                deferredCloseManagers.append(host)
+            }
+            restoreCollectionBehavior(of: window)
+            withoutOrderingAnimation(of: window) { window.orderOut(nil) }
+        } else {
+            finalizeTornOffWindow(window, at: screenPoint)
+            // The retained window stops following the cursor. Keep the
+            // destination bar exposed for later pill-drag events.
+            WindowRegistry.shared.bringToFront(for: resolution.tabManager)
         }
 
         adoptHost(resolution.tabManager)
@@ -435,18 +541,14 @@ final class TabDragController {
         activeDrag = next
     }
 
-    private func makePreviewSnapshot(
-        for drag: ActiveDrag,
-        in tabManager: TabManager
-    ) -> TabDragPreviewSnapshot? {
-        guard let tab = tabManager.tabs.first(where: { $0.id == drag.tabID }) else {
-            return nil
-        }
-        return TabDragPreviewSnapshot(
-            title: tab.displayTitle,
-            isDirty: tabManager.isTabDirty(tab.id),
-            width: drag.draggedWidth
-        )
+    /// Native ordering animations can make the next ordered-window query wait
+    /// for their transition. Keep drag handoffs immediate without changing the
+    /// window's behavior for later ordinary open/close operations.
+    private func withoutOrderingAnimation(of window: NSWindow, _ operation: () -> Void) {
+        let original = window.animationBehavior
+        window.animationBehavior = .none
+        defer { window.animationBehavior = original }
+        operation()
     }
 
     // MARK: - Host Tracking
@@ -472,42 +574,40 @@ final class TabDragController {
             return nil
         }()
 
-        // Fast path: still inside the bar we last hovered.
-        if let cached = cachedDropEntry,
-           let handle = cached.handle,
-           let manager = cached.tabManager,
-           handle.window !== tornOffWindow,
-           !manager.tabs.isEmpty,
-           handle.contains(screenPoint: screenPoint),
-           let index = handle.dropIndex(for: screenPoint) {
-            return Resolution(tabManager: manager, index: index)
+        // Native order can change without a mouse move. Resolve the first
+        // input-receiving window before consulting the cached bar; its content
+        // also occludes lower bars. The dragged window and preview are excluded.
+        var frontWindow: NSWindow?
+        NSApp.enumerateWindows(options: .orderedFrontToBack) { window, stop in
+            guard window.isVisible, window !== tornOffWindow, !window.ignoresMouseEvents,
+                  window.frame.contains(screenPoint) else { return }
+            frontWindow = window
+            stop.pointee = true
+        }
+        guard let frontWindow else {
+            cachedDropEntry = nil
+            return nil
         }
 
-        // Otherwise walk windows in z-order; first matching bar wins.
-        for window in NSApp.orderedWindows {
-            if window === tornOffWindow { continue }
-            guard window.frame.contains(screenPoint) else { continue }
-            guard let entry = entry(for: window),
-                  let handle = entry.handle,
-                  let manager = entry.tabManager else {
-                // Window matched (likely the dragging preview NSPanel or
-                // some other non-bar window) but has no registered bar —
-                // keep walking.
-                continue
-            }
-            // Skip managers whose last tab was just detached — the window
-            // is about to close but hasn't fully unregistered yet.
-            if manager.tabs.isEmpty { continue }
-            guard handle.contains(screenPoint: screenPoint),
-                  let index = handle.dropIndex(for: screenPoint) else {
-                continue
-            }
-            cachedDropEntry = entry
-            return Resolution(tabManager: manager, index: index)
+        let candidate: Entry?
+        if let cached = cachedDropEntry, cached.handle?.window === frontWindow {
+            candidate = cached
+        } else {
+            candidate = entry(for: frontWindow)
         }
+        guard let candidate, let handle = candidate.handle,
+              let manager = candidate.tabManager, canAcceptDrop(in: manager),
+              handle.contains(screenPoint: screenPoint),
+              let index = handle.dropIndex(for: screenPoint) else {
+            cachedDropEntry = nil
+            return nil
+        }
+        cachedDropEntry = candidate
+        return Resolution(tabManager: manager, index: index)
+    }
 
-        cachedDropEntry = nil
-        return nil
+    private func canAcceptDrop(in manager: TabManager) -> Bool {
+        !manager.tabs.isEmpty || deferredCloseManagers.contains { $0 === manager }
     }
 
     private func entry(for window: NSWindow) -> Entry? {
@@ -556,34 +656,47 @@ final class TabDragController {
         return min(abs(point.y - rect.minY), abs(point.y - rect.maxY))
     }
 
-    /// Offset from cursor to a torn-off window's origin such that the
-    /// window's first tab pill sits directly under the cursor. Tab-bar
-    /// geometry approximated from `TopChromeView` layout.
-    private static func cursorToWindowOffset(
-        draggedWidth: CGFloat,
+    /// Preserve the grabbed point when the tab becomes the first tab in a
+    /// fresh window. Measure chrome insets instead of assuming its button widths.
+    private func cursorToWindowOffset(
+        for drag: ActiveDrag,
+        in host: TabManager,
         windowHeight: CGFloat
     ) -> CGPoint {
-        let tabCenterX = DesignTokens.tabBarLeftMargin
-            + DesignTokens.spacingXS
-            + draggedWidth / 2
-        let tabCenterYFromTop = DesignTokens.windowDragRegionHeight
-            + DesignTokens.spacingXS
-            + DesignTokens.tabHeight / 2
+        let handle = bars[ObjectIdentifier(host)]?.handle
+        let windowFrame = handle?.window?.frame
+        let barFrame = handle?.screenFrame()
+        let tabFrame = handle?.tabScreenFrame(for: drag.tabID)
+        let leftInset: CGFloat
+        if let windowFrame, let barFrame, !barFrame.isEmpty {
+            leftInset = barFrame.minX - windowFrame.minX + DesignTokens.spacingXS
+        } else {
+            leftInset = DesignTokens.tabBarLeftMargin + DesignTokens.spacingXS
+        }
+        let topInset: CGFloat
+        if let windowFrame, let tabFrame, !tabFrame.isEmpty {
+            topInset = windowFrame.maxY - tabFrame.maxY
+        } else {
+            topInset = DesignTokens.windowDragRegionHeight + DesignTokens.spacingXS
+        }
         return CGPoint(
-            x: -tabCenterX,
-            y: -(windowHeight - tabCenterYFromTop)
+            x: -(leftInset + grabOffset.x),
+            y: -(windowHeight - topInset - DesignTokens.tabHeight + grabOffset.y)
         )
     }
 
     // MARK: - Cleanup
 
     private func cleanup() {
+        if case .window(let window, _) = phase { restoreCollectionBehavior(of: window) }
         removeEventMonitor()
         preview?.close()
         preview = nil
         dragHost = nil
+        captureWindow = nil
         hostWindowFrameSize = .zero
         hostBarScreenRect = .zero
+        grabOffset = .zero
         cachedDropEntry = nil
         phase = .pill
         popCursor()
@@ -600,7 +713,7 @@ final class TabDragController {
         let pending = deferredCloseManagers
         deferredCloseManagers.removeAll()
         for manager in pending where manager.tabs.isEmpty {
-            WindowRegistry.shared.closeWindow(for: manager)
+            WindowRegistry.shared.closeWindow(for: manager, onlyIfEmpty: true)
         }
     }
 
@@ -652,10 +765,19 @@ final class TabDragController {
     }
 
     private static func screenPoint(forEvent event: NSEvent) -> CGPoint {
+        guard event.type == .leftMouseDragged || event.type == .leftMouseUp else {
+            return NSEvent.mouseLocation
+        }
+        // Queued events keep their original window-local position even if we
+        // moved that window in the previous callback. The backing event's
+        // global point preserves the drag/release location independently.
+        if let location = event.cgEvent?.location, let primaryScreen = NSScreen.screens.first {
+            return CGPoint(x: location.x, y: primaryScreen.frame.maxY - location.y)
+        }
         if let eventWindow = event.window {
             return eventWindow.convertPoint(toScreen: event.locationInWindow)
         }
-        return NSEvent.mouseLocation
+        return event.locationInWindow
     }
 
     // MARK: - Cursor
@@ -676,13 +798,12 @@ final class TabDragController {
 // MARK: - Floating Preview Window
 
 private final class TabDragPreviewWindow {
-    private static let cursorOffset = CGPoint(x: 0, y: 18)
-
     private let panel: NSPanel
-    private let size: NSSize
+    private let grabOffset: CGPoint
 
-    init(snapshot: TabDragPreviewSnapshot) {
-        size = NSSize(width: snapshot.width, height: DesignTokens.tabHeight)
+    init(snapshot: TabDragPreviewSnapshot, grabOffset: CGPoint) {
+        self.grabOffset = grabOffset
+        let size = NSSize(width: snapshot.width, height: DesignTokens.tabHeight)
         panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -692,6 +813,7 @@ private final class TabDragPreviewWindow {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        panel.animationBehavior = .none
         panel.ignoresMouseEvents = true
         panel.level = .statusBar
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
@@ -699,13 +821,22 @@ private final class TabDragPreviewWindow {
     }
 
     func show() {
+        #if DEBUG
+        guard !QAPresentation.runsInBackground else { return }
+        #endif
         panel.orderFrontRegardless()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.displayIfNeeded()
+    }
+
+    func hide() {
+        panel.orderOut(nil)
     }
 
     func move(to screenPoint: CGPoint) {
         let origin = CGPoint(
-            x: screenPoint.x - size.width / 2 + Self.cursorOffset.x,
-            y: screenPoint.y - size.height / 2 - Self.cursorOffset.y
+            x: screenPoint.x - grabOffset.x,
+            y: screenPoint.y - grabOffset.y
         )
         panel.setFrameOrigin(origin)
     }

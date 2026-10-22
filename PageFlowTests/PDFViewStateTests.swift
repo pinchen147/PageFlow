@@ -16,6 +16,42 @@ import Testing
 @testable import PageFlow
 
 @MainActor
+struct PDFViewHostVisibilityTests {
+    @Test
+    func inactiveHostStopsHitsBeforeDeferredNativeHiding() async {
+        let parent = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        let host = PDFViewHost(pdfView: StablePDFView())
+        host.frame = parent.bounds
+        parent.addSubview(host)
+        #expect(host.hitTest(NSPoint(x: 10, y: 10)) != nil)
+
+        host.setContentActive(false)
+        #expect(!host.isHidden)
+        #expect(host.hitTest(NSPoint(x: 10, y: 10)) == nil)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(host.isHidden)
+    }
+
+    @Test
+    func rapidReactivationKeepsTheLatestVisibility() async {
+        let parent = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        let host = PDFViewHost(pdfView: StablePDFView())
+        host.frame = parent.bounds
+        parent.addSubview(host)
+
+        host.setContentActive(false)
+        host.setContentActive(true)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(!host.isHidden)
+        #expect(host.hitTest(NSPoint(x: 10, y: 10)) != nil)
+    }
+}
+
+@MainActor
 struct PDFViewStateTests {
 
     // MARK: - scalesDiffer (the projector's relative-tolerance comparison)

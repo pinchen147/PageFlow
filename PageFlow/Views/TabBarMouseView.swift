@@ -69,15 +69,13 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     private var onClick: (TabBarClickTarget) -> Void = { _ in }
 
     private var pressOrigin: NSPoint?
-    private var pressedTabID: UUID?
+    private var pressedTarget: TabBarClickTarget?
+    private var pressedButtonFrame: CGRect?
+    private var pressGrabOffset: CGPoint?
     private var dragArmed = false
-    /// True only when the current mouseDown was the second click of a
-    /// double-click. Tab drag arms only on a held second-click — a plain
-    /// single-click + drag is a no-op (the click still selects on
-    /// mouseUp).
-    private var canDrag = false
     private var trackingArea: NSTrackingArea?
     private var registered = false
+    private var isHoverRefreshScheduled = false
 
     override var isFlipped: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
@@ -94,6 +92,8 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         onHover: @escaping (UUID?) -> Void,
         onClick: @escaping (TabBarClickTarget) -> Void
     ) {
+        let layoutChanged = self.tabFrames != tabFrames || self.activeTabID != activeTabID
+            || self.newTabButtonFrame != newTabButtonFrame
         self.tabManagerRef = tabManager
         self.tabFrames = tabFrames
         self.newTabButtonFrame = newTabButtonFrame
@@ -102,6 +102,10 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         self.onHover = onHover
         self.onClick = onClick
         registerIfReady()
+        if layoutChanged {
+            window?.invalidateCursorRects(for: self)
+            scheduleHoverRefresh()
+        }
     }
 
     // MARK: - View Lifecycle
@@ -109,16 +113,22 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.acceptsMouseMovedEvents = true
+        // AppKit does NOT reliably re-invoke updateTrackingAreas after a
+        // direct window-to-window re-parent — re-arm explicitly (same bug
+        // class as the chrome hover sensor).
+        updateTrackingAreas()
         registerIfReady()
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         super.viewWillMove(toWindow: newWindow)
+        // Drop the area on ANY window change — its registration belongs to
+        // the old window; viewDidMoveToWindow re-arms in the new one.
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+            self.trackingArea = nil
+        }
         if newWindow == nil {
-            if let trackingArea {
-                removeTrackingArea(trackingArea)
-                self.trackingArea = nil
-            }
             // Window torn down mid-drag — abort only if this view's
             // manager is the drag's current host. (Single-tab tear-off
             // closes the original source window; the drag is by then
@@ -144,16 +154,23 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        guard trackingArea == nil else { return }
-
+        // Re-create every call (StablePDFView pattern): an area kept across a
+        // window re-parent stays registered with the OLD window and goes
+        // inert — same bug class as the chrome hover sensor's lost traffic
+        // lights. .activeInActiveApp so tab hover works in non-key windows,
+        // matching native tab strips.
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            options: [.activeInActiveApp, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved, .cursorUpdate],
             owner: self,
             userInfo: nil
         )
         addTrackingArea(area)
         trackingArea = area
+        scheduleHoverRefresh()
     }
 
     // MARK: - Hit Testing (Window Drag Fall-Through)
@@ -162,10 +179,26 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     /// so dragging the bar background drags the window — Chrome / Safari
     /// behavior. Tab pills and the `+` button still receive clicks.
     override func hitTest(_ point: NSPoint) -> NSView? {
+        // Outside this view's frame (e.g. the width a floating toolbar
+        // covers) is never ours, even where a tab lies underneath.
+        guard frame.contains(point) else { return nil }
         if findTab(at: point) != nil || newTabButtonFrame.contains(point) {
             return self
         }
         return nil
+    }
+
+    override func resetCursorRects() {
+        for frame in Array(tabFrames.values) + [newTabButtonFrame] {
+            let visible = bounds.intersection(frame)
+            if !visible.isEmpty { addCursorRect(visible, cursor: .pointingHand) }
+        }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        guard !TabDragController.shared.isActive else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        (bounds.contains(point) && clickTarget(at: point) != nil ? NSCursor.pointingHand : .arrow).set()
     }
 
     // MARK: - Hover
@@ -183,20 +216,53 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         if hoveredTabID != nil { onHover(nil) }
     }
 
+    /// A point outside the view (over a toolbar floating past its trailing
+    /// edge) hovers nothing, though a tab's frame may run under it.
     private func emitHover(at point: NSPoint) {
         guard !TabDragController.shared.isActive else { return }
-        let next = findTab(at: point)
+        let next = bounds.contains(point) ? findTab(at: point) : nil
         if next != hoveredTabID { onHover(next) }
+    }
+
+    /// Tabs can move under a pointer that doesn't (a ⌘1–9 switch re-lays out
+    /// the Deck; a floating toolbar narrows the strip), and AppKit sends no
+    /// mouse event for that, so a stale hover would keep a card slid out.
+    /// Re-read the pointer once the layout has landed — a turn later, never
+    /// inside the SwiftUI update that delivered it.
+    private func scheduleHoverRefresh() {
+        guard !isHoverRefreshScheduled else { return }
+        isHoverRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            isHoverRefreshScheduled = false
+            guard let window else { return }
+            emitHover(at: convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        }
     }
 
     // MARK: - Mouse Down / Drag / Up
 
     override func mouseDown(with event: NSEvent) {
+        resetMousePressState()
+        guard !TabDragController.shared.isActive else { return }
         let point = convert(event.locationInWindow, from: nil)
+        guard let target = clickTarget(at: point) else { return }
         pressOrigin = point
-        pressedTabID = findTab(at: point)
-        dragArmed = false
-        canDrag = event.clickCount >= 2
+        pressedTarget = target
+
+        switch target {
+        case .selectTab(let tabID):
+            // Selection can move or resize the tab synchronously. Keep the
+            // original grab point, with y measured from the tab's bottom.
+            if let frame = tabFrames[tabID] {
+                pressGrabOffset = CGPoint(x: point.x - frame.minX, y: frame.maxY - point.y)
+            }
+            onClick(target)
+        case .closeTab(let tabID):
+            pressedButtonFrame = closeButtonFrame(for: tabID)
+        case .newTab:
+            pressedButtonFrame = newTabButtonFrame
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -204,19 +270,16 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         // synchronous override would double-process events.
         if TabDragController.shared.isActive { return }
 
-        // Single-click drags are intentionally ignored — only a held
-        // second click of a double-click can initiate a tab drag.
-        guard canDrag,
-              !dragArmed,
+        guard !dragArmed,
               let origin = pressOrigin,
+              let target = pressedTarget,
+              case .selectTab(let tabID) = target,
               let tabManager = tabManagerRef else { return }
 
         let current = convert(event.locationInWindow, from: nil)
-        guard hypot(current.x - origin.x, current.y - origin.y) >= Self.dragThreshold else { return }
+        guard hypot(current.x - origin.x, current.y - origin.y) > Self.dragThreshold else { return }
 
-        guard let tabID = pressedTabID,
-              !isCloseHit(for: tabID, at: origin),
-              let snapshot = makeDragSnapshot(for: tabID, in: tabManager),
+        guard let snapshot = makeDragSnapshot(for: tabID, in: tabManager),
               let screen = screenPoint(for: current) else {
             return
         }
@@ -226,7 +289,8 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
             tabID: tabID,
             in: tabManager,
             snapshot: snapshot,
-            screenPoint: screen
+            screenPoint: screen,
+            grabOffset: pressGrabOffset
         )
     }
 
@@ -235,9 +299,10 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         // override only fires for plain clicks (no threshold crossed).
         defer { resetMousePressState() }
         if TabDragController.shared.isActive { return }
-        guard let origin = pressOrigin,
-              !dragArmed,
-              let target = clickTarget(at: origin) else {
+        guard !dragArmed,
+              let target = pressedTarget,
+              let buttonFrame = pressedButtonFrame,
+              buttonFrame.contains(convert(event.locationInWindow, from: nil)) else {
             return
         }
         onClick(target)
@@ -245,9 +310,10 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
 
     private func resetMousePressState() {
         pressOrigin = nil
-        pressedTabID = nil
+        pressedTarget = nil
+        pressedButtonFrame = nil
+        pressGrabOffset = nil
         dragArmed = false
-        canDrag = false
     }
 
     // MARK: - Coordinate Conversion
@@ -283,19 +349,22 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     }
 
     private func isCloseHit(for tabID: UUID, at point: NSPoint) -> Bool {
-        guard let frame = tabFrames[tabID] else { return false }
+        closeButtonFrame(for: tabID)?.contains(point) ?? false
+    }
+
+    private func closeButtonFrame(for tabID: UUID) -> CGRect? {
+        guard let frame = tabFrames[tabID] else { return nil }
         let isCloseVisible = hoveredTabID == tabID || activeTabID == tabID
-        guard isCloseVisible else { return false }
+        guard isCloseVisible else { return nil }
         let closeMaxX = frame.maxX - DesignTokens.spacingSM
         let closeMinX = closeMaxX - DesignTokens.tabCloseButtonSize
         let closeY = frame.midY - DesignTokens.tabCloseButtonSize / 2
-        let closeRect = NSRect(
+        return CGRect(
             x: closeMinX,
             y: closeY,
             width: DesignTokens.tabCloseButtonSize,
             height: DesignTokens.tabCloseButtonSize
         )
-        return closeRect.contains(point)
     }
 
     private func makeDragSnapshot(for tabID: UUID, in tabManager: TabManager) -> TabDragPreviewSnapshot? {
@@ -320,6 +389,11 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
         guard let window else { return .zero }
         let windowRect = convert(bounds, to: nil)
         return window.convertToScreen(windowRect)
+    }
+
+    func tabScreenFrame(for tabID: UUID) -> CGRect? {
+        guard let window, let frame = tabFrames[tabID] else { return nil }
+        return window.convertToScreen(convert(frame, to: nil))
     }
 
     func dropIndex(for screenPoint: CGPoint) -> Int? {

@@ -198,12 +198,4 @@ struct TabDragControllerTests {
         #expect(controller.isActive == true)
         controller.cancelDrag()
     }
-
-    // NOTE: A test for the double-click gate on `TabBarMouseNSView` is
-    // intentionally deferred — it requires synthesizing an `NSEvent` with
-    // a specific `clickCount`, which means plumbing through CGEvent or a
-    // private NSEvent constructor. The gate logic is one line
-    // (`canDrag = event.clickCount >= 2`) and the underlying behavior is
-    // owned by AppKit's double-click detection. Not worth the mocking
-    // weight for a one-line invariant.
 }
