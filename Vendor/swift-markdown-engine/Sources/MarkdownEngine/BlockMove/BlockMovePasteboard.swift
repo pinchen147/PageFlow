@@ -4,7 +4,7 @@ import CryptoKit
 /// Stable block identity is separate from its portable Markdown representation.
 struct BlockMovePasteboard {
     enum Kind: String, Codable, CaseIterable {
-        case image, equation, diagram, code, table
+        case image, equation, diagram, code, table, paragraph, heading, quote, list, divider
         var title: String {
             switch self {
             case .image: "Image"
@@ -12,6 +12,11 @@ struct BlockMovePasteboard {
             case .diagram: "Diagram"
             case .code: "Code Block"
             case .table: "Table"
+            case .paragraph: "Paragraph"
+            case .heading: "Heading"
+            case .quote: "Quote"
+            case .list: "List"
+            case .divider: "Divider"
             }
         }
     }
@@ -26,6 +31,7 @@ struct BlockMovePasteboard {
     struct Markdown: Codable {
         let source: String
         let baseFolder: URL?
+        let collapsedHeadingIndices: [Int]?
     }
     static let moveType = NSPasteboard.PasteboardType("com.pageflow.block-move")
     static let markdownType = NSPasteboard.PasteboardType("com.pageflow.markdown-block")
@@ -33,10 +39,11 @@ struct BlockMovePasteboard {
     let markdown: Markdown
     var range: NSRange { NSRange(location: identity.location, length: identity.length) }
 
-    init(source: String, range: NSRange, kind: Kind, document: String?, editor: String, baseFolder: URL?) {
+    init(source: String, range: NSRange, kind: Kind, document: String?, editor: String, baseFolder: URL?,
+         collapsedHeadingIndices: [Int]? = nil) {
         identity = Identity(document: document, editor: editor, kind: kind, location: range.location, length: range.length,
                             sha256: Self.hash(source))
-        markdown = Markdown(source: source, baseFolder: baseFolder)
+        markdown = Markdown(source: source, baseFolder: baseFolder, collapsedHeadingIndices: collapsedHeadingIndices)
     }
     private init(identity: Identity, markdown: Markdown) {
         self.identity = identity

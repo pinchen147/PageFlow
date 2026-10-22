@@ -10,7 +10,7 @@ extension NativeTextViewCoordinator {
         _ ranges: [NSRange], with replacement: String, expectedSource: String, actionName: String,
         reflowsParagraphChain: Bool = true, insertedAttributes: [NSAttributedString.Key: Any]? = nil,
         registersUndo: Bool = true, selectionAfter: NSRange? = nil, preflighted: Bool = false, preservesBlockStructure: Bool = false,
-        commentMove: MarkdownCommentMove? = nil
+        commentMove: MarkdownCommentMove? = nil, folding: MarkdownFoldTransfer? = nil
     ) -> Bool {
         let phaseStart = CFAbsoluteTimeGetCurrent()
         defer { PerfTrace.add("replace.total", since: phaseStart) }
@@ -37,7 +37,9 @@ extension NativeTextViewCoordinator {
         }
 
         var admitted = true
-        for range in ranges where !admitFoldedEdit(range, in: tv) { admitted = false }
+        if !preflighted || folding == nil {
+            for range in ranges where !admitFoldedEdit(range, in: tv) { admitted = false }
+        }
         guard admitted else { return false }
 
         let start = ranges[0].location
@@ -67,7 +69,7 @@ extension NativeTextViewCoordinator {
             inverseMapLocation: Self.replacementMap(ranges: inverseRanges, lengths: ranges.map(\.length)),
             inverseSelection: tv.selectedRange(), reflowsParagraphChain: reflowsParagraphChain,
             insertedAttributes: insertedAttributes, registersUndo: registersUndo, preflighted: preflighted, preservesBlockStructure: preservesBlockStructure,
-            commentMove: commentMove
+            commentMove: commentMove, folding: folding
         )
         let undo = tv.undoManager
         let ownsGroup = registersUndo && undo?.groupingLevel == 0 && undo?.isUndoing == false && undo?.isRedoing == false

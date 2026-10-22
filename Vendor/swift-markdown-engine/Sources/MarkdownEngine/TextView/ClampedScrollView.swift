@@ -10,6 +10,19 @@ import AppKit
 import QuartzCore
 
 final class ClampedScrollView: NSScrollView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        // NSClipView rejects hits in contentInsets even when scrolling has
+        // brought visible document content into that band. Keep native chrome
+        // hits, but let actual document descendants receive those clicks.
+        guard hit === self, let document = documentView,
+              !document.isHiddenOrHasHiddenAncestor, let parent = document.superview,
+              contentView.frame.contains(convert(point, from: superview)),
+              let descendant = document.hitTest(parent.convert(point, from: superview)),
+              descendant !== document else { return hit }
+        return descendant
+    }
+
     /// Reports a USER-driven magnification change (pinch gesture end or
     /// Ctrl+scroll) so the host can persist the per-document zoom. Not fired for
     /// host-projected magnification (⌘±, ⌘0, restore), which the host already

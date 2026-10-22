@@ -27,7 +27,7 @@ Every tool stays out of sight until you reach for it.
 - **Tables you edit as tables** — click a cell and type, Tab to move on (Tab past the last cell adds a row), right-click to insert, delete, move, sort or align. Select a range of cells to copy, paste, clear or format them.
 - **Math, diagrams, code** — `$…$` and `$$…$$` LaTeX, Mermaid flowchart, sequence, class, state, ER and XY charts, and syntax colouring for about 190 languages.
 - **Images you can edit** — select an image to change its description, size, alignment or crop, or attach a margin comment. Crops preserve the original file.
-- **Move whole blocks** — drag an image, table, code block, formula or diagram by its grip; undo restores its position.
+- **Move whole blocks** — hover to reveal grips for paragraphs, headings, quotes, list groups, tables, images, code, formulas and diagrams. A collapsed heading carries its entire hidden section and nested fold choices; an expanded heading moves only its heading text. Drops, copies, Undo and Redo preserve those choices.
 - **Comments in the file** — select text and press ⌥⌘M. Threads sit in the margin, can be replied to and resolved, and are saved in a hidden block at the end of the `.md`, so they travel with it.
 - **Plain files** — `.md` and `.markdown` anywhere on your Mac; line endings kept. `[next](other.md)` opens the linked note or PDF, `[see](#heading)` jumps within the note, a pasted screenshot lands in an `attachments` folder beside the note.
 - **Outline, Find and Replace, zoom, print** — a heading outline with Back and Forward, Find and Replace (⌥⌘F), PDF-style zoom, and printing that keeps math, tables and diagrams.
@@ -76,6 +76,7 @@ Requires macOS 15 (Sequoia) or later, on Apple Silicon or Intel.
 | Highlight / Underline / Comment (PDF) | `⌘Y` / `⌘U` / `⌘E` |
 | Bookmark / Copy page as Markdown | `⌘D` / `⇧⌘M` |
 | Zoom in / out / to fit | `⌘+` / `⌘-` / `⌥⌘0` |
+| Fold or expand current section | `⌥⌘↩` |
 | Search Tabs | `⇧⌘A` |
 
 Bindings can be changed in Settings → Shortcuts.

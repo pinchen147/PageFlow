@@ -640,7 +640,7 @@ extension NativeTextView {
 
     /// Fixed reading-column width = wrap width + horizontal insets on both sides.
     var readingColumnWidth: CGFloat {
-        (configuration.readingWidth ?? 0) + configuration.textInsets.horizontal * 2
+        (configuration.readingWidth ?? 0) + configuration.horizontalLayoutInset * 2
     }
 
     func applyManagedFrameSize(width: CGFloat) {
@@ -682,7 +682,7 @@ extension NativeTextView {
         // the reference editor's comment lane: the text ends at least `commentLaneReserve`
         // from the right edge, centred when there is room.
         if commentLaneReserve > 0 {
-            let limit = clipWidth - commentLaneReserve - (readingColumnWidth - configuration.textInsets.horizontal)
+            let limit = clipWidth - commentLaneReserve - (readingColumnWidth - configuration.horizontalLayoutInset)
             originX = floor(max(0, min(originX, limit)))
         }
         let delta = originX - frame.origin.x
@@ -753,7 +753,7 @@ extension NativeTextView {
         // BASE inset (the host's side margin), not the live textContainerInset —
         // the centering knob inflates the live inset to position the pinned
         // wrap column, which must not shrink the block-fit target.
-        let width = scrollView.contentView.bounds.width - configuration.textInsets.horizontal * 2
+        let width = scrollView.contentView.bounds.width - configuration.horizontalLayoutInset * 2
         guard width.isFinite, width > 1 else { return nil }
         return width
     }
@@ -818,7 +818,7 @@ extension NativeTextView {
     func applyZoomWrapPinning(forViewWidth viewWidth: CGFloat? = nil) {
         guard configuration.readingWidth == nil, let textContainer else { return }
         let vw = viewWidth ?? frame.width
-        let base = configuration.textInsets.horizontal
+        let base = configuration.horizontalLayoutInset
         // the reference editor's comment lane: the wrap ends `commentLaneReserve` short of the right edge.
         let reserve = commentLaneReserve
         let prose = zoomIndependentProseWidth

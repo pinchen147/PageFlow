@@ -6,6 +6,8 @@ extension NativeTextViewCoordinator {
         defer { PerfTrace.add("blockMove.payload", since: phaseStart) }
         guard let text = textView?.textStorage?.mutableString, range.location >= 0, range.length > 0,
               range.location <= text.length, range.length <= text.length - range.location else { return nil }
+        let section = kind == .heading ? foldSession.collapsedSection(at: range.location, in: text) : nil
+        let range = section ?? range
         let lines = text.lineRange(for: range)
         let end = Self.contentEnd(of: lines, in: text)
         let prefix = NSRange(location: lines.location, length: range.location - lines.location)
@@ -16,7 +18,8 @@ extension NativeTextViewCoordinator {
         let sourceRange = NSRange(location: lines.location, length: end - lines.location)
         return BlockMovePasteboard(source: text.substring(with: sourceRange), range: sourceRange, kind: kind,
                                    document: documentId, editor: blockEditorID,
-                                   baseFolder: configuration.services.images.baseFolderURL)
+                                   baseFolder: configuration.services.images.baseFolderURL,
+                                   collapsedHeadingIndices: section.map { foldSession.transfer(in: $0).headingIndices })
     }
 
     /// The block's full lines and one adjacent separator; the Markdown itself retains its exact bytes.
@@ -39,7 +42,8 @@ extension NativeTextViewCoordinator {
     func blockMoveSlots(around window: NSRange, excluding payload: BlockMovePasteboard? = nil) -> [Int] {
         guard let main = textView as? NativeTextView else { return [] }
         let text = main.string as NSString
-        let blocks = BlockDropSlots.blocks(around: window, in: text, opaqueRanges: main.dropOpaqueRanges() ?? [])
+        let blocks = blockMover.currentBlocks(in: text)
+            ?? BlockDropSlots.blocks(around: window, in: text, opaqueRanges: main.dropOpaqueRanges() ?? [])
         let slots = BlockDropSlots.slots(in: text, blocks: blocks, window: window).filter { foldLayout.hiddenRange(containing: $0) == nil }
         guard let payload, payload.isLocal(document: documentId, editor: blockEditorID), payload.matches(text) else { return slots }
         let removed = Self.blockRemovalRange(payload.range, in: text)
@@ -66,6 +70,11 @@ extension NativeTextViewCoordinator {
         let removed = local ? Self.blockRemovalRange(payload.range, in: text) : NSRange(location: 0, length: 0)
         let markdown = (copy ? payload.rebasedSource(to: configuration.services.images.baseFolderURL) : payload.markdown.source)
             .trimmingCharacters(in: .newlines)
+        let folding = payload.markdown.collapsedHeadingIndices.map {
+            MarkdownFoldTransfer(source: markdown as NSString, headingIndices: $0)
+        }
+        let foldedRemoval = local && !copy && payload.identity.kind == .heading
+            && foldSession.collapsedSection(at: payload.range.location, in: text) == payload.range ? removed : nil
         var boundedRestyle = false
         PerfTrace.time("blockMove.sourceProof") {
             boundedRestyle = Self.isClosedMovableBlock(markdown, kind: payload.identity.kind)
@@ -87,7 +96,7 @@ extension NativeTextViewCoordinator {
         let admissions: [(NSRange, String)] = (copy ? [] : [(removed, "")])
             + [(NSRange(location: target, length: 0), insertion)]
         var admitted = false
-        PerfTrace.time("blockMove.admission") { admitted = admitBlockEdits(admissions, in: main) }
+        PerfTrace.time("blockMove.admission") { admitted = admitBlockEdits(admissions, in: main, foldedRemoval: foldedRemoval) }
         guard admitted else { return false }
         var unchanged = false
         PerfTrace.time("blockMove.sourceValidation") {
@@ -117,14 +126,19 @@ extension NativeTextViewCoordinator {
                                   excludingSource: copy ? nil : removed, tag: "blockMove") {
             if !copy, !replaceSourceRanges([removed], with: "", expectedSource: source, actionName: action,
                                            reflowsParagraphChain: false, preflighted: true, preservesBlockStructure: boundedRestyle,
-                                           commentMove: commentMove) { return }
-            let selection = payload.identity.kind == .image
+                                           commentMove: commentMove, folding: folding.map { _ in .empty }) { return }
+            let selection: NSRange
+            if folding?.collapsed.contains(0) == true {
+                let heading = (markdown as NSString).lineRange(for: NSRange(location: 0, length: 0))
+                selection = NSRange(location: movedStart + Self.contentEnd(of: heading, in: markdown as NSString), length: 0)
+            } else { selection = payload.identity.kind == .image
                 ? NSRange(location: movedStart, length: markdown.utf16.count)
-                : NSRange(location: min(insertAt + insertionPlan.caret, afterRemoval.length + insertion.utf16.count), length: 0)
+                : NSRange(location: min(insertAt + insertionPlan.caret, afterRemoval.length + insertion.utf16.count), length: 0) }
             succeeded = replaceSourceRanges([NSRange(location: insertAt, length: 0)], with: insertion,
                                              expectedSource: afterRemoval as String, actionName: action,
                                              reflowsParagraphChain: false, selectionAfter: selection, preflighted: true, preservesBlockStructure: boundedRestyle,
-                                             commentMove: commentMove)
+                                             commentMove: commentMove,
+                                             folding: folding?.shifted(by: movedStart - insertAt))
         }
         }
         guard succeeded else { return false }
@@ -153,6 +167,11 @@ extension NativeTextViewCoordinator {
             return blocks[0].kind == .blockLatex
         case .table:
             return blocks[0].kind == .table
+        case .paragraph: return blocks[0].kind == .paragraph
+        case .heading: return blocks[0].kind == .heading
+        case .quote: return blocks[0].kind == .blockquote
+        case .list: return blocks[0].kind == .list
+        case .divider: return blocks[0].kind == .thematicBreak
         case .image:
             guard blocks[0].kind == .paragraph else { return false }
             let tokens = MarkdownTokenizer.parseTokensViaAST(in: source, memoizing: false)
@@ -162,7 +181,10 @@ extension NativeTextViewCoordinator {
         }
     }
 
-    private func admitBlockEdits(_ edits: [(NSRange, String)], in main: NativeTextView) -> Bool {
+    private func admitBlockEdits(_ edits: [(NSRange, String)], in main: NativeTextView, foldedRemoval: NSRange?) -> Bool {
+        let previousFoldedRange = foldedBlockMoveRange
+        foldedBlockMoveRange = foldedRemoval
+        defer { foldedBlockMoveRange = previousFoldedRange }
         let undo = main.undoManager
         let oldSpan = isApplyingSpanEdit, oldLiteral = isLiteralInsertion, oldProgrammatic = isProgrammaticEdit
         undo?.disableUndoRegistration()

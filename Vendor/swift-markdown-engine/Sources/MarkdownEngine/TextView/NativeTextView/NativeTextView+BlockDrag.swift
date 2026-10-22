@@ -8,7 +8,6 @@ final class BlockDragSession {
     var viewport = NSRect.null
     var generation = -1
     var validatedGeneration = -1
-    var opaqueRanges: [NSRange]?
     var copying = false
     var target: Int?
     let indicator = BlockDropIndicatorView(style: .blockMove)
@@ -41,11 +40,8 @@ extension NativeTextView {
         }
         let copying = !local || NSEvent.modifierFlags.contains(.option)
         autoscrollForDrag(at: point)
-        if session.viewport != visibleRect || session.generation != coordinator.nativeSourceGeneration || session.copying != copying {
-            if session.opaqueRanges == nil || session.generation != coordinator.nativeSourceGeneration {
-                session.opaqueRanges = dropOpaqueRanges()
-            }
-            session.slots = dropSlotsNearViewport(opaque: session.opaqueRanges)
+        if session.slots.isEmpty || session.viewport != visibleRect || session.generation != coordinator.nativeSourceGeneration || session.copying != copying {
+            session.slots = dropSlotsNearViewport(movingBlocks: true)
             session.viewport = visibleRect
             session.generation = coordinator.nativeSourceGeneration
             session.copying = copying

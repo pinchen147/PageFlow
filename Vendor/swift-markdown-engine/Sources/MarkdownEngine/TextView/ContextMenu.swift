@@ -381,6 +381,7 @@ extension NativeTextViewWrapper.Coordinator {
         /// Their delimiters cannot change the interpretation of the rest of the note.
         var preservesBlockStructure = false
         var commentMove: MarkdownCommentMove? = nil
+        var folding: MarkdownFoldTransfer? = nil
     }
 
     /// Applies `edit` through the same pinned, viewport-first path forwards
@@ -404,7 +405,12 @@ extension NativeTextViewWrapper.Coordinator {
         let admissionUndo = tv.undoManager
         admissionUndo?.disableUndoRegistration()
         isApplyingSpanEdit = true
-        defer { isApplyingSpanEdit = false }
+        let wasTransferringFolds = isTransferringFoldState
+        isTransferringFoldState = wasTransferringFolds || edit.folding != nil
+        defer {
+            isApplyingSpanEdit = false
+            isTransferringFoldState = wasTransferringFolds
+        }
         let wasLiteral = isLiteralInsertion
         isLiteralInsertion = true
         let admitted = edit.preflighted || tv.shouldChangeText(in: edit.range, replacementString: edit.replacement)
@@ -440,7 +446,8 @@ extension NativeTextViewWrapper.Coordinator {
             inverseSelection: edit.selectionAfter,
             reflowsParagraphChain: edit.reflowsParagraphChain,
             preflighted: edit.preflighted, preservesBlockStructure: edit.preservesBlockStructure,
-            commentMove: edit.commentMove
+            commentMove: edit.commentMove,
+            folding: edit.folding.map { _ in foldSession.transfer(in: edit.range) }
         )
         if edit.registersUndo, let undoManager = tv.undoManager {
             undoManager.registerUndo(withTarget: self) { coordinator in
@@ -500,6 +507,10 @@ extension NativeTextViewWrapper.Coordinator {
             }
             PerfTrace.time("apply.setSelection") { tv.setSelectedRange(edit.selectionAfter) }
             PerfTrace.time("apply.didChangeText") { tv.didChangeText() }
+            if let folding = edit.folding {
+                foldSession.restore(folding, at: edit.range.location)
+                applyFoldPresentation()
+            }
         }
         }
         tv.breakUndoCoalescing()

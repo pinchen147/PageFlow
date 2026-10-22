@@ -57,6 +57,7 @@ extension NativeTextViewCoordinator {
     }
 
     func cancelDocumentWork() {
+        blockMover.cancelIndexPreparation()
         foldIndexTask?.cancel()
         foldIndexTask = nil
         foldIndexNeedsReconciliation = false

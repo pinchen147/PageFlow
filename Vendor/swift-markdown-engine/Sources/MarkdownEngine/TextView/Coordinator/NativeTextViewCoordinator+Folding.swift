@@ -36,6 +36,7 @@ extension NativeTextViewCoordinator {
             return
         }
         if let snapshot = cachedBlockParse, utf16(snapshot.characters, equals: source) {
+            publishVerifiedBlockParse(snapshot)
             foldSession.update(source: source, blocks: snapshot.blocks,
                                edit: edit.map { (range: $0.oldRange, replacementLength: $0.replacementLength) })
             _ = foldSession.reindex(source: source, blocks: snapshot.blocks)
@@ -86,10 +87,20 @@ extension NativeTextViewCoordinator {
     private func reconcileFoldIndex(in source: NSString) {
         if let snapshot = cachedBlockParse, utf16(snapshot.characters, equals: source),
            foldSession.reindex(source: source, blocks: snapshot.blocks) {
+            publishVerifiedBlockParse(snapshot)
             cancelFoldIndex()
         } else {
             scheduleFoldIndex()
         }
+    }
+
+    /// Standalone edits prepare the next snapshot before storage advances its generation.
+    /// The callers already proved its bytes match storage; publish that receipt again so
+    /// drag preparation follows the committed source without another document comparison.
+    private func publishVerifiedBlockParse(_ snapshot: BlockParser.Snapshot) {
+        guard cachedBlockParseRevision?.source != nativeSourceGeneration
+                || cachedBlockParseRevision?.document != documentGeneration else { return }
+        cachedBlockParse = snapshot
     }
 
     /// Reuse the canonical parser's retained snapshot and incremental seam logic. Hidden tabs
@@ -218,6 +229,7 @@ extension NativeTextViewCoordinator {
 
     /// One admission point before source and clipboard mutation; never part of text Undo.
     func admitFoldedEdit(_ range: NSRange, in view: NSTextView) -> Bool {
+        if range == foldedBlockMoveRange { return true }
         // Initial marked input is admitted by NativeTextView before mutation. Subsequent
         // provisional replacements belong to AppKit and precede the mapped source receipt.
         if isComposing(in: view) { return true }

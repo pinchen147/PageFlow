@@ -13,10 +13,11 @@ import AppKit
 extension NativeTextView {
 
     override func mouseMoved(with event: NSEvent) {
+        (delegate as? NativeTextViewCoordinator)?.blockMover.hover(at: convert(event.locationInWindow, from: nil))
         // Images and their handles are not text hit targets. AppKit's text
         // hover path can synchronously lay out the note before we replace its
         // cursor, so let the rendered object consume the event first.
-        guard (delegate as? NativeTextViewCoordinator)?.foldControls?.applyCursor(for: event) != true,
+        guard !applyControlCursor(for: event),
               !applyImageCursor(for: event) else { return }
 #if DEBUG
         let hoverStart = CFAbsoluteTimeGetCurrent()
@@ -29,16 +30,25 @@ extension NativeTextView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        guard (delegate as? NativeTextViewCoordinator)?.foldControls?.applyCursor(for: event) != true,
+        (delegate as? NativeTextViewCoordinator)?.blockMover.hover(at: convert(event.locationInWindow, from: nil))
+        guard !applyControlCursor(for: event),
               !applyImageCursor(for: event) else { return }
         super.mouseEntered(with: event)
         applyReadOnlyCursor(for: event)
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        guard (delegate as? NativeTextViewCoordinator)?.foldControls?.applyCursor(for: event) != true,
+        guard !applyControlCursor(for: event),
               !applyImageCursor(for: event) else { return }
         super.cursorUpdate(with: event)
+    }
+
+    /// Native text callbacks must not replace a visible control's cursor with an I-beam.
+    private func applyControlCursor(for event: NSEvent) -> Bool {
+        guard let coordinator = delegate as? NativeTextViewCoordinator else { return false }
+        return coordinator.blockMover.applyCursor(for: event)
+            || coordinator.tableChrome?.applyCursor(for: event) == true
+            || coordinator.foldControls?.applyCursor(for: event) == true
     }
 
     /// In read-only mode, override NSTextView's I-beam: pointing hand over a

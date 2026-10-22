@@ -327,7 +327,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             textContainer.widthTracksTextView = true
         }
         textView.textContainerInset = NSSize(
-            width: configuration.textInsets.horizontal,
+            width: configuration.horizontalLayoutInset,
             height: configuration.textInsets.vertical
         )
         textContainer.heightTracksTextView = false
@@ -500,6 +500,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         }
         if let observer = coordinator.foldStorageObserver { NotificationCenter.default.removeObserver(observer) }
         coordinator.foldStorageObserver = nil
+        coordinator.blockMover.uninstall()
         coordinator.foldControls?.uninstall()
         coordinator.foldControls = nil
         coordinator.imageControls?.uninstall()

@@ -60,6 +60,16 @@ public struct MarkdownEditorConfiguration: Sendable {
     /// the reference editor's floating selection bar over a non-empty selection, with its
     /// selection colors (doc 24 §6). Off by default; live-reconciled.
     public var showsSelectionBar = false
+    /// Room for a 26-point drag grip and its gap, including the heading fold control.
+    /// Keep the host's preferred margin intact while controls occupy their own gutter.
+    var horizontalLayoutInset: CGFloat {
+        guard showsSelectionBar else { return textInsets.horizontal }
+        // A fixed column can overflow a narrow window, hiding its right gutter.
+        // Leave space for both the heading grip and fold button on the left.
+        // A heading's right-hand grip also needs an 18-point scrollbar strip.
+        let fullWidthMinimum: CGFloat = scrollers.hasVerticalScroller ? 48 : 30
+        return max(readingWidth == nil ? fullWidthMinimum : 62, textInsets.horizontal)
+    }
     /// Show a centered hidden-block count below collapsed headings; live-reconciled.
     public var showsHiddenContentRow = true
     /// The editor's keyboard commands and their chords; live-reconciled.

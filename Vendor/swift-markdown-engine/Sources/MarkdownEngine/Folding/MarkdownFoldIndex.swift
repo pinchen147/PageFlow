@@ -11,6 +11,16 @@ struct MarkdownFoldRegion: Equatable {
 struct MarkdownFoldIndex {
     let regions: [MarkdownFoldRegion]
 
+    func region(startingAt location: Int) -> MarkdownFoldRegion? {
+        var low = 0, high = regions.count
+        while low < high {
+            let middle = (low + high) / 2
+            if regions[middle].heading.location < location { low = middle + 1 } else { high = middle }
+        }
+        guard low < regions.count, regions[low].heading.location == location else { return nil }
+        return regions[low]
+    }
+
     init(regions: [MarkdownFoldRegion]) {
         self.regions = regions
     }

@@ -341,13 +341,16 @@ extension NativeTextView {
     /// bottom and the next block's top. Only laid-out fragments are read;
     /// a slot past the viewport sits at the visible edge on its side.
     /// `opaque` is `dropOpaqueRanges()` when the caller kept it.
-    func dropSlotsNearViewport(opaque: [NSRange]? = nil) -> [(offset: Int, y: CGFloat)] {
+    func dropSlotsNearViewport(opaque: [NSRange]? = nil, movingBlocks: Bool = false) -> [(offset: Int, y: CGFloat)] {
         let text = string as NSString
         guard text.length > 0 else { return [(offset: 0, y: max(1, textContainerOrigin.y))] }
         // No viewport yet (a mount in progress): only a short note is read whole.
         guard let window = viewportCharacterRange
                 ?? (prefersEstimatedLayoutChain ? nil : NSRange(location: 0, length: text.length)) else { return [] }
-        let offsets = BlockDropSlots.slots(in: text, blocks: dropBlocks(around: window, opaque: opaque), window: window)
+        let blocks = movingBlocks
+            ? (delegate as? NativeTextViewCoordinator)?.blockMover.currentBlocks(in: text) ?? []
+            : dropBlocks(around: window, opaque: opaque)
+        let offsets = BlockDropSlots.slots(in: text, blocks: blocks, window: window)
         let visible = visibleRect
         return offsets.compactMap { offset -> (offset: Int, y: CGFloat)? in
             if (delegate as? NativeTextViewCoordinator)?.foldLayout.hiddenRange(containing: offset) != nil { return nil }

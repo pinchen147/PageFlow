@@ -109,6 +109,33 @@ final class MarkdownFoldSession {
         return true
     }
 
+    func collapsedSection(at heading: Int, in source: NSString) -> NSRange? {
+        guard collapsedHeadings.contains(heading), let region = index.region(startingAt: heading) else { return nil }
+        var end = NSMaxRange(region.body)
+        while end > heading, [0x0A, 0x0D].contains(source.character(at: end - 1)) { end -= 1 }
+        return NSRange(location: heading, length: end - heading)
+    }
+
+    func transfer(in range: NSRange) -> MarkdownFoldTransfer {
+        let regions = index.regions.filter { NSLocationInRange($0.heading.location, range) }.map { region in
+            MarkdownFoldRegion(heading: region.heading,
+                body: NSRange(location: region.body.location,
+                              length: max(0, min(NSMaxRange(region.body), NSMaxRange(range)) - region.body.location)),
+                level: region.level, hiddenBlockCount: region.hiddenBlockCount)
+        }
+        return MarkdownFoldTransfer(regions: regions,
+            collapsed: collapsedHeadings.filter { NSLocationInRange($0, range) }).shifted(by: -range.location)
+    }
+
+    func restore(_ transfer: MarkdownFoldTransfer, at offset: Int) {
+        let incoming = transfer.shifted(by: offset)
+        let anchors = Set(incoming.regions.map { $0.heading.location })
+        index = MarkdownFoldIndex(regions: (index.regions.filter { !anchors.contains($0.heading.location) }
+            + incoming.regions).sorted { $0.heading.location < $1.heading.location })
+        collapsedHeadings.formUnion(incoming.collapsed)
+        refreshHiddenRanges()
+    }
+
     func toggle(at heading: Int) {
         guard index.regions.contains(where: { $0.heading.location == heading }) else { return }
         if !collapsedHeadings.insert(heading).inserted { collapsedHeadings.remove(heading) }

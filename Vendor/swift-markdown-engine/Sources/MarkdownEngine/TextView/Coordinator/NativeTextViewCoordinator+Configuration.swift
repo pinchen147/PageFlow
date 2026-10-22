@@ -17,6 +17,7 @@ extension NativeTextViewCoordinator {
         let old = textView.configuration
         let readingWidthChanged = old.readingWidth != configuration.readingWidth
         let insetsChanged = old.textInsets != configuration.textInsets
+            || old.horizontalLayoutInset != configuration.horizontalLayoutInset
         let centeringChanged = old.centersZoomedOutColumn != configuration.centersZoomedOutColumn
         textView.configuration = configuration
         textView.baseFont = NSFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
@@ -33,7 +34,7 @@ extension NativeTextViewCoordinator {
             scrollView.contentInsets = desiredInsets
             (scrollView as? ClampedScrollView)?.clampToInsets()
         }
-        let desiredTextInset = NSSize(width: textView.zoomAdjustedInsetWidth(base: configuration.textInsets.horizontal),
+        let desiredTextInset = NSSize(width: textView.zoomAdjustedInsetWidth(base: configuration.horizontalLayoutInset),
                                      height: configuration.textInsets.vertical)
         if textView.textContainerInset != desiredTextInset { textView.textContainerInset = desiredTextInset }
         if readingWidthChanged {
