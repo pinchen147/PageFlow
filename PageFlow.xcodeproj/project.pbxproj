@@ -129,6 +129,7 @@
 				00985C602EE4A10500E48813 /* Sources */,
 				00985C612EE4A10500E48813 /* Frameworks */,
 				00985C622EE4A10500E48813 /* Resources */,
+				00C0DE162F19446D00000001 /* Seal Codeless Package Resources */,
 			);
 			buildRules = (
 			);
@@ -266,6 +267,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		00C0DE162F19446D00000001 /* Seal Codeless Package Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle",
+			);
+			name = "Seal Codeless Package Resources";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Highlighter_Highlighter.bundle/Contents/_CodeSignature",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SwiftMath_SwiftMath.bundle/Contents/_CodeSignature",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n# Codeless package resources are sealed by the containing app. A development\n# signature here survives App Store export and conflicts with its profile.\nfor bundle in \"$SCRIPT_INPUT_FILE_0\" \"$SCRIPT_INPUT_FILE_1\"; do\n    /usr/bin/plutil -lint \"$bundle/Contents/Info.plist\" >/dev/null\n    if /usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' \"$bundle/Contents/Info.plist\" >/dev/null 2>&1; then\n        echo \"error: Refusing to strip an executable bundle: $bundle\" >&2\n        exit 1\n    fi\n    /usr/bin/codesign --remove-signature \"$bundle\"\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		00985C602EE4A10500E48813 /* Sources */ = {
@@ -437,7 +460,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -473,7 +496,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -652,7 +675,7 @@
 				CODE_SIGN_ENTITLEMENTS = "PageFlow/PageFlow-Direct.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 15;
+				CURRENT_PROJECT_VERSION = 16;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = NO;
