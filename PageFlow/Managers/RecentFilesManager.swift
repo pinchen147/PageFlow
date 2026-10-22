@@ -43,7 +43,7 @@ final class RecentFilesManager {
     }
 
     func addRecentFile(_ url: URL, isSecurityScoped: Bool = false) {
-        guard url.pathExtension.lowercased() == "pdf" else { return }
+        guard url.pageFlowIsOpenableDocument else { return }
 
         let canonicalURL = url.pageFlowCanonicalDocumentURL
         let recentFile = RecentFile(

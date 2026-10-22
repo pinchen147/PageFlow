@@ -11,23 +11,15 @@ import Foundation
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
-
-struct TabRuntime {
-    let tabID: UUID
-    let pdfManager: PDFManager
-    let searchManager: SearchManager
-    let annotationManager: AnnotationManager
-    let commentManager: CommentManager
-    let bookmarkManager: BookmarkManager
-    let undoManager: UndoManager
-}
+import os.log
+import MarkdownEngine
 
 @Observable
 @MainActor
 final class TabManager {
     deinit {
         if let monitor = editModeKeyMonitor {
-            NSEvent.removeMonitor(monitor)
+            editModeMonitorRemove(monitor)
         }
         // Each TabSession removes its own undo observers on cleanup()/deinit, so
         // releasing `sessions` here is sufficient — no observer bookkeeping.
@@ -39,8 +31,14 @@ final class TabManager {
     // MARK: - Properties
 
     var tabs: [TabModel] = []
+    /// The tab on screen. Every change re-warms the set and re-arms the
+    /// edit-mode key monitor.
     var activeTabID: UUID? {
-        didSet { touchRenderedTab(activeTabID) }
+        didSet {
+            reconcileRenderedTabs()
+            reconcileEditModeKeyMonitor()
+            if activeTabID != oldValue { checkActiveMarkdownForExternalChange() }
+        }
     }
 
     /// Tab ids whose views are kept warm so switching back is an instant show, not
@@ -58,49 +56,64 @@ final class TabManager {
     /// Whether this window floats above other apps. Scoped per-window, not persisted.
     var isAlwaysOnTop: Bool = false
 
+    /// Whether openable files are being dragged over this window's document:
+    /// `TabContainerView` draws the one window-wide indicator from it, above
+    /// the chrome. A Markdown editor's own report wins while a drag is over
+    /// its text (doc 26 §9.1).
+    var isFileDropHovering: Bool { editorFileDragShowsOverlay ?? isTabSurfaceDropHovering }
+
+    /// Whether files are over a tab surface's SwiftUI drop target (`FileDropTarget`).
+    var isTabSurfaceDropHovering = false
+
+    /// A file drag over a Markdown editor's text: `true` for documents only
+    /// (the overlay shows), `false` for images (the editor's drop line shows
+    /// instead), nil when no file drag is over an editor.
+    var editorFileDragShowsOverlay: Bool?
+
+    /// Find presentation belongs to the window, including manually created windows.
+    var showingSearch = false {
+        didSet {
+            if oldValue && !showingSearch { clearAllSearchState() }
+        }
+    }
+    var searchFocusRequest = 0
+
     /// The single source of truth for per-tab runtime state: one session per tab.
-    private var sessions: [UUID: TabSession] = [:]
+    var sessions: [UUID: TabSession] = [:]  // internal for cross-file decomposition (TabManager+*.swift)
+
+    /// Observability seam (CEO/Eng review F8): a quiet `.debug` trace over the
+    /// tab-lifecycle boundaries the upcoming `TabContent` refactor reshapes —
+    /// session create/close, warm-set eviction, and tear-off move. Logging only,
+    /// no behavior change; visible in Console.app under subsystem `com.pageflow`.
+    let logger = Logger(subsystem: "com.pageflow", category: "TabManager")  // internal for cross-file decomposition (TabManager+*.swift)
 
     @ObservationIgnored var documentOpenedHandler: ((URL, Bool) -> Void)?
 
     // Edit mode keyboard shortcut monitor (intercepts Cmd+C/V for page copy/paste)
     @ObservationIgnored private var editModeKeyMonitor: Any?
 
+    /// Seam for tests: a real NSEvent local monitor is app-wide test-host state
+    /// (exactly what the test-host hazard implicates), so tests inject recorders
+    /// here instead of letting the reconcile install the real thing.
+    @ObservationIgnored var editModeMonitorInstall: (@escaping (NSEvent) -> NSEvent?) -> Any? = { handler in
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: handler)
+    }
+    @ObservationIgnored var editModeMonitorRemove: (Any) -> Void = { monitor in
+        NSEvent.removeMonitor(monitor)
+    }
+
     // Track open file picker panel for closing on drag-drop
     private weak var openPanel: NSOpenPanel?
-    private var suppressAutomaticFilePicker = false
 
     // Password sheet presentation (window-level). The unlock payload lives on
     // each TabSession; this is the FIFO order of tab ids waiting for the single
     // sheet — the head is the request currently presented.
-    private var unlockQueue: [UUID] = []
-
-    /// The unlock prompt presented as this window's password sheet, derived from
-    /// the head of `unlockQueue`. Identifiable by tab id so the sheet stays
-    /// stable while a given tab is at the head.
-    var pendingPasswordRequest: PasswordPrompt? {
-        get {
-            guard let tabID = unlockQueue.first,
-                  let request = sessions[tabID]?.pendingUnlock else { return nil }
-            return PasswordPrompt(tabID: tabID, url: request.url)
-        }
-        set {
-            // SwiftUI only writes nil here (interactive / Escape dismiss); treat
-            // it as cancelling the presented prompt.
-            if newValue == nil { cancelPasswordPrompt() }
-        }
-    }
-
-    struct PasswordPrompt: Identifiable {
-        let tabID: UUID
-        let url: URL
-        var id: UUID { tabID }
-    }
+    var unlockQueue: [UUID] = []  // internal for cross-file decomposition (TabManager+*.swift)
 
     /// The movable unit when a tab is torn off or merged: the tab model plus its
     /// session (which carries managers, undo history, UI state, and pending
     /// unlock together).
-    private struct DetachedTab {
+    struct DetachedTab {
         let tab: TabModel
         let session: TabSession
     }
@@ -126,6 +139,10 @@ final class TabManager {
 
     var activeSearchManager: SearchManager? { activeSession?.searchManager }
 
+    /// The active tab's Markdown backend, if it is a Markdown tab — the handle the
+    /// shared toolbar's format buttons and the Format menu post requests through.
+    var activeMarkdownContent: MarkdownContent? { activeSession?.content.markdown }
+
     var activeAnnotationManager: AnnotationManager? { activeSession?.annotationManager }
 
     var activeCommentManager: CommentManager? { activeSession?.commentManager }
@@ -133,18 +150,67 @@ final class TabManager {
     var activeBookmarkManager: BookmarkManager? { activeSession?.bookmarkManager }
 
     var activeRuntime: TabRuntime? {
-        activeSession.map(runtime)
+        guard let id = activeTabID,
+              case .pdf(let runtime)? = renderModel(for: id) else { return nil }
+        return runtime
     }
 
-    /// The runtimes this window keeps mounted, active-first. Filters out any id
-    /// whose session is already gone, so a just-closed tab drops out immediately
-    /// even before its id is pruned from `renderedTabIDs`.
+    /// Content-agnostic render projection for the active tab — the same `TabRender`
+    /// the window's mount sites switch over, so content-routed chrome (the shared
+    /// toolbar slot) dispatches through the one routing authority instead of by a
+    /// nil-proxy chain. `nil` when no tab is active.
+    var activeRender: TabRender? {
+        activeTabID.flatMap(renderModel)
+    }
+
+    /// The PDF runtimes this window keeps mounted, active-first — a filter over the
+    /// canonical `renderedTabs` render projection. A just-closed tab whose session
+    /// is gone is already absent from `renderedTabs`, so it drops out here too.
     var renderedRuntimes: [TabRuntime] {
-        renderedTabIDs.compactMap { sessions[$0].map(runtime) }
+        pdfRuntimes(in: renderedTabs)
+    }
+
+    /// The PDF runtimes within a content-discriminated render list, order preserved.
+    /// The single filter both PDF-only projections compose, so there is one
+    /// warm/displayed projection and the PDF list is derived from it.
+    private func pdfRuntimes(in renders: [TabRender]) -> [TabRuntime] {
+        renders.compactMap { render in
+            if case .pdf(let runtime) = render { return runtime }
+            return nil
+        }
+    }
+
+    // MARK: - Content-discriminated render projections (the view-layer iteration)
+
+    /// The warm set as content-discriminated render units, active-first — the
+    /// list the single-pane ZStack mounts. PDF and Markdown tabs coexist here;
+    /// each routes to its own view via `TabRender`.
+    var renderedTabs: [TabRender] {
+        renderedTabIDs.compactMap(renderModel)
+    }
+
+    /// Projects a tab id onto the render unit for its content, or nil if the
+    /// session is gone (a just-closed tab still lingering in an id list).
+    private func renderModel(for tabID: UUID) -> TabRender? {
+        guard let session = sessions[tabID] else { return nil }
+        switch session.content {
+        case .pdf:
+            return .pdf(runtime(for: session))
+        case .markdown(let content):
+            return .markdown(MarkdownRuntime(tabID: tabID, content: content))
+        }
+    }
+
+    private func reconcileRenderedTabs() {
+        guard let id = activeTabID else {
+            renderedTabIDs.removeAll()
+            return
+        }
+        touchRenderedTab(id)
     }
 
     /// Promotes `id` to the warm set's head and evicts past the cap. Called when
-    /// the active tab changes; a tab only enters the warm set by becoming active.
+    /// the active tab changes or an already-warm native editor enters the window.
     private func touchRenderedTab(_ id: UUID?) {
         guard let id else { return }
         renderedTabIDs.removeAll { $0 == id }
@@ -155,15 +221,33 @@ final class TabManager {
             // warm (still-mounted) view; without re-arming, the evicted tab's
             // rebuilt view falls back to scroll-to-top and then persists that
             // wrong position over the user's real one.
-            for evictedID in renderedTabIDs[Self.maxRenderedTabs...] {
-                _ = sessions[evictedID]?.pdfManager.captureViewState()
+            let evicted = Array(renderedTabIDs[Self.maxRenderedTabs...])
+            for evictedID in evicted {
+                guard let session = sessions[evictedID] else { continue }
+                switch session.content {
+                case .pdf(let c): _ = c.pdfManager.captureViewState()
+                case .markdown(let c):
+                    // Detach editors with native undo history; pristine editors
+                    // can release their surface entirely.
+                    c.evictEditorSurface()
+                }
             }
+            logger.debug("warmset.evict count=\(evicted.count, privacy: .public) cap=\(Self.maxRenderedTabs, privacy: .public)")
             renderedTabIDs.removeLast(renderedTabIDs.count - Self.maxRenderedTabs)
         }
     }
 
+    /// A hover merge can keep the incoming editor inactive. Count its retained
+    /// surface in this window's LRU so cancellation cannot bypass the warm cap.
+    func retainTransferredEditor(_ tabID: UUID) {
+        guard sessions[tabID]?.content.markdown?.retainedEditorSurface != nil,
+              !renderedTabIDs.contains(tabID) else { return }
+        touchRenderedTab(tabID)
+        touchRenderedTab(activeTabID)
+    }
+
     /// Drops a closed/torn-off tab from the warm set so its view tears down.
-    private func dropRenderedTab(_ id: UUID) {
+    func dropRenderedTab(_ id: UUID) {
         renderedTabIDs.removeAll { $0 == id }
     }
 
@@ -208,17 +292,6 @@ final class TabManager {
         }
     }
 
-    var showingFileImporter: Bool {
-        get {
-            guard let id = activeTabID else { return false }
-            return showingFileImporter(for: id)
-        }
-        set {
-            guard let id = activeTabID else { return }
-            setShowingFileImporter(newValue, for: id)
-        }
-    }
-
     var isEditingPages: Bool {
         get {
             guard let id = activeTabID else { return false }
@@ -228,6 +301,15 @@ final class TabManager {
             guard let id = activeTabID else { return }
             setIsEditingPages(newValue, for: id)
         }
+    }
+
+    /// The tab's content kind for the tab pills — this window's tab strip
+    /// (`TabItemView`) and the cross-window tab switcher — the same
+    /// `TabSession.content` discriminator every mount site routes on, never a
+    /// URL-extension sniff. `nil` for an unknown id (a just-closed tab still
+    /// lingering in a strip); callers coalesce to `.pdf` for the legacy look.
+    func contentKind(for tabID: UUID) -> ContentKind? {
+        sessions[tabID]?.contentKind
     }
 
     func showingOutline(for tabID: UUID) -> Bool {
@@ -240,10 +322,6 @@ final class TabManager {
 
     func showingGoToPage(for tabID: UUID) -> Bool {
         sessions[tabID]?.uiState.showingGoToPage ?? false
-    }
-
-    func showingFileImporter(for tabID: UUID) -> Bool {
-        sessions[tabID]?.uiState.showingFileImporter ?? false
     }
 
     func isEditingPages(for tabID: UUID) -> Bool {
@@ -262,24 +340,13 @@ final class TabManager {
         sessions[tabID]?.uiState.showingGoToPage = value
     }
 
-    func setShowingFileImporter(_ value: Bool, for tabID: UUID) {
-        sessions[tabID]?.uiState.showingFileImporter = value
-    }
-
     func setIsEditingPages(_ value: Bool, for tabID: UUID) {
         guard let session = sessions[tabID] else { return }
-        let wasEditing = session.uiState.isEditingPages
         session.uiState.isEditingPages = value
-
-        guard activeTabID == tabID else { return }
-        if value && !wasEditing {
-            startEditModeKeyMonitor()
-        } else if !value && wasEditing {
-            stopEditModeKeyMonitor()
-        }
+        reconcileEditModeKeyMonitor()
     }
 
-    /// Opens NSOpenPanel as a sheet on the key window — waits for window readiness.
+    /// Opens NSOpenPanel as a sheet on this manager's registered window.
     func openFilePicker() {
         // Test host: an NSOpenPanel here blocks the main actor that all
         // @MainActor tests need, stalling the suite (see TestEnvironment).
@@ -288,11 +355,17 @@ final class TabManager {
         guard openPanel == nil else { return }
 
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.pdf]
+        // PDF plus Markdown — the file kinds the open path routes to a tab. The
+        // markdown extensions come from the single shared list so they can't drift
+        // from the open gate / content router. `UTType(filenameExtension:)` can be
+        // nil on a system without the type registered, so absent types are dropped.
+        panel.allowedContentTypes = [.pdf] + URL.pageFlowMarkdownExtensions.compactMap {
+            UTType(filenameExtension: $0)
+        }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = "Select a PDF file to open"
+        panel.message = "Select a PDF or Markdown file to open"
 
         openPanel = panel  // Set immediately to block concurrent calls
         presentOpenPanel(panel, retryCount: 0)
@@ -302,7 +375,7 @@ final class TabManager {
         // Bail out if closeFilePicker() was called during retry loop
         guard openPanel === panel else { return }
 
-        guard let window = NSApp.keyWindow else {
+        guard let window = WindowRegistry.shared.window(for: self), window.isVisible else {
             guard retryCount < DesignTokens.maxReadinessRetries else {
                 openPanel = nil  // Give up — clean up sentinel
                 return
@@ -329,9 +402,29 @@ final class TabManager {
         openPanel = nil
     }
 
-    func dirtyPDFManagers() -> [(UUID, PDFManager)] {
-        sessions.compactMap { id, session in
-            session.pdfManager.isDirty ? (id, session.pdfManager) : nil
+    /// Content-agnostic dirty aggregation — the `DirtyDoc` handle set the unified
+    /// quit/close save flow iterates; clean tabs are excluded. `isDirty` and the
+    /// save recipe are the content's own (`TabDocument`), so this doesn't branch.
+    /// Tab-strip order, so a quit walks a window's documents as they appear.
+    func dirtyDocuments() -> [DirtyDoc] {
+        tabs.compactMap { sessions[$0.id] }.compactMap { session -> DirtyDoc? in
+            session.isDirty ? DirtyDoc(session: session, owner: self) : nil
+        }
+    }
+
+    /// Reconciles every markdown tab's live editor text into its durable document
+    /// (fork P1) BEFORE the dirty/content gates are consulted — the quit-time peer
+    /// of the per-open reconcile in `openDocument`. Called from
+    /// `WindowRegistry.flushAllEditors()` at the top of `applicationShouldTerminate`
+    /// so `dirtyDocuments()`/`allDirtyDocuments()` see the trailing keystroke that
+    /// the engine's ~1s deferred binding write would otherwise still be holding.
+    func flushMarkdownEditors() {
+        for session in sessions.values {
+            guard let content = session.content.markdown else { continue }
+            content.reconcileLiveText()
+            // A vanished backing file makes the tab unsaved, so quit and window
+            // close offer to write it back instead of dropping the only copy.
+            content.documentManager.noteMissingBackingFile()
         }
     }
 
@@ -357,6 +450,53 @@ final class TabManager {
         createSession(for: initialTab)
     }
 
+    /// This window's restorable session (S8 P1): the ordered canonical paths of its
+    /// file-backed tabs plus which one is active, or `nil` when the window has no
+    /// file-backed tab (a lone untitled buffer). Untitled tabs are excluded — they
+    /// have no on-disk source to reopen from (ADR-0012 D7).
+    func captureWindowSession() -> WindowSessionState? {
+        let orderedTabs: [RestoreTab?] = tabs.map { restoreTab(for: $0) }
+        let activeListIndex = activeTabID.flatMap { id in tabs.firstIndex { $0.id == id } }
+        return WindowSessionState.capturing(orderedTabs: orderedTabs, activeListIndex: activeListIndex)
+    }
+
+    /// The persisted restore entry for one tab, or `nil` for an untitled/URL-less
+    /// tab (nothing to reopen). The reopen source is a security-scoped bookmark so
+    /// the sandboxed build can read the file next launch; the chain (ADR-0012 D7):
+    /// the tab content's own bookmark → else one minted from the live document URL
+    /// (works for a still-accessible user-selected file, matching RecentFilesManager)
+    /// → else `nil` (non-sandboxed build), where the canonical path is the fallback.
+    private func restoreTab(for tab: TabModel) -> RestoreTab? {
+        guard let url = tab.documentURL ?? sessions[tab.id]?.pendingMarkdownOpen?.url else { return nil }
+        let path = url.pageFlowCanonicalDocumentURL.path
+        let bookmark = sessions[tab.id]?.restoreBookmark
+            ?? sessions[tab.id]?.pendingMarkdownOpen?.access.securityScopedBookmark
+            ?? mintedRestoreBookmark(for: url, path: path)
+        return RestoreTab(path: path, bookmark: bookmark)
+    }
+
+    /// Minting is an XPC round trip and a session save runs on every tab change,
+    /// so each file's fallback bookmark is minted once per window.
+    private func mintedRestoreBookmark(for url: URL, path: String) -> Data? {
+        if let minted = mintedRestoreBookmarks[path] { return minted }
+        let bookmark = url.pageFlowSecurityScopedBookmark
+        mintedRestoreBookmarks[path] = bookmark
+        return bookmark
+    }
+
+    /// The engine `documentId`s of this window's warm (mounted) markdown tabs — the
+    /// retained set the editors receive so each keeps its scroll across a switch
+    /// (S8 P2). A content's `documentId` is per load (`TabSession.markdown(id:)`).
+    var renderedDocumentIds: Set<String> {
+        Set(renderedTabIDs.compactMap { sessions[$0]?.content.markdown?.documentId })
+    }
+
+    /// Notifies the app-wide session store that this window's file-backed tab set
+    /// or order changed (S8 P1). Coalesced + test-gated inside the registry.
+    func scheduleSessionSave() {
+        WindowRegistry.shared.scheduleSessionSave()
+    }
+
     /// Returns the tab ID if this TabManager has a tab with the given URL open.
     func tabID(for url: URL) -> UUID? {
         let canonicalURL = url.pageFlowCanonicalDocumentURL
@@ -365,55 +505,33 @@ final class TabManager {
             return tabID
         }
 
-        return tabs.first { $0.documentURL?.pageFlowCanonicalDocumentURL == canonicalURL }?.id
+        return tabs.first {
+            $0.documentURL?.pageFlowCanonicalDocumentURL == canonicalURL ||
+                sessions[$0.id]?.pendingMarkdownOpen?.url.pageFlowCanonicalDocumentURL == canonicalURL
+        }?.id
     }
 
     // MARK: - Tab Operations
 
-    func createNewTab(with url: URL? = nil, isSecurityScoped: Bool = false) {
-        let previousActiveTabID = activeTabID
+    @ObservationIgnored var pendingTabCloses: [UUID: Task<Void, Never>] = [:]
 
-        // Preserve state of current tab before switching away
-        saveCurrentTabState()
-
-        let newTab = TabModel()
-
-        tabs.append(newTab)
-        createSession(for: newTab)
-        activeTabID = newTab.id
-
-        if let url = url {
-            let result = sessions[newTab.id]?.pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped) ?? .failed
-            handleLoadResult(
-                result,
-                for: newTab.id,
-                url: url,
-                isSecurityScoped: isSecurityScoped,
-                closeTabOnCancel: true,
-                restoreTabIDOnCancel: previousActiveTabID,
-                closeTabOnFailure: true
-            )
-        } else {
-            // A new empty tab (Cmd+T / the "+" button) prompts for a file to open,
-            // matching the auto file picker a freshly opened window shows. The tab's
-            // window is already key, so the panel attaches to it correctly.
-            openFilePicker()
-        }
-    }
-
-    func closeTab(_ tabID: UUID) {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
-
-        if let pdfManager = sessions[tabID]?.pdfManager,
-           pdfManager.isDirty,
-           !confirmClose(tabID: tabID, pdfManager: pdfManager) {
+    func closeTab(_ tabID: UUID, using prompt: DocumentClosePrompt? = nil) {
+        guard pendingTabCloses[tabID] == nil, tabs.contains(where: { $0.id == tabID }),
+              let session = sessions[tabID] else { return }
+        session.content.markdown?.reconcileLiveText()
+        session.content.markdown?.documentManager.noteMissingBackingFile()
+        if session.content.document.isDirty || session.content.document.hasPendingWrites {
+            beginClosingTab(session, using: prompt)
             return
         }
+        finishClosingTab(tabID)
+    }
 
-        // Stop keyboard monitor if closing tab was in edit mode
-        if activeTabID == tabID, sessions[tabID]?.uiState.isEditingPages == true {
-            stopEditModeKeyMonitor()
-        }
+    /// Called immediately after approval; no suspension separates its final
+    /// identity/source check from removing the tab.
+    func finishClosingTab(_ tabID: UUID) {
+        // A modal prompt may run queued tab mutations; resolve the index again.
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
 
         // Archive into the Recently Closed history (Tab Switcher) before teardown.
         // Placed after the dirty-confirm guard so a cancelled close isn't recorded;
@@ -423,9 +541,12 @@ final class TabManager {
         // Capture the closing tab's reading position before teardown, but only
         // when it's the active tab (its live view still exists for an exact scroll
         // point); background tabs were already persisted when switched away from.
-        if activeTabID == tabID, let pdfManager = sessions[tabID]?.pdfManager {
-            persistViewState(for: pdfManager)
+        // Content-routed: the SAME chokepoint as switch-away and quit.
+        if activeTabID == tabID, let session = sessions[tabID] {
+            persistReadingState(of: session)
         }
+
+        let fallbackTabID = fallbackTabIDAfterClosing(tabID, at: index)
 
         // closeSession() performs the ordered teardown (close document, clear
         // markup, drop undo history + observers) before dropping the session.
@@ -434,11 +555,29 @@ final class TabManager {
 
         // Handle tab selection after close
         if tabs.isEmpty {
-            WindowRegistry.shared.closeWindow(for: self)
+            activeTabID = nil
+            WindowRegistry.shared.closeWindow(for: self, onlyIfEmpty: true)
         } else if activeTabID == tabID {
-            let newIndex = min(index, tabs.count - 1)
-            activeTabID = tabs[newIndex].id
+            activeTabID = fallbackTabID
         }
+
+        // Closing a background tab leaves activeTabID unchanged (no didSet), so
+        // reconcile here too; idempotent when the didSet already ran.
+        reconcileEditModeKeyMonitor()
+
+        // The window's file-backed tab set shrank — refresh the restore store (S8 P1).
+        scheduleSessionSave()
+    }
+
+    func fallbackTabIDAfterClosing(_ tabID: UUID, at index: Int) -> UUID? {
+        if let activeTabID, activeTabID != tabID {
+            return activeTabID
+        }
+
+        let remainingCount = tabs.count - 1
+        guard remainingCount > 0 else { return nil }
+        let fallbackIndex = min(index, remainingCount - 1)
+        return tabs[fallbackIndex >= index ? fallbackIndex + 1 : fallbackIndex].id
     }
 
     func closeActiveTab() {
@@ -486,10 +625,6 @@ final class TabManager {
         selectTab(tabsCopy[previousIndex].id)
     }
 
-    func moveTab(from source: IndexSet, to destination: Int) {
-        tabs.move(fromOffsets: source, toOffset: destination)
-    }
-
     func moveTab(fromIndex: Int, toIndex: Int) {
         guard fromIndex >= 0, fromIndex < tabs.count,
               toIndex >= 0, toIndex <= tabs.count,
@@ -498,6 +633,8 @@ final class TabManager {
         let tab = tabs.remove(at: fromIndex)
         let adjustedIndex = toIndex > fromIndex ? toIndex - 1 : toIndex
         tabs.insert(tab, at: adjustedIndex)
+        // Tab order is part of the restored session — persist the reorder (S8 P1).
+        scheduleSessionSave()
     }
 
     /// In-bar reorder driven by drag commit. Looks up the source index from
@@ -530,283 +667,26 @@ final class TabManager {
         return true
     }
 
-    @discardableResult
-    func moveTabToNewWindow(_ tabID: UUID, near screenPoint: CGPoint) -> Bool {
-        // Synchronous: detach the tab → build an empty TabManager pre-loaded
-        // with it → hand to the AppDelegate, which creates and shows a window
-        // hosting that TabManager. No async callback, no placeholder dance —
-        // if the window opens, the tab is already in it.
-        guard let appDelegate = AppDelegate.shared,
-              let detachedTab = detachTab(tabID) else {
-            return false
-        }
-
-        let newTabManager = TabManager(createInitialTab: false)
-        newTabManager.attachDetachedTab(detachedTab, at: 0)
-        _ = appDelegate.createNewWindow(with: newTabManager, screenPoint: screenPoint)
-        return true
-    }
-
     // MARK: - Document Operations
-
-    func openDocument(url: URL, isSecurityScoped: Bool, replaceCurrent: Bool = false) {
-        if let existingTabID = tabID(for: url) {
-            selectTab(existingTabID)
-            WindowRegistry.shared.bringToFront(for: self)
-            dismissPlaceholderWindowIfNeeded()
-            return
-        }
-
-        // Activate existing tab if this document is already open (any window)
-        if WindowRegistry.shared.activateExistingDocument(for: url) {
-            dismissPlaceholderWindowIfNeeded()
-            return
-        }
-
-        // If current tab is empty or replace is requested, load into current tab; otherwise create new tab
-        if let activeTab = activeTab,
-           let activeID = activeTabID,
-           (replaceCurrent || (!activeTab.hasDocument && !isAwaitingPassword(for: activeID))),
-           let pdfManager = sessions[activeID]?.pdfManager {
-            let result = pdfManager.loadDocument(from: url, isSecurityScoped: isSecurityScoped)
-            handleLoadResult(result, for: activeID, url: url, isSecurityScoped: isSecurityScoped)
-        } else {
-            // Current tab has a document, create new tab
-            createNewTab(with: url, isSecurityScoped: isSecurityScoped)
-        }
-
-        WindowRegistry.shared.bringToFront(for: self)
-    }
-
-    /// Opens dropped PDFs as tabs in THIS window, in order, and returns how many
-    /// failed to load. A file already open in this window is focused (not
-    /// duplicated); a file open in another window is skipped so the whole drop stays
-    /// in this window. The window is brought to front once, after all files are
-    /// processed — not per file.
-    @discardableResult
-    func openDroppedDocuments(_ urls: [URL]) -> Int {
-        guard !urls.isEmpty else { return 0 }
-        var failures = 0
-        for url in urls where !openDroppedDocument(url) {
-            failures += 1
-        }
-        WindowRegistry.shared.bringToFront(for: self)
-        return failures
-    }
-
-    /// Loads one dropped `url`. Returns false only if the PDF failed to load.
-    private func openDroppedDocument(_ url: URL) -> Bool {
-        // Already open in this window → focus it, no duplicate.
-        if let existingTabID = tabID(for: url) {
-            selectTab(existingTabID)
-            return true
-        }
-        // Already open in another window → leave it there; keep this drop here.
-        if WindowRegistry.shared.isDocumentOpen(url) {
-            return true
-        }
-        // Reuse the empty active tab if free; otherwise a fresh tab, rolled back on failure.
-        if let activeID = activeTabID, let activeTab,
-           !activeTab.hasDocument, !isAwaitingPassword(for: activeID),
-           let pdfManager = sessions[activeID]?.pdfManager {
-            let result = pdfManager.loadDocument(from: url, isSecurityScoped: false)
-            return finishDroppedLoad(result, for: activeID, url: url, createdTab: false, restoreOnFailure: nil)
-        }
-
-        let previousActiveTabID = activeTabID
-        saveCurrentTabState()
-        let newTab = TabModel()
-        tabs.append(newTab)
-        createSession(for: newTab)
-        activeTabID = newTab.id
-        let result = sessions[newTab.id]?.pdfManager.loadDocument(from: url, isSecurityScoped: false) ?? .failed
-        return finishDroppedLoad(result, for: newTab.id, url: url, createdTab: true, restoreOnFailure: previousActiveTabID)
-    }
-
-    /// Applies a dropped file's load result. On `.failed`, removes a tab we created
-    /// for it so a bad file never leaves an empty "New Tab" behind. Returns false
-    /// only on `.failed`.
-    private func finishDroppedLoad(
-        _ result: DocumentLoadResult,
-        for tabID: UUID,
-        url: URL,
-        createdTab: Bool,
-        restoreOnFailure: UUID?
-    ) -> Bool {
-        if case .failed = result {
-            if createdTab {
-                removeFailedTab(tabID, restoringTo: restoreOnFailure)
-            }
-            return false
-        }
-        handleLoadResult(
-            result,
-            for: tabID,
-            url: url,
-            isSecurityScoped: false,
-            closeTabOnCancel: createdTab,
-            restoreTabIDOnCancel: createdTab ? restoreOnFailure : nil
-        )
-        return true
-    }
-
-    private func handleLoadResult(
-        _ result: DocumentLoadResult,
-        for tabID: UUID,
-        url: URL,
-        isSecurityScoped: Bool,
-        closeTabOnCancel: Bool = false,
-        restoreTabIDOnCancel: UUID? = nil,
-        closeTabOnFailure: Bool = false
-    ) {
-        switch result {
-        case .success:
-            clearPendingPasswordRequest(for: tabID)
-            clearSearchState(for: tabID)
-            if let index = tabs.firstIndex(where: { $0.id == tabID }) {
-                tabs[index].documentURL = url
-                tabs[index].isSecurityScoped = isSecurityScoped
-                tabs[index].title = sessions[tabID]?.pdfManager.documentTitle ?? url.deletingPathExtension().lastPathComponent
-            }
-            documentOpenedHandler?(url, isSecurityScoped)
-        case .needsPassword:
-            promptForPassword(
-                tabID: tabID,
-                url: url,
-                isSecurityScoped: isSecurityScoped,
-                closeTabOnCancel: closeTabOnCancel,
-                restoreTabIDOnCancel: restoreTabIDOnCancel
-            )
-        case .failed:
-            clearPendingPasswordRequest(for: tabID)
-            if closeTabOnFailure {
-                removeFailedTab(tabID, restoringTo: restoreTabIDOnCancel)
-            }
-        }
-    }
-
-    /// Removes a tab whose document failed to load and restores the previously
-    /// active tab, so a missing/corrupt file never leaves a stray "New Tab"
-    /// behind (e.g. reopening a since-deleted Recently-Closed document).
-    private func removeFailedTab(_ tabID: UUID, restoringTo restoreTabID: UUID?) {
-        closeSession(for: tabID)
-        tabs.removeAll { $0.id == tabID }
-        let restore = restoreTabID.flatMap { id in tabs.contains { $0.id == id } ? id : nil }
-        activeTabID = restore ?? tabs.last?.id
-    }
-
-    func consumeAutomaticFilePickerSuppression() -> Bool {
-        let wasSuppressed = suppressAutomaticFilePicker
-        suppressAutomaticFilePicker = false
-        return wasSuppressed
-    }
-
-    func isAwaitingPassword(for tabID: UUID) -> Bool {
-        sessions[tabID]?.pendingUnlock != nil
-    }
 
     var isPlaceholderWindow: Bool {
         hasOnlyPlaceholderTab
     }
 
-    private var hasOnlyPlaceholderTab: Bool {
+    var hasOnlyPlaceholderTab: Bool {
         guard tabs.count == 1,
               let activeTabID,
-              let activeTab = activeTab else {
+              let activeTab = activeTab,
+              let pdf = sessions[activeTabID]?.content.pdf else {
             return false
         }
 
-        return !activeTab.hasDocument &&
-            !(sessions[activeTabID]?.pdfManager.hasDocument ?? false) &&
-            !isAwaitingPassword(for: activeTabID)
-    }
-
-    @discardableResult
-    func dismissPlaceholderWindowIfNeeded() -> Bool {
-        closeFilePicker()
-
-        guard hasOnlyPlaceholderTab else { return false }
-
-        suppressAutomaticFilePicker = true
-        WindowRegistry.shared.closeWindow(for: self)
-        return true
-    }
-
-    // MARK: - Password Sheet (window-level presentation over per-session data)
-
-    private func promptForPassword(
-        tabID: UUID,
-        url: URL,
-        isSecurityScoped: Bool,
-        closeTabOnCancel: Bool,
-        restoreTabIDOnCancel: UUID?
-    ) {
-        guard let session = sessions[tabID] else { return }
-
-        session.pendingUnlock = TabSession.UnlockRequest(
-            url: url,
-            isSecurityScoped: isSecurityScoped,
-            closeTabOnCancel: closeTabOnCancel,
-            restoreTabIDOnCancel: restoreTabIDOnCancel
-        )
-        if !unlockQueue.contains(tabID) {
-            unlockQueue.append(tabID)
-        }
-    }
-
-    private func clearPendingPasswordRequest(for tabID: UUID) {
-        sessions[tabID]?.pendingUnlock = nil
-        unlockQueue.removeAll { $0 == tabID }
-    }
-
-    /// The tab whose session is awaiting a password for the given canonical URL.
-    private func tabAwaitingPassword(for canonicalURL: URL) -> UUID? {
-        sessions.first { _, session in
-            session.pendingUnlock?.url.pageFlowCanonicalDocumentURL == canonicalURL
-        }?.key
-    }
-
-    func submitPassword(_ password: String) -> Bool {
-        guard let tabID = unlockQueue.first,
-              let session = sessions[tabID],
-              let request = session.pendingUnlock else {
-            return false
-        }
-
-        if session.pdfManager.unlockDocument(password: password) {
-            clearSearchState(for: tabID)
-            if let index = tabs.firstIndex(where: { $0.id == tabID }) {
-                tabs[index].documentURL = request.url
-                tabs[index].isSecurityScoped = request.isSecurityScoped
-            }
-            documentOpenedHandler?(request.url, request.isSecurityScoped)
-            session.pendingUnlock = nil
-            unlockQueue.removeAll { $0 == tabID }
-            return true
-        }
-        return false
-    }
-
-    func cancelPasswordPrompt() {
-        guard let tabID = unlockQueue.first,
-              let session = sessions[tabID],
-              let request = session.pendingUnlock else { return }
-
-        session.pdfManager.cancelPendingUnlock()
-        session.pendingUnlock = nil
-        unlockQueue.removeAll { $0 == tabID }
-
-        guard request.closeTabOnCancel,
-              tabs.contains(where: { $0.id == tabID }) else {
-            return
-        }
-
-        closeTab(tabID)
-
-        if let restoreTabID = request.restoreTabIDOnCancel,
-           tabs.contains(where: { $0.id == restoreTabID }) {
-            selectTab(restoreTabID)
-        }
+        // An untitled Markdown tab is a document even before its first edit.
+        // Only the empty PDF-backed New Tab can be dismissed without approval,
+        // and not while a password or a download is about to fill it.
+        return !activeTab.hasDocument && !pdf.pdfManager.hasDocument &&
+            !pdf.pdfManager.isDirty && !isAwaitingPassword(for: activeTabID) &&
+            downloadingURLs.isEmpty && sessions[activeTabID]?.pendingMarkdownOpen == nil
     }
 
     func updateTabDocument(_ tabID: UUID, url: URL) {
@@ -816,51 +696,73 @@ final class TabManager {
 
     func clearAllSearchState() {
         for session in sessions.values {
-            session.searchManager.clearSearch()
-            session.clearSearchSnapshot()
+            // Content-aware: clear the PDF backend (+ its snapshot) or the Markdown
+            // Find backend (which posts findClearHighlights to drop highlights).
+            // Exhaustive over `TabContent` so a new content type must define its
+            // Find teardown rather than silently leaving stale highlights.
+            switch session.content {
+            case .pdf(let content):
+                content.searchManager.clearSearch()
+                content.clearSearchSnapshot()
+            case .markdown(let content):
+                content.searchManager.clear()
+            }
         }
     }
 
     private func runtime(for session: TabSession) -> TabRuntime {
-        TabRuntime(
+        // Builds the PDF runtime only — the single PDF-runtime construction path.
+        // Content routing happens upstream: `renderModel(for:)` is the sole caller
+        // and invokes this exclusively for `.pdf` sessions, projecting a markdown
+        // tab to a `MarkdownRuntime` instead. The guard pins that precondition
+        // rather than force-unwrapping the optional manager accessors.
+        guard let content = session.content.pdf else {
+            preconditionFailure("runtime(for:) requires PDF content; markdown tabs use MarkdownRuntime")
+        }
+        return TabRuntime(
             tabID: session.id,
-            pdfManager: session.pdfManager,
-            searchManager: session.searchManager,
-            annotationManager: session.annotationManager,
-            commentManager: session.commentManager,
-            bookmarkManager: session.bookmarkManager,
-            undoManager: session.undoManager
+            pdfManager: content.pdfManager,
+            searchManager: content.searchManager,
+            annotationManager: content.annotationManager,
+            commentManager: content.commentManager,
+            bookmarkManager: content.bookmarkManager,
+            undoManager: content.undoManager
         )
     }
 
     // MARK: - State Management
 
-    private func createSession(for tab: TabModel) {
-        // The session wires the page-mutation fan-out and undo-availability
-        // observers in its init; the markup managers are configured with the
-        // live PDFView later in PDFViewWrapper.makeNSView().
-        sessions[tab.id] = TabSession(id: tab.id)
-    }
-
-    private func clearSearchState(for tabID: UUID) {
+    func clearSearchState(for tabID: UUID) {
         guard let session = sessions[tabID] else { return }
-        session.searchManager.clearSearch()
+        session.searchManager?.clearSearch()
         session.clearSearchSnapshot()
     }
 
-    private func saveCurrentTabState() {
+    func saveCurrentTabState() {
         guard let id = activeTabID, let session = sessions[id] else { return }
         session.captureViewSnapshot()
-        persistViewState(for: session.pdfManager)
+        persistReadingState(of: session)
     }
 
     // MARK: - Reading-Position Persistence
 
-    /// Persists the active tab's reading state (last page, scroll, zoom) to the
-    /// shared store. Safe to call at any lifecycle boundary (window close, quit).
+    /// Persists the active tab's reading state to the shared store — page/zoom
+    /// for PDF, scroll offset for Markdown. Safe to call at any lifecycle
+    /// boundary (window close, quit).
     func flushActiveTabViewState() {
         guard let id = activeTabID, let session = sessions[id] else { return }
-        persistViewState(for: session.pdfManager)
+        persistReadingState(of: session)
+    }
+
+    /// Content-routed reading-state persistence — exhaustive, so a new content
+    /// type must decide what it remembers across launches.
+    private func persistReadingState(of session: TabSession) {
+        switch session.content {
+        case .pdf(let content):
+            persistViewState(for: content.pdfManager)
+        case .markdown(let content):
+            content.persistReadingPosition()
+        }
     }
 
     private func persistViewState(for pdfManager: PDFManager) {
@@ -869,26 +771,183 @@ final class TabManager {
         DocumentStateStore.shared.save(state, for: url)
     }
 
-    private func confirmClose(tabID: UUID, pdfManager: PDFManager) -> Bool {
-        guard pdfManager.isDirty else { return true }
+    // MARK: - External-change reload (ADR-0012 D5, S9)
 
-        let alert = NSAlert()
-        alert.icon = NSApp.applicationIconImage
-        alert.messageText = "Do you want to save changes to \"\(pdfManager.documentTitle)\"?"
-        alert.informativeText = "Your changes will be lost if you don't save."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Don't Save")
+    /// Re-entrancy latch so a burst of activation notifications can't stack multiple
+    /// external-change prompts for the same tab.
+    @ObservationIgnored private var isPresentingExternalChangePrompt = false
+    /// The Reload-vs-Keep alert; a seam so tests can answer it without a modal.
+    @ObservationIgnored var externalChangePrompt: (_ title: String, _ isDirty: Bool) -> MarkdownExternalChangeChoice
+        = presentMarkdownExternalChangePrompt
+    /// The Keep Open-vs-Close alert for a deleted or moved file; a test seam too.
+    @ObservationIgnored var missingFilePrompt: (_ title: String, _ isDirty: Bool) -> MarkdownMissingFileChoice
+        = presentMarkdownMissingFilePrompt
+    /// Asks before opening a note large enough to be slow; a test seam too.
+    @ObservationIgnored var largeNoteOpenPrompt: (_ title: String, _ byteCount: Int) -> Bool
+        = presentMarkdownLargeNotePrompt
+    /// Whether a file's bytes live only with its cloud provider; a test seam too.
+    @ObservationIgnored var isCloudOnly: (URL) -> Bool = \.pageFlowIsDataless
+    /// Cloud-only files downloading before they open, so a repeated open waits.
+    @ObservationIgnored var downloadingURLs: Set<URL> = []
+    @ObservationIgnored var downloadingTasks: [URL: Task<Void, Never>] = [:]
+    /// The newest drop owns automatic selection while cloud batches overlap.
+    @ObservationIgnored var currentDropBatch: DroppedDocumentBatch?
+    /// Latest explicit page reference while one download is in flight.
+    @ObservationIgnored var downloadingPDFPageIndices: [URL: Int] = [:]
+    /// Asks before a link opens a local file in its own app; a test seam too.
+    @ObservationIgnored var localFileLinkPrompt: (_ fileName: String) -> Bool = presentMarkdownLocalFileLinkPrompt
+    /// Asks before a save writes U+FFFD over damaged UTF-8 bytes; a test seam too.
+    @ObservationIgnored var invalidUTF8SavePrompt: (_ title: String) -> Bool = presentMarkdownInvalidUTF8SavePrompt
+    /// Fallback restore bookmarks by canonical path (see `restoreTab(for:)`).
+    @ObservationIgnored private var mintedRestoreBookmarks: [String: Data?] = [:]
+    /// Only the newest focus check may prompt; older reads finish and are dropped.
+    @ObservationIgnored private var externalChangeCheckGeneration: UInt64 = 0
 
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            return pdfManager.saveSync()  // Use sync for modal context
-        case .alertSecondButtonReturn:
-            return false
-        default:
-            return true
+    @ObservationIgnored private var isExternalChangeCheckScheduled = false
+
+    /// Coalesce selection changes and check the latest active session after the
+    /// native host has updated. Defer modal work while another panel or drag owns input.
+    private func scheduleMarkdownExternalChangeCheck(after delay: TimeInterval = 0) {
+        guard !TestEnvironment.isRunningTests, !isPresentingExternalChangePrompt,
+              !isExternalChangeCheckScheduled else { return }
+        isExternalChangeCheckScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.isExternalChangeCheckScheduled = false
+            self.performMarkdownExternalChangeCheck()
         }
+    }
+
+    /// Application activation and tab selection share the same guarded decision.
+    /// This is a focus-based check, not a continuous filesystem watcher.
+    func checkActiveMarkdownForExternalChange() {
+        scheduleMarkdownExternalChangeCheck()
+    }
+
+    /// Reads the disk off the main thread (a slow share or an iCloud download
+    /// must never freeze a tab switch), then decides on main.
+    private func performMarkdownExternalChangeCheck() {
+        guard !TestEnvironment.isRunningTests, !isPresentingExternalChangePrompt,
+              let session = activeSession, let content = session.content.markdown,
+              WindowRegistry.shared.window(for: self)?.isVisible == true,
+              // A save landing mid-read would look external; its receipt re-checks.
+              !content.documentManager.hasPendingWrites, !content.isReloadingFromDisk,
+              let probe = content.documentManager.diskProbe() else { return }
+        externalChangeCheckGeneration &+= 1
+        let generation = externalChangeCheckGeneration
+        Task { [weak self] in
+            let observation = await Task.detached(priority: .userInitiated) {
+                MarkdownDocumentManager.observe(probe)
+            }.value
+            self?.finishMarkdownExternalChangeCheck(observation, probe: probe, session: session, generation: generation)
+        }
+    }
+
+    private func finishMarkdownExternalChangeCheck(
+        _ observation: MarkdownDocumentManager.DiskObservation,
+        probe: MarkdownDocumentManager.DiskProbe,
+        session: TabSession,
+        generation: UInt64
+    ) {
+        guard generation == externalChangeCheckGeneration, !isPresentingExternalChangePrompt,
+              activeSession === session, let content = session.content.markdown,
+              !content.documentManager.hasPendingWrites else { return }
+        guard !TabDragController.shared.isActive, NSApp.modalWindow == nil else {
+            scheduleMarkdownExternalChangeCheck(after: 0.1)
+            return
+        }
+        let change = content.documentManager.resolve(observation, for: probe)
+        guard change != .unchanged else { return }
+        isPresentingExternalChangePrompt = true
+        defer {
+            isPresentingExternalChangePrompt = false
+            if activeSession !== session { scheduleMarkdownExternalChangeCheck() }
+        }
+        switch change {
+        case .modified:
+            let checked = MarkdownDocumentManager.DiskCheck(observation: observation, probe: probe)
+            if let decision = MarkdownExternalChangeDecision(content: content, session: session, owner: self, checked: checked) {
+                decision.applyAfterFocusPrompt()
+            }
+        case .missing: presentMissingFilePrompt(for: content, session: session)
+        case .unchanged: break
+        }
+    }
+
+    /// Keep Open leaves the tab unsaved so close and quit still ask, and Save
+    /// writes the file back; Close closes it like ⌘W.
+    private func presentMissingFilePrompt(for content: MarkdownContent, session: TabSession) {
+        content.reconcileLiveText()
+        let manager = content.documentManager
+        let choice = missingFilePrompt(manager.documentTitle, manager.isDirty)
+        guard activeSession === session, session.content.markdown === content, !manager.isClosed else { return }
+        switch choice {
+        case .keepOpen: manager.keepAfterMissingFile()
+        case .close: closeTab(session.id)
+        }
+    }
+
+    /// A file read with damaged UTF-8 bytes saves them as U+FFFD; ask once, before
+    /// the first save. A saved file is valid UTF-8, so later saves never ask.
+    func confirmReplacingInvalidUTF8(_ content: MarkdownContent) -> Bool {
+        guard content.documentManager.hasInvalidUTF8 else { return true }
+        return invalidUTF8SavePrompt(content.documentManager.documentTitle)
+    }
+
+    /// The activation check covers only the frontmost window's active tab, so a
+    /// save re-reads the disk first and never writes over an unseen external
+    /// change. Returns whether the save may write: Keep writes this version over
+    /// the change; Reload leaves nothing to save; Cancel stops.
+    func confirmSaveOverExternalChange(_ content: MarkdownContent, session: TabSession) -> Bool {
+        guard !isPresentingExternalChangePrompt else { return false }
+        let manager = content.documentManager
+        guard let probe = manager.diskProbe() else { return !manager.isClosed }
+        let observation = MarkdownDocumentManager.observe(probe)
+        guard observation.hasReadableSourceOrMissingFile else { return false }
+        let change = manager.resolve(observation, for: probe)
+        if change == .missing { manager.keepAfterMissingFile() }
+        guard change == .modified else { return true }
+        isPresentingExternalChangePrompt = true
+        defer { isPresentingExternalChangePrompt = false }
+        selectTab(session.id)
+        WindowRegistry.shared.bringToFront(for: self)
+        let checked = MarkdownDocumentManager.DiskCheck(observation: observation, probe: probe)
+        guard let decision = MarkdownExternalChangeDecision(content: content, session: session, owner: self, checked: checked) else {
+            return false
+        }
+        return decision.applySynchronously()
+    }
+
+    /// Command Save and native close/quit observe disk off main, after earlier
+    /// accepted writes. Explicit synchronous replacement boundaries remain separate.
+    func confirmSaveOverExternalChangeInBackground(_ content: MarkdownContent, session: TabSession,
+                                                  selectingForClose: Bool = false,
+                                                  whileApproved: @escaping () -> Bool = { true }) async -> Bool {
+        guard !Task.isCancelled, whileApproved() else { return false }
+        let manager = content.documentManager
+        guard let checked = await manager.observeDiskForSave(), !Task.isCancelled, whileApproved(),
+              let owner = WindowRegistry.shared.owner(of: session, document: content, fallback: self) else { return false }
+        guard checked.observation.hasReadableSourceOrMissingFile else {
+            owner.postTransientToast("Couldn’t read “\(manager.documentTitle)”. Your edits are still open.")
+            return false
+        }
+        content.reconcileLiveText()
+        let change = manager.resolve(checked.observation, for: checked.probe)
+        if change == .missing { manager.keepAfterMissingFile() }
+        guard change == .modified else { return true }
+        // A prompt must still refer to the displayed, exact document. Selecting
+        // another tab during a slow check must not expose it to this overwrite.
+        guard !owner.isPresentingExternalChangePrompt, selectingForClose || owner.activeSession === session else { return false }
+        if selectingForClose {
+            owner.selectTab(session.id)
+            WindowRegistry.shared.bringToFront(for: owner)
+        }
+        owner.isPresentingExternalChangePrompt = true
+        defer { owner.isPresentingExternalChangePrompt = false }
+        guard let decision = MarkdownExternalChangeDecision(content: content, session: session, owner: owner, checked: checked, whileApproved: whileApproved) else {
+            return false
+        }
+        return await decision.applyInBackground()
     }
 
     private func restoreTabState(_ tabID: UUID) {
@@ -898,7 +957,7 @@ final class TabManager {
     // MARK: - Dirty State
 
     func isTabDirty(_ tabID: UUID) -> Bool {
-        sessions[tabID]?.pdfManager.isDirty ?? false
+        sessions[tabID]?.isDirty ?? false
     }
 
     // MARK: - Save Operations
@@ -909,215 +968,91 @@ final class TabManager {
         case failure(message: String)
     }
 
-    func saveActiveDocument() async -> SaveResult {
-        guard let pdfManager = activeSession?.pdfManager else {
-            return .failure(message: "No active document to save.")
-        }
+    // MARK: - Transient toast (this window's pill)
 
-        guard pdfManager.hasDocument else {
-            return .failure(message: "Open a document before saving.")
-        }
+    /// The latest transient pill event for THIS window. Typed + observable, so
+    /// the overlay observes its own manager and multi-window scoping is
+    /// structural — no notification bus, no sender filtering.
+    private(set) var transientToast: TransientToast?
 
-        guard pdfManager.isDirty else {
-            return .success(message: "")
-        }
-
-        let saved = await pdfManager.save()
-        let result: SaveResult = saved ? .success(message: "Saved") : .failure(message: "Save failed.")
-        postSaveNotification(result)
-        return result
-    }
-
-    func saveActiveDocumentAs() async -> SaveResult {
-        guard let id = activeTabID,
-              let session = sessions[id] else {
-            return .failure(message: "No active document to save.")
-        }
-
-        let pdfManager = session.pdfManager
-        guard let originalURL = pdfManager.documentURL else {
-            return .failure(message: "Open a document before saving.")
-        }
-
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType.pdf]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = originalURL.lastPathComponent
-
-        let response = panel.runModal()
-        guard response == .OK, let url = panel.url else {
-            return .cancelled
-        }
-
-        let oldURL = pdfManager.documentURL
-        let saved = await pdfManager.saveAs(to: url)
-        if saved, let index = tabs.firstIndex(where: { $0.id == id }) {
-            // Migrate bookmarks from old path to new path
-            if let oldURL = oldURL {
-                session.bookmarkManager.migrateBookmarks(from: oldURL, to: url)
-            }
-            tabs[index].documentURL = url
-            tabs[index].isSecurityScoped = false
-        }
-
-        let result: SaveResult = saved ? .success(message: "Saved As") : .failure(message: "Save As failed.")
-        postSaveNotification(result)
-        return result
-    }
-
-    // MARK: - Notifications
-    private func postSaveNotification(_ result: SaveResult) {
-        switch result {
-        case .success(let message):
-            guard !message.isEmpty else { return }
-            NotificationCenter.default.post(
-                name: .saveResult,
-                object: nil,
-                userInfo: ["message": message]
-            )
-        case .cancelled, .failure:
-            break
-        }
-    }
-
-    // MARK: - Tab Move (tear-off / merge)
-
-    private func detachTab(_ tabID: UUID, closeIfEmpty: Bool = true) -> DetachedTab? {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }),
-              let session = sessions[tabID] else {
-            return nil
-        }
-
-        if activeTabID == tabID {
-            saveCurrentTabState()
-        }
-
-        if activeTabID == tabID, session.uiState.isEditingPages {
-            stopEditModeKeyMonitor()
-        }
-
-        let detachedTab = DetachedTab(tab: tabs[index], session: session)
-
-        // The session — managers, undo history + observers, UI state, and any
-        // pending unlock — travels intact. Only this window's presentation order
-        // is released; the session's undo observers are NOT torn down.
-        unlockQueue.removeAll { $0 == tabID }
-        dropRenderedTab(tabID)
-        tabs.remove(at: index)
-        sessions.removeValue(forKey: tabID)
-
-        if tabs.isEmpty {
-            activeTabID = nil
-            closeFilePicker()
-            if closeIfEmpty {
-                WindowRegistry.shared.closeWindow(for: self)
-            }
-        } else if activeTabID == tabID {
-            let newIndex = min(index, tabs.count - 1)
-            activeTabID = tabs[newIndex].id
-        }
-
-        return detachedTab
-    }
-
-    private func attachDetachedTab(
-        _ detachedTab: DetachedTab,
-        at index: Int,
-        select: Bool = true
-    ) {
-        if select {
-            saveCurrentTabState()
-        }
-
-        let session = detachedTab.session
-        let clampedIndex = min(max(index, 0), tabs.count)
-        var attachedTab = detachedTab.tab
-        if let documentURL = attachedTab.documentURL {
-            attachedTab.title = session.pdfManager.documentTitle.isEmpty
-                ? documentURL.deletingPathExtension().lastPathComponent
-                : session.pdfManager.documentTitle
-        }
-        tabs.insert(attachedTab, at: clampedIndex)
-        sessions[session.id] = session
-
-        // If the moved tab is still awaiting a password, queue it for this
-        // window's sheet (after any request already presented here).
-        if session.pendingUnlock != nil, !unlockQueue.contains(session.id) {
-            unlockQueue.append(session.id)
-        }
-
-        if select {
-            selectTab(session.id)
-        }
-    }
-
-    // MARK: - Cleanup
-
-    /// Tears down and drops a tab's session. The session owns the ordered
-    /// teardown (close document, clear markup, drop undo history + observers).
-    private func closeSession(for tabID: UUID) {
-        sessions.removeValue(forKey: tabID)?.cleanup()
-        unlockQueue.removeAll { $0 == tabID }
-        dropRenderedTab(tabID)
+    /// Shows a transient pill in THIS window (see `TransientToastOverlay` —
+    /// the fresh id re-triggers equal messages).
+    func postTransientToast(_ message: String) {
+        transientToast = TransientToast(id: UUID(), message: message)
     }
 
     // MARK: - Edit Mode Keyboard Monitor
 
-    private func startEditModeKeyMonitor() {
-        guard editModeKeyMonitor == nil else { return }
-
-        editModeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self, self.isEditingPages else {
-                return event
+    /// Maintains the invariant: the edit-mode key monitor is installed iff this
+    /// window's active tab is in page-edit mode. Every path that changes either
+    /// input funnels here — `activeTabID`'s `didSet` and `setIsEditingPages` —
+    /// so call sites never start/stop the monitor themselves. Idempotent, and
+    /// safe during init (no session yet resolves to "not editing").
+    private func reconcileEditModeKeyMonitor() {
+        let shouldBeInstalled = activeTabID.flatMap { sessions[$0]?.uiState.isEditingPages } ?? false
+        if shouldBeInstalled, editModeKeyMonitor == nil {
+            editModeKeyMonitor = editModeMonitorInstall { [weak self] event in
+                self?.handleEditModeKeyEvent(event) ?? event
             }
-
-            // Don't intercept when text field/view is focused - let normal copy/paste work
-            if let responder = NSApp.keyWindow?.firstResponder,
-               responder is NSTextView || responder is NSTextField {
-                return event
-            }
-
-            // Check configured shortcuts for copy/cut/paste page operations
-            let copyShortcut = ShortcutModel.current(for: "copyPage")
-            let cutShortcut = ShortcutModel.current(for: "cutPage")
-            let pasteShortcut = ShortcutModel.current(for: "pastePage")
-
-            if copyShortcut.matches(event: event) {
-                if let pdfManager = self.activePDFManager {
-                    pdfManager.copyPage(at: pdfManager.currentPageIndex)
-                }
-                return nil
-            }
-
-            if cutShortcut.matches(event: event) {
-                if let pdfManager = self.activePDFManager,
-                   pdfManager.pageCount > 1 {
-                    pdfManager.cutPage(at: pdfManager.currentPageIndex)
-                }
-                return nil
-            }
-
-            if pasteShortcut.matches(event: event) {
-                if let pdfManager = self.activePDFManager, pdfManager.canPaste {
-                    _ = pdfManager.pastePage(after: pdfManager.currentPageIndex)
-                }
-                return nil
-            }
-
-            // Enter/Return exits edit mode
-            if event.keyCode == 36 {
-                self.isEditingPages = false
-                return nil
-            }
-
-            return event
+        } else if !shouldBeInstalled, let monitor = editModeKeyMonitor {
+            editModeKeyMonitor = nil
+            editModeMonitorRemove(monitor)
         }
     }
 
-    private func stopEditModeKeyMonitor() {
-        if let monitor = editModeKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            editModeKeyMonitor = nil
+    /// Handles one keyDown while edit mode is active. Returns nil to swallow
+    /// the event, or the event unmodified to pass it down the monitor chain.
+    private func handleEditModeKeyEvent(_ event: NSEvent) -> NSEvent? {
+        // Local monitors are application-wide and chain in nondeterministic
+        // order: without this guard, whichever window entered edit mode would
+        // swallow Cmd+C/V typed in *other* windows (and their Edit-menu key
+        // equivalents). Apple's documented scoping pattern: compare event.window.
+        guard let window = WindowRegistry.shared.window(for: self),
+              event.window === window else {
+            return event
         }
+
+        guard isEditingPages else { return event }
+
+        // Don't intercept when text field/view is focused - let normal copy/paste work
+        if let responder = NSApp.keyWindow?.firstResponder,
+           responder is NSTextView || responder is NSTextField {
+            return event
+        }
+
+        // Check configured shortcuts for copy/cut/paste page operations
+        let copyShortcut = ShortcutModel.current(for: "copyPage")
+        let cutShortcut = ShortcutModel.current(for: "cutPage")
+        let pasteShortcut = ShortcutModel.current(for: "pastePage")
+
+        if copyShortcut.matches(event: event) {
+            if let pdfManager = activePDFManager {
+                pdfManager.copyPage(at: pdfManager.currentPageIndex)
+            }
+            return nil
+        }
+
+        if cutShortcut.matches(event: event) {
+            if let pdfManager = activePDFManager,
+               pdfManager.pageCount > 1 {
+                pdfManager.cutPage(at: pdfManager.currentPageIndex)
+            }
+            return nil
+        }
+
+        if pasteShortcut.matches(event: event) {
+            if let pdfManager = activePDFManager, pdfManager.canPaste {
+                _ = pdfManager.pastePage(after: pdfManager.currentPageIndex)
+            }
+            return nil
+        }
+
+        // Enter/Return exits edit mode
+        if event.keyCode == 36 {
+            isEditingPages = false
+            return nil
+        }
+
+        return event
     }
 }

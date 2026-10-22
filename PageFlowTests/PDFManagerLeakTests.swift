@@ -66,11 +66,11 @@ struct PDFManagerLeakTests {
             weakManager = session.pdfManager
             weakDocument = document
 
-            session.pdfManager.document = document
+            session.pdfManager?.document = document
             // Exercise the wiring that runs on real edits: rotate registers undo;
             // delete fans a PageMutation out to the bookmark/comment managers.
-            session.pdfManager.rotatePage(at: 0, clockwise: true)
-            session.pdfManager.deletePage(at: 1)
+            session.pdfManager?.rotatePage(at: 0, clockwise: true)
+            session.pdfManager?.deletePage(at: 1)
 
             // Drop the only strong reference WITHOUT cleanup() — exactly what happens
             // when a window is closed while it still owns tabs.

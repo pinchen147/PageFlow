@@ -7,7 +7,7 @@
 
 import Foundation
 
-struct CommentModel: Identifiable, Equatable {
+nonisolated struct CommentModel: Identifiable, Equatable, Sendable {
     let id: UUID
     var text: String
     var pageIndex: Int

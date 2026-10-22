@@ -8,19 +8,17 @@
 import SwiftUI
 import PDFKit
 import UniformTypeIdentifiers
+import MarkdownEngine
 
 @main
 struct PageFlowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var recentFilesManager = RecentFilesManager()
+    private var recentFilesManager: RecentFilesManager { appDelegate.recentFilesManager }
     @State private var settingsManager = SettingsManager.shared
 
     // MARK: - Focused Values
 
     @FocusedValue(\.tabManager) private var focusedSceneTabManager
-    @FocusedValue(\.showingSearch) private var focusedShowingSearch
-    @FocusedValue(\.searchFocusRequest) private var focusedSearchFocusRequest
-    @FocusedValue(\.alwaysOnTop) private var focusedAlwaysOnTop
 
     /// Reactive frontmost-window fallback for the menu commands. `@FocusedValue`
     /// resolves nil when the key window (e.g. a manually-created ⌘N / tear-off
@@ -28,19 +26,13 @@ struct PageFlowApp: App {
     /// it would no-op AND grey out. Resolving `focused ?? frontmost` keeps both
     /// the action targets and the enabled state on the window the user is in.
     @State private var activeWindow = ActiveWindowModel.shared
+    @State private var undoCommands = UndoCommandRouter()
 
     /// The TabManager every menu command (⌘T/⌘W/⌘S/Find/…) targets: the focused
     /// window's, else the frontmost window's. Reactive on both inputs.
     private var focusedTabManager: TabManager? {
         focusedSceneTabManager ?? activeWindow.tabManager
     }
-
-    // Single shared updater for the whole app. UpdateManager is a no-op stub when
-    // Sparkle isn't compiled in, so it is safe to hold unconditionally and inject
-    // everywhere (the menu and the Settings toggle) rather than creating a second
-    // SPUStandardUpdaterController — Sparkle requires exactly one updater instance,
-    // and a second one is why the "check automatically" toggle wasn't sticking.
-    @State private var updateManager = UpdateManager()
 
     @State private var firstLaunchManager = FirstLaunchManager()
 
@@ -50,9 +42,27 @@ struct PageFlowApp: App {
         focusedTabManager?.activePDFManager?.hasDocument == true
     }
 
+    // Content-aware command predicates (PDF + Markdown). Gate the Save / Save As /
+    // Find / Print menu items so they follow the active tab's content type.
+    private var canSave: Bool { focusedTabManager?.canSave ?? false }
+    private var canSaveAs: Bool { focusedTabManager?.canSaveAs ?? false }
+    private var canFind: Bool { focusedTabManager?.canFind ?? false }
+    private var canPrint: Bool { focusedTabManager?.canPrint ?? false }
+
+    /// Gate for the Format menu (⌘B/⌘I/⌘U/Heading): the active tab is a Markdown tab
+    /// with content. PDF tabs and empty untitled buffers report false.
+    private var canFormatMarkdown: Bool { focusedTabManager?.canFormatMarkdown ?? false }
+
+    /// Gates for content-routed view commands — thin reads of TabManager's
+    /// routing (the exhaustive switches live THERE, not in the menu layer).
+    private var canUseViewCommands: Bool { focusedTabManager?.activeContentAcceptsViewCommands ?? false }
+    private var canUnderline: Bool { focusedTabManager?.canUnderline ?? false }
+
     private var pdfManager: PDFManager? {
         focusedTabManager?.activePDFManager
     }
+
+    private var pdfPermissions: PDFPermissions { pdfManager?.permissions ?? PDFPermissions() }
 
     private var isEditingPages: Bool {
         focusedTabManager?.isEditingPages ?? false
@@ -76,14 +86,6 @@ struct PageFlowApp: App {
         WindowGroup {
             TabContainerView()
                 .environment(recentFilesManager)
-                .onAppear {
-                    appDelegate.windowContentBuilder = { tabManager in
-                        AnyView(
-                            TabContainerView(tabManager: tabManager)
-                                .environment(recentFilesManager)
-                        )
-                    }
-                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -92,7 +94,11 @@ struct PageFlowApp: App {
             CommandGroup(after: .importExport) { fileSaveMenuContent }
             CommandGroup(replacing: .undoRedo) { editUndoMenuContent }
             CommandGroup(after: .pasteboard) { editFindMenuContent }
-            CommandMenu("View") { viewMenuContent }
+            CommandMenu("Format") { formatMenuContent }
+            // Into the system View menu (in place of Show/Hide Toolbar, which the
+            // hidden-title-bar window never shows), so there is one View menu;
+            // AppKit adds Enter Full Screen to it.
+            CommandGroup(replacing: .toolbar) { viewMenuContent }
             CommandMenu("Go") { goMenuContent }
             CommandMenu("Tools") { toolsMenuContent }
             CommandMenu("Tab") { tabMenuContent }
@@ -101,7 +107,6 @@ struct PageFlowApp: App {
         // MARK: Settings Window
         Settings {
             SettingsView()
-                .environment(updateManager)
         }
     }
 
@@ -114,13 +119,10 @@ struct PageFlowApp: App {
         }
         .disabled(firstLaunchManager.isDefaultPDFReader)
 
-        #if ENABLE_SPARKLE
-        Divider()
-        Button("Check for Updates…") {
-            updateManager.checkForUpdates()
+        if let notices = Bundle.main.url(forResource: "ThirdPartyNotices", withExtension: "txt") {
+            Divider()
+            Button("Third-Party Notices…") { NSWorkspace.shared.open(notices) }
         }
-        .disabled(!updateManager.canCheckForUpdates)
-        #endif
     }
 
     // MARK: - File Menu
@@ -131,6 +133,12 @@ struct PageFlowApp: App {
             focusedTabManager?.createNewTab()
         }
         .keyboardShortcut(for: "newTab")
+        .disabled(focusedTabManager == nil)
+
+        Button("New Markdown Document") {
+            focusedTabManager?.newMarkdownDocument()
+        }
+        .keyboardShortcut(for: "newMarkdownDocument")
         .disabled(focusedTabManager == nil)
 
         Button("New Window") {
@@ -177,60 +185,48 @@ struct PageFlowApp: App {
             Task { await handleSave() }
         }
         .keyboardShortcut(for: "save")
-        .disabled(!hasDocument)
+        .disabled(!canSave)
 
         Button("Save As…") {
             Task { await handleSaveAs() }
         }
         .keyboardShortcut(for: "saveAs")
-        .disabled(!hasDocument)
+        .disabled(!canSaveAs)
 
         Divider()
 
         Button("Print…") {
-            if let document = pdfManager?.document {
-                runPrintPanel(for: document)
-            }
+            // Content-aware: PDF prints via the unchanged PDFKit path; Markdown prints
+            // the styled Live-Preview text. `printActiveDocument` is the single
+            // exhaustive switch (peer of `saveActiveDocument`); `canPrint` is the gate.
+            focusedTabManager?.printActiveDocument()
         }
         .keyboardShortcut(for: "print")
-        .disabled(!hasDocument)
+        .disabled(!canPrint)
     }
 
     // MARK: - Edit Menu
 
-    private var activeUndoManager: UndoManager? {
-        focusedTabManager?.activeUndoManager
-    }
-
-    private var canUndo: Bool {
-        focusedTabManager?.activeCanUndo ?? false
-    }
-
-    private var canRedo: Bool {
-        focusedTabManager?.activeCanRedo ?? false
+    private var undoAvailability: UndoAvailability {
+        undoCommands.availability(fallback: UndoAvailability(
+            canUndo: focusedTabManager?.activeCanUndo ?? false,
+            canRedo: focusedTabManager?.activeCanRedo ?? false
+        ))
     }
 
     @ViewBuilder
     private var editUndoMenuContent: some View {
         Button("Undo") {
-            let um = activeUndoManager
-            #if DEBUG
-            Swift.print("[UNDO] pressed: um=\(um.map { "\(ObjectIdentifier($0))" } ?? "nil"), canUndo=\(um?.canUndo ?? false)")
-            #endif
-            um?.undo()
+            undoCommands.undo(fallback: focusedTabManager?.activeUndoManager)
         }
-        .keyboardShortcut("z", modifiers: .command)
-        .disabled(!canUndo)
+        .keyboardShortcut(for: "undo")
+        .disabled(!undoAvailability.canUndo)
 
         Button("Redo") {
-            let um = activeUndoManager
-            #if DEBUG
-            Swift.print("[REDO] pressed: um=\(um.map { "\(ObjectIdentifier($0))" } ?? "nil"), canRedo=\(um?.canRedo ?? false)")
-            #endif
-            um?.redo()
+            undoCommands.redo(fallback: focusedTabManager?.activeUndoManager)
         }
-        .keyboardShortcut("z", modifiers: [.command, .shift])
-        .disabled(!canRedo)
+        .keyboardShortcut(for: "redo")
+        .disabled(!undoAvailability.canRedo)
     }
 
     @ViewBuilder
@@ -238,13 +234,28 @@ struct PageFlowApp: App {
         Divider()
 
         Button("Find…") {
-            if hasDocument {
-                focusedShowingSearch?.wrappedValue = true
-                focusedSearchFocusRequest?.wrappedValue += 1
-            }
+            focusedTabManager?.requestFind()
         }
         .keyboardShortcut(for: "search")
-        .disabled(!hasDocument)
+        .disabled(!canFind)
+
+        Button("Find and Replace…") {
+            focusedTabManager?.requestFind(showReplacement: true)
+        }
+        .keyboardShortcut(for: "findAndReplace")
+        .disabled(!(focusedTabManager?.canReplace ?? false))
+
+        Button("Find Next") {
+            focusedTabManager?.activeFindDriver?.next()
+        }
+        .keyboardShortcut(for: "findNext")
+        .disabled(!(focusedTabManager?.canNavigateFind ?? false))
+
+        Button("Find Previous") {
+            focusedTabManager?.activeFindDriver?.previous()
+        }
+        .keyboardShortcut(for: "findPrevious")
+        .disabled(!(focusedTabManager?.canNavigateFind ?? false))
 
         Divider()
 
@@ -254,7 +265,7 @@ struct PageFlowApp: App {
             manager.deletePage(at: manager.currentPageIndex)
         }
         .keyboardShortcut(for: "deletePage")
-        .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
+        .disabled(!pdfPermissions.editPages || !isEditingPages || pageCount <= 1)
 
         Divider()
 
@@ -263,7 +274,7 @@ struct PageFlowApp: App {
             manager.copyPage(at: manager.currentPageIndex)
         }
         .keyboardShortcut(for: "copyPage")
-        .disabled(!hasDocument || !isEditingPages)
+        .disabled(!pdfPermissions.copy || !isEditingPages)
 
         Button("Cut Page") {
             guard let manager = pdfManager,
@@ -271,14 +282,76 @@ struct PageFlowApp: App {
             manager.cutPage(at: manager.currentPageIndex)
         }
         .keyboardShortcut(for: "cutPage")
-        .disabled(!hasDocument || !isEditingPages || pageCount <= 1)
+        .disabled(!pdfPermissions.editPages || !pdfPermissions.copy || !isEditingPages || pageCount <= 1)
 
         Button("Paste Page") {
             guard let manager = pdfManager else { return }
             _ = manager.pastePage(after: manager.currentPageIndex)
         }
         .keyboardShortcut(for: "pastePage")
-        .disabled(!hasDocument || !isEditingPages || !(pdfManager?.canPaste ?? false))
+        .disabled(!pdfPermissions.editPages || !isEditingPages || !(pdfManager?.canPaste ?? false))
+    }
+
+    // MARK: - Format Menu
+
+    /// Content-aware Markdown formatting. Each item posts a format request onto the
+    /// active tab's scoped editor bus (the only sanctioned reach into the engine);
+    /// gated so it is enabled only for a Markdown tab with content. PDF tabs see a
+    /// disabled Format menu, never a broken command. Bold/Italic use the standard
+    /// Inline styles, then block formats; every item routes to the active
+    /// Markdown tab's selection.
+    @ViewBuilder
+    private var formatMenuContent: some View {
+        ForEach([MarkdownFormatCommand.bold, .italic, .underline, .strikethrough, .code, .highlight, .link]) { formatButton($0) }
+        Divider()
+        ForEach([MarkdownFormatCommand.text, .heading, .heading2, .heading3]) { formatButton($0) }
+        Divider()
+        ForEach([MarkdownFormatCommand.bulletedList, .numberedList, .checklist, .quote, .codeBlock]) { formatButton($0) }
+        Divider()
+        ForEach([MarkdownFormatCommand.table, .divider]) { formatButton($0) }
+    }
+
+    /// A Format item; marks, text styles and lists carry the selection bar's
+    /// check mark (doc 24 §7.8.9).
+    private func formatButton(_ command: MarkdownFormatCommand) -> some View {
+        Toggle(isOn: Binding(
+            get: { isMarkdownFormatOn(command) },
+            set: { _ in focusedTabManager?.requestMarkdownFormat(command) }
+        )) {
+            Text(command.title)
+        }
+        .keyboardShortcut(command.menuShortcut)
+        .disabled(!canFormatMarkdown || focusedTabManager?.activeMarkdownContent?.isFormatEnabled(command) == false)
+    }
+
+    private func isMarkdownFormatOn(_ command: MarkdownFormatCommand) -> Bool {
+        focusedTabManager?.activeMarkdownContent?.isFormatOn(command) ?? false
+    }
+
+    @ViewBuilder
+    private var foldingMenuContent: some View {
+        let content = focusedTabManager?.activeMarkdownContent
+        let _ = content?.foldingRevision
+        let controller = content?.editorController
+        Menu("Folding") {
+            Button(controller?.isCurrentSectionFolded == true ? "Expand Section" : "Collapse Section") {
+                controller?.performFoldingCommand(.toggleFold)
+            }
+            .keyboardShortcut(for: "markdown.toggleFold")
+            .disabled(controller?.canPerformFoldingCommand(.toggleFold) != true)
+
+            Button("Collapse All") {
+                controller?.performFoldingCommand(.collapseAll)
+            }
+            .keyboardShortcut(for: "markdown.collapseAll")
+            .disabled(controller?.canPerformFoldingCommand(.collapseAll) != true)
+
+            Button("Expand All") {
+                controller?.performFoldingCommand(.expandAll)
+            }
+            .keyboardShortcut(for: "markdown.expandAll")
+            .disabled(controller?.canPerformFoldingCommand(.expandAll) != true)
+        }
     }
 
     // MARK: - View Menu
@@ -302,29 +375,35 @@ struct PageFlowApp: App {
             set: { settingsManager.isPageIndicatorAlwaysVisible = $0 }
         )
 
+        // Content-routed zoom (PDF view zoom / Markdown text size) — the
+        // routing lives on TabManager.
         Button("Zoom In") {
-            pdfManager?.zoomIn()
+            focusedTabManager?.zoomIn()
         }
         .keyboardShortcut(for: "zoomIn")
-        .disabled(!hasDocument)
+        .disabled(!canUseViewCommands)
 
         Button("Zoom Out") {
-            pdfManager?.zoomOut()
+            focusedTabManager?.zoomOut()
         }
         .keyboardShortcut(for: "zoomOut")
-        .disabled(!hasDocument)
+        .disabled(!canUseViewCommands)
 
         Button("Actual Size") {
-            pdfManager?.resetZoom()
+            focusedTabManager?.resetZoom()
         }
         .keyboardShortcut(for: "actualSize")
-        .disabled(!hasDocument)
+        .disabled(!canUseViewCommands)
 
         Button("Zoom to Fit") {
             pdfManager?.requestFitOnce()
         }
         .keyboardShortcut(for: "zoomToFit")
         .disabled(!hasDocument)
+
+        Divider()
+
+        foldingMenuContent
 
         Divider()
 
@@ -360,7 +439,9 @@ struct PageFlowApp: App {
             focusedTabManager?.showingOutline.toggle()
         }
         .keyboardShortcut(for: "toggleSidebar")
-        .disabled(!hasDocument)
+        // Content-agnostic: the PDF sidebar and the Markdown outline bind the
+        // same per-tab uiState slot.
+        .disabled(!canUseViewCommands)
 
         Button(showingCommentsLabel) {
             focusedTabManager?.showingComments.toggle()
@@ -396,34 +477,28 @@ struct PageFlowApp: App {
         .disabled(abs(settingsManager.toolbarScale - SettingsManager.defaultToolbarScale) < 0.001)
 
         Toggle("Always on Top", isOn: Binding(
-            get: { focusedAlwaysOnTop?.wrappedValue ?? false },
-            set: { focusedAlwaysOnTop?.wrappedValue = $0 }
+            get: { focusedTabManager?.isAlwaysOnTop ?? false },
+            set: { focusedTabManager?.isAlwaysOnTop = $0 }
         ))
-        .disabled(focusedAlwaysOnTop == nil)
-
-        Divider()
-
-        Button("Enter Full Screen") {
-            NSApp.keyWindow?.toggleFullScreen(nil)
-        }
-        .keyboardShortcut(for: "enterFullScreen")
+        .disabled(focusedTabManager == nil)
     }
 
     // MARK: - Go Menu
 
     @ViewBuilder
     private var goMenuContent: some View {
+        // Content-routed (TabManager): PDF page history / Markdown scroll trail.
         Button("Back") {
-            pdfManager?.goBack()
+            focusedTabManager?.goBack()
         }
         .keyboardShortcut(for: "goBack")
-        .disabled(!(pdfManager?.canGoBack ?? false))
+        .disabled(!(focusedTabManager?.canGoBack ?? false))
 
         Button("Forward") {
-            pdfManager?.goForward()
+            focusedTabManager?.goForward()
         }
         .keyboardShortcut(for: "goForward")
-        .disabled(!(pdfManager?.canGoForward ?? false))
+        .disabled(!(focusedTabManager?.canGoForward ?? false))
 
         Divider()
 
@@ -455,12 +530,14 @@ struct PageFlowApp: App {
 
         Divider()
 
-        Button("Go to Page…") {
+        // Content-routed: the PDF dialog jumps to a page, the Markdown dialog
+        // to a line — same shortcut, same per-tab uiState slot.
+        Button(focusedTabManager?.goToDialogTitle ?? "Go to Page…") {
             guard let tabManager = focusedTabManager else { return }
             tabManager.showingGoToPage.toggle()
         }
         .keyboardShortcut(for: "goToPage")
-        .disabled(!hasDocument)
+        .disabled(!(focusedTabManager?.canShowGoToDialog ?? false))
     }
 
     // MARK: - Tools Menu
@@ -483,19 +560,20 @@ struct PageFlowApp: App {
             focusedTabManager?.activeAnnotationManager?.highlightSelection()
         }
         .keyboardShortcut(for: "highlight")
-        .disabled(!hasDocument)
+        .disabled(!pdfPermissions.annotate)
 
+        // A PDF annotation; Markdown's Underline is in the Format menu (both ⌘U by default).
         Button("Underline Selection") {
-            focusedTabManager?.activeAnnotationManager?.underlineSelection()
+            focusedTabManager?.underlineActiveSelection()
         }
         .keyboardShortcut(for: "underline")
-        .disabled(!hasDocument)
+        .disabled(!canUnderline)
 
         Button("Add Comment") {
             _ = focusedTabManager?.activeCommentManager?.addComment()
         }
         .keyboardShortcut(for: "comment")
-        .disabled(!hasDocument)
+        .disabled(!pdfPermissions.annotate)
 
         Divider()
 
@@ -514,13 +592,13 @@ struct PageFlowApp: App {
             pdfManager?.rotateClockwise()
         }
         .keyboardShortcut(for: "rotateClockwise")
-        .disabled(!hasDocument)
+        .disabled(!pdfPermissions.editPages)
 
         Button("Rotate Counter-Clockwise") {
             pdfManager?.rotateCounterClockwise()
         }
         .keyboardShortcut(for: "rotateCounterClockwise")
-        .disabled(!hasDocument)
+        .disabled(!pdfPermissions.editPages)
 
         Divider()
 
@@ -528,13 +606,13 @@ struct PageFlowApp: App {
             copyCurrentPageAsMarkdown()
         }
         .keyboardShortcut(for: "copyPageAsMarkdown")
-        .disabled(!hasDocument)
+        .disabled(!pdfPermissions.copy)
 
         Button("Copy Document as Markdown") {
             copyEntireDocumentAsMarkdown()
         }
         .keyboardShortcut(for: "copyDocumentAsMarkdown")
-        .disabled(!hasDocument)
+        .disabled(!pdfPermissions.copy)
 
         Menu("Save as Markdown") {
             Button("Current Page…") {
@@ -545,7 +623,7 @@ struct PageFlowApp: App {
                 saveAsMarkdownFile()
             }
         }
-        .disabled(!hasDocument)
+        .disabled(!pdfPermissions.copy)
     }
 
     // MARK: - Tab Menu
@@ -578,7 +656,7 @@ struct PageFlowApp: App {
             Button("Select Tab \(index)") {
                 focusedTabManager?.selectTabByIndex(index - 1)
             }
-            .keyboardShortcut(KeyEquivalent(Character("\(index)")), modifiers: .command)
+            .keyboardShortcut(for: ShortcutCatalog.selectTabID(index))
             .disabled(index > (focusedTabManager?.tabCount ?? 0))
         }
     }
@@ -643,67 +721,42 @@ struct PageFlowApp: App {
     }
 
     private func exportMarkdown(scope: ExportScope) {
-        guard let document = pdfManager?.document else { return }
-
-        let markdown = MarkdownExporter.export(scope: scope, document: document, comments: comments)
-        guard !markdown.isEmpty else { return }
-
-        MarkdownExporter.copyToClipboard(markdown)
+        pdfManager?.copyMarkdown(scope: scope, comments: comments)
     }
 
     private func savePageAsMarkdownFile() {
-        guard let manager = pdfManager,
-              let document = manager.document else { return }
-
+        guard let manager = pdfManager, manager.permissions.copy else { return }
         let pageIndex = manager.currentPageIndex
-        let markdown = MarkdownExporter.export(
-            scope: .currentPage(pageIndex),
-            document: document,
-            comments: comments
-        )
-        guard !markdown.isEmpty else { return }
-
         let filename = manager.documentURL?.deletingPathExtension().lastPathComponent ?? "document"
-
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = "\(filename)-page\(pageIndex + 1).md"
-        panel.canCreateDirectories = true
-
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-            do {
-                try markdown.write(to: url, atomically: true, encoding: .utf8)
-            } catch {
-                self.showAlert(message: "Failed to save: \(error.localizedDescription)")
-            }
-        }
+        saveMarkdownFile(scope: .currentPage(pageIndex), filename: "\(filename)-page\(pageIndex + 1).md")
     }
 
     private func saveAsMarkdownFile() {
-        guard let manager = pdfManager,
-              let document = manager.document else { return }
-
-        let markdown = MarkdownExporter.export(
-            scope: .entireDocument,
-            document: document,
-            comments: comments
-        )
-        guard !markdown.isEmpty else { return }
-
+        guard let manager = pdfManager, manager.permissions.copy else { return }
         let filename = manager.documentURL?.deletingPathExtension().lastPathComponent ?? "document"
+        saveMarkdownFile(scope: .entireDocument, filename: "\(filename).md")
+    }
 
+    private func saveMarkdownFile(scope: ExportScope, filename: String) {
+        guard let manager = pdfManager, let document = manager.document, manager.permissions.copy else { return }
+        let revision = manager.closeRevision
+        let requestedComments = comments
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = "\(filename).md"
+        panel.nameFieldStringValue = filename
         panel.canCreateDirectories = true
-
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            do {
-                try markdown.write(to: url, atomically: true, encoding: .utf8)
-            } catch {
-                self.showAlert(message: "Failed to save: \(error.localizedDescription)")
+            guard manager.document === document, manager.closeRevision == revision else {
+                self.showAlert(message: "The PDF changed while choosing an export location. Please export it again.")
+                return
+            }
+            manager.exportMarkdown(scope: scope, comments: requestedComments) { markdown in
+                do {
+                    try markdown.write(to: url, atomically: true, encoding: .utf8)
+                } catch {
+                    self.showAlert(message: "Failed to save: \(error.localizedDescription)")
+                }
             }
         }
     }
