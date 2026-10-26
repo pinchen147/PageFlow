@@ -89,23 +89,30 @@ public struct ImageEmbedReference: Sendable {
 
 /// Caches images returned by an ``EmbeddedImageProvider``. The cache
 /// invalidates when the provider's fingerprint changes, so the engine
-/// stays correct even when the embedder swaps out its data source.
+/// stays correct even when the embedder swaps out its data source. Values are
+/// weak: the provider and styled document own decoded pixels, so this reuse
+/// index cannot defeat provider eviction or retain a closed document's images.
 final class EmbeddedImageCache {
     static let shared = EmbeddedImageCache()
-    private init() {}
+    private final class Entry {
+        weak var image: NSImage?
+        init(_ image: NSImage) { self.image = image }
+    }
 
-    private var cache: [String: NSImage] = [:]
+    private init() { cache.countLimit = 256 }
+
+    private let cache = NSCache<NSString, Entry>()
     private var lastFingerprint: AnyHashable?
 
     func image(for reference: ImageEmbedReference, services: MarkdownEditorServices) -> NSImage? {
         let currentFingerprint = services.images.fingerprint()
         if currentFingerprint != lastFingerprint {
-            cache.removeAll()
+            cache.removeAllObjects()
             lastFingerprint = currentFingerprint
         }
 
         let cacheKey = reference.nodeID?.uuidString ?? reference.name
-        if let cached = cache[cacheKey] {
+        if let cached = cache.object(forKey: cacheKey as NSString)?.image {
             return cached
         }
 
@@ -113,7 +120,7 @@ final class EmbeddedImageCache {
             return nil
         }
 
-        cache[cacheKey] = image
+        cache.setObject(Entry(image), forKey: cacheKey as NSString)
         return image
     }
 }

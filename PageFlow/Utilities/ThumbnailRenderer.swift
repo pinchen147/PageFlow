@@ -30,24 +30,28 @@ final class ThumbnailRenderer {
     }
 
     /// Rasterizes `page` at `size` on a background queue. Returns `nil` if the
-    /// calling task is cancelled before a render slot becomes available.
+    /// calling task is cancelled while waiting for or rendering the image.
     func render(page: PDFPage, size: CGSize, box: PDFDisplayBox) async -> NSImage? {
-        await gate.wait()
-        defer { gate.signalAfterUse() }
+        guard await gate.wait() else { return nil }
 
         // The cell scrolled away (or its page changed) while we waited for a
         // slot — skip the work entirely.
-        if Task.isCancelled { return nil }
+        if Task.isCancelled {
+            await gate.signal()
+            return nil
+        }
 
         // PDFPage isn't Sendable; we only read it off-main for a thumbnail
         // (thread-safe per WWDC17 "Introducing PDFKit"), so carry it across the
         // render-queue boundary in an unchecked box.
         let request = ThumbnailRequest(page: page, size: size, box: box)
-        return await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in
+        let image = await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in
             queue.async {
                 continuation.resume(returning: request.page.thumbnail(of: request.size, for: request.box))
             }
         }
+        await gate.signal()
+        return Task.isCancelled ? nil : image
     }
 }
 
@@ -65,30 +69,45 @@ private struct ThumbnailRequest: @unchecked Sendable {
 /// concurrency never causes thread explosion.
 actor AsyncSemaphore {
     private var available: Int
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Bool, Never>)] = []
 
     init(value: Int) {
         available = max(0, value)
     }
 
-    func wait() async {
+    /// Returns true only when the caller owns a permit. Cancellation removes
+    /// queued work immediately, releasing its captured page even if all active
+    /// rasterizations are slow. A canceled waiter must not signal a permit.
+    func wait() async -> Bool {
+        guard !Task.isCancelled else { return false }
         if available > 0 {
             available -= 1
-            return
+            return true
         }
-        await withCheckedContinuation { waiters.append($0) }
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume(returning: false)
+                } else {
+                    waiters.append((id, continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
+        }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        waiters.remove(at: index).continuation.resume(returning: false)
     }
 
     func signal() {
         if waiters.isEmpty {
             available += 1
         } else {
-            waiters.removeFirst().resume()
+            waiters.removeFirst().continuation.resume(returning: true)
         }
-    }
-
-    /// Fire-and-forget signal usable from a synchronous `defer`.
-    nonisolated func signalAfterUse() {
-        Task { await signal() }
     }
 }
