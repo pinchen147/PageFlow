@@ -52,7 +52,7 @@ Every tool stays out of sight until you reach for it.
 
 ## Install
 
-Download the [2.0 build 17 DMG containing the signed, notarized app](https://github.com/pinchen147/PageFlow/releases/download/v2.0/PageFlow-2.0-build17.dmg), or visit [pageflow.pinchen.me](https://pageflow.pinchen.me).
+Download the [2.0 build 18 DMG containing the signed, notarized app](https://github.com/pinchen147/PageFlow/releases/download/v2.0/PageFlow-2.0-build18.dmg), or visit [pageflow.pinchen.me](https://pageflow.pinchen.me).
 
 For a local unsigned build with Xcode installed:
 

@@ -35,4 +35,25 @@ struct ImageDestinationTests {
     func providerGetsTheDecodedDestination(_ source: String, _ expected: String) {
         #expect(requestedName(for: source) == expected)
     }
+
+    @MainActor
+    @Test("image styling releases decoded images when their owners release them",
+          arguments: ["![image](lifetime.png)", "![[lifetime.png]]"])
+    func styledImagesFollowOwnerLifetime(_ source: String) throws {
+        _ = NSApplication.shared
+        weak var releasedImage: NSImage?
+        try autoreleasepool {
+            let image = NSImage(size: NSSize(width: 32, height: 32))
+            releasedImage = image
+            var configuration = MarkdownEditorConfiguration.default
+            configuration.services.images = StubImageNames(["lifetime.png": image])
+            let styled = MarkdownStyler.styleAttributes(
+                text: source, fontName: NSFont.systemFont(ofSize: 14).fontName, fontSize: 14,
+                caretLocation: -1, activeTokenIndices: [], configuration: configuration
+            )
+            try #require(styled.contains { $0.attributes[.renderedBlockImage] as? NSImage === image })
+        }
+        #expect(releasedImage == nil, "A process-global cache must not keep a closed note's images alive")
+    }
+
 }

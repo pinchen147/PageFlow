@@ -22,8 +22,13 @@ import MarkdownEngine
 /// Defaults match the Nodes app's look: opaque light/dark code-block
 /// backgrounds and an `SF Mono → Menlo → system monospace` font chain.
 public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendable {
-    private let lightHighlighter: Highlighter?
-    private let darkHighlighter: Highlighter?
+    private let lightTheme: String
+    private let darkTheme: String
+    // Prose and unlabeled fences need only font/background styling. Initialize
+    // one JavaScript engine when a named language first needs syntax colors.
+    // The same lock serializes its use and the mutable language/cache state.
+    private let renderingLock = NSLock()
+    private lazy var renderer = Self.makeRenderer(lightTheme: lightTheme, darkTheme: darkTheme)
     private let background: NSColor
     private let preferredFontNames: [String]
 
@@ -46,8 +51,8 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         darkBackground: NSColor? = NSColor(calibratedWhite: 0.13, alpha: 1.0),
         preferredFontNames: [String] = ["SF Mono", "Menlo"]
     ) {
-        self.lightHighlighter = Self.makeHighlighter(theme: lightTheme)
-        self.darkHighlighter = Self.makeHighlighter(theme: darkTheme)
+        self.lightTheme = lightTheme
+        self.darkTheme = darkTheme
         self.background = Self.dynamic(light: lightBackground ?? .clear, dark: darkBackground ?? .clear)
         self.preferredFontNames = preferredFontNames
         highlightCache.countLimit = 256
@@ -58,6 +63,8 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
 
     /// Drops the internal highlight cache.
     public func clearCache() {
+        renderingLock.lock()
+        defer { renderingLock.unlock() }
         highlightCache.removeAllObjects()
         failedCache.removeAllObjects()
     }
@@ -79,13 +86,15 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
     public func backgroundColor() -> NSColor { background }
 
     public func highlight(code: String, language: String?) -> NSAttributedString? {
-        guard let lightHighlighter else { return nil }
         // Colours only for a language the fence names and highlight.js knows.
         // Never auto-detect: it runs every grammar over the block (tens of
         // milliseconds per keystroke while the caret is inside) and paints an
         // unlabeled or `mermaid` block in a random language's colours.
         guard let language = language?.lowercased().trimmingCharacters(in: .whitespaces),
-              !language.isEmpty, !unsupportedLanguages.contains(language) else { return nil }
+              !language.isEmpty else { return nil }
+        renderingLock.lock()
+        defer { renderingLock.unlock() }
+        guard !unsupportedLanguages.contains(language) else { return nil }
         // NSString compares literal source units; Swift String hashing treats
         // canonically equivalent spellings as equal even when their ranges differ.
         let cacheKey = (language + "\u{0}" + code) as NSString
@@ -93,13 +102,16 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         if let cached = highlightCache.object(forKey: cacheKey) { return cached }
         if failedCache.object(forKey: cacheKey) != nil { return nil }
 
-        guard let light = lightHighlighter.highlight(code, as: language) else {
+        guard let renderer else { return nil }
+        renderer.engine.theme = renderer.light
+        guard let light = renderer.engine.highlight(code, as: language) else {
             // Unknown to highlight.js: plain code styling from now on, no retry.
             unsupportedLanguages.insert(language)
             failedCache.setObject(NSNumber(value: true), forKey: cacheKey, cost: code.utf16.count)
             return nil
         }
-        let dark = darkHighlighter?.highlight(code, as: language) ?? light
+        renderer.engine.theme = renderer.dark
+        let dark = renderer.engine.highlight(code, as: language) ?? light
         let result = Self.dynamicColours(light: light, dark: dark)
         highlightCache.setObject(result, forKey: cacheKey, cost: code.utf16.count)
         return result
@@ -131,9 +143,15 @@ public final class HighlighterSwiftBridge: SyntaxHighlighter, @unchecked Sendabl
         }
     }
 
-    private static func makeHighlighter(theme: String) -> Highlighter? {
-        guard let highlighter = Highlighter() else { return nil }
-        _ = highlighter.setTheme(theme)
-        return highlighter
+    private static func makeRenderer(lightTheme: String, darkTheme: String)
+        -> (engine: Highlighter, light: Theme, dark: Theme)? {
+        guard let engine = Highlighter(), let fallback = engine.theme else { return nil }
+        _ = engine.setTheme(lightTheme)
+        let light = engine.theme ?? fallback
+        // Each missing theme previously fell back to a fresh engine's default.
+        engine.theme = fallback
+        _ = engine.setTheme(darkTheme)
+        let dark = engine.theme ?? fallback
+        return (engine, light, dark)
     }
 }
