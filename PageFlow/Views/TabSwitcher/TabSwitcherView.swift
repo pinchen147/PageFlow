@@ -31,6 +31,15 @@ enum TabSwitcherMetrics {
     static let minListHeight: CGFloat = 120
 }
 
+/// Collects every open row's frame (in the list's coordinate space) so the drag
+/// resolver can hit-test the cursor into a drop target.
+private struct TabRowFrameKey: PreferenceKey {
+    static var defaultValue: [TabRowFrame] = []
+    static func reduce(value: inout [TabRowFrame], nextValue: () -> [TabRowFrame]) {
+        value += nextValue()
+    }
+}
+
 struct TabSwitcherView: View {
     let groups: [WindowTabGroup]
     let closed: [ClosedTabStore.Record]
@@ -40,6 +49,10 @@ struct TabSwitcherView: View {
     let onJump: (UUID, TabManager) -> Void
     let onReopen: (ClosedTabStore.Record) -> Void
     let onClose: () -> Void
+    /// Commit a press-and-hold reorder: move `tabID` out of `from` into `to` at
+    /// `toIndex`. `from === to` is an in-window reorder; different managers are a
+    /// cross-window move. The controller applies it and refreshes the list.
+    let onReorder: (_ tabID: UUID, _ from: TabManager, _ to: TabManager, _ toIndex: Int) -> Void
 
     @State private var query = ""
     @State private var selection: RowID?
@@ -47,6 +60,14 @@ struct TabSwitcherView: View {
     /// cursor visible), false for hover — so moving the mouse never yanks the
     /// list around under the pointer.
     @State private var scrollToSelection = true
+    /// In-flight press-and-hold reorder drag (nil when not dragging).
+    @State private var reorder: TabReorderDrag?
+    /// Live open-row frames in `listSpace`, collected via a preference — the
+    /// drop-target resolver reads these.
+    @State private var rowFrames: [TabRowFrame] = []
+
+    /// Named coordinate space the row frames and the drag location share.
+    private static let listSpace = "tabSwitcherList"
 
     private enum RowID: Hashable {
         case open(UUID)
@@ -62,21 +83,27 @@ struct TabSwitcherView: View {
         .frame(width: TabSwitcherMetrics.panelWidth)
         .pageFlowLiquidGlassPanel(.tabSwitcher)
         .padding(TabSwitcherMetrics.shadowPadding)
-        .onAppear { selection = orderedRowIDs.first }
+        .onAppear { selection = defaultSelection }
         .onChange(of: query) { _, _ in
             scrollToSelection = true
-            selection = orderedRowIDs.first
+            selection = defaultSelection
         }
     }
+
+    /// Groups that still have tabs. A cross-window move of the last tab can leave
+    /// a transiently-empty source group in the snapshot (the window closes
+    /// asynchronously); excluding it keeps headers/height/multi-window logic
+    /// correct until the next snapshot.
+    private var openGroups: [WindowTabGroup] { groups.filter { !$0.tabs.isEmpty } }
 
     /// The list's pinned height: content sized from the unfiltered set (so the
     /// panel doesn't resize while typing), clamped to the controller's budget.
     /// Derived from the same metrics the rows render with — no estimate drift.
     private var listHeight: CGFloat {
-        let openCount = groups.reduce(0) { $0 + $1.tabs.count }
+        let openCount = openGroups.reduce(0) { $0 + $1.tabs.count }
         let closedCount = closed.count
         let sectionCount = (openCount > 0 ? 1 : 0) + (closedCount > 0 ? 1 : 0)
-        let windowHeaderCount = groups.count > 1 ? groups.count : 0
+        let windowHeaderCount = openGroups.count > 1 ? openGroups.count : 0
         let rowCount = openCount + closedCount
         let elementCount = sectionCount + windowHeaderCount + rowCount
         let content = CGFloat(rowCount) * TabSwitcherMetrics.rowHeight
@@ -125,6 +152,8 @@ struct TabSwitcherView: View {
                 .padding(.horizontal, DesignTokens.spacingSM)
                 .padding(.vertical, DesignTokens.spacingXS)
             }
+            .coordinateSpace(name: Self.listSpace)
+            .onPreferenceChange(TabRowFrameKey.self) { rowFrames = $0 }
             .frame(height: listHeight)
             .onChange(of: selection) { _, newValue in
                 guard let newValue, scrollToSelection else { return }
@@ -141,22 +170,103 @@ struct TabSwitcherView: View {
         if !entries.isEmpty {
             sectionHeader("Open Tabs")
             ForEach(entries, id: \.group.id) { entry in
-                if groups.count > 1 {
+                if openGroups.count > 1 {
                     windowHeader(for: entry.group)
                 }
+                let groupID = entry.group.id
                 ForEach(entry.tabs) { tab in
-                    row(
-                        id: .open(tab.id),
-                        icon: "doc.text",
-                        title: tab.displayTitle,
-                        subtitle: Self.prettyPath(tab.documentURL),
-                        isDirty: entry.group.dirtyTabIDs.contains(tab.id),
-                        isActiveInWindow: tab.id == entry.group.activeTabID,
-                        action: { onJump(tab.id, entry.group.tabManager) }
-                    )
+                    let realIndex = entry.group.tabs.firstIndex { $0.id == tab.id } ?? 0
+                    if isDropSlot(groupID, realIndex) { dropIndicator }
+                    openTabRow(entry: entry, tab: tab, realIndex: realIndex)
                 }
+                if isDropSlot(groupID, entry.group.tabs.count) { dropIndicator }
             }
         }
+    }
+
+    // MARK: - Reorder (press-and-hold)
+
+    @ViewBuilder
+    private func openTabRow(entry: (group: WindowTabGroup, tabs: [TabModel]), tab: TabModel, realIndex: Int) -> some View {
+        let groupID = entry.group.id
+        let isLifted = reorder?.tabID == tab.id
+        row(
+            id: .open(tab.id),
+            icon: Self.contentIcon(for: entry.group.tabManager.contentKind(for: tab.id)),
+            title: tab.displayTitle,
+            subtitle: Self.prettyPath(tab.documentURL),
+            isDirty: entry.group.dirtyTabIDs.contains(tab.id),
+            isActiveInWindow: tab.id == entry.group.activeTabID,
+            action: { onJump(tab.id, entry.group.tabManager) }
+        )
+        .background(frameReporter(groupID: groupID, tabID: tab.id, index: realIndex))
+        .opacity(isLifted ? 0.92 : 1)
+        .scaleEffect(isLifted ? 1.02 : 1)
+        .offset(y: isLifted ? (reorder?.translationY ?? 0) : 0)
+        .shadow(color: .black.opacity(isLifted ? 0.22 : 0), radius: isLifted ? 8 : 0, y: isLifted ? 4 : 0)
+        .zIndex(isLifted ? 1 : 0)
+        // Reorder only when unfiltered — a filtered list is a subset and its
+        // indices don't map to the real order. `.subviews` disables THIS gesture
+        // while leaving the row's inner tap (jump) working; `.none` would mask the
+        // tap too.
+        .gesture(reorderGesture(groupID: groupID, tabID: tab.id),
+                 including: trimmedQuery.isEmpty ? .all : .subviews)
+    }
+
+    private var dropIndicator: some View {
+        Capsule()
+            .fill(DesignTokens.glassTextPrimary.opacity(0.55))
+            .frame(height: 2)
+            .padding(.horizontal, DesignTokens.spacingMD)
+    }
+
+    private func isDropSlot(_ groupID: ObjectIdentifier, _ index: Int) -> Bool {
+        reorder?.target == TabDropTarget(groupID: groupID, index: index)
+    }
+
+    private func frameReporter(groupID: ObjectIdentifier, tabID: UUID, index: Int) -> some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: TabRowFrameKey.self,
+                value: [TabRowFrame(groupID: groupID, tabID: tabID, index: index,
+                                    frame: proxy.frame(in: .named(Self.listSpace)))]
+            )
+        }
+    }
+
+    private func reorderGesture(groupID: ObjectIdentifier, tabID: UUID) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.25)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.listSpace)))
+            .onChanged { value in
+                switch value {
+                case .first(true):
+                    // Press-and-hold completed → lift the row.
+                    if reorder == nil {
+                        reorder = TabReorderDrag(tabID: tabID, sourceGroupID: groupID)
+                        scrollToSelection = false
+                        selection = .open(tabID)
+                    }
+                case .second(true, let drag):
+                    guard var current = reorder, let drag else { return }
+                    current.translationY = drag.translation.height
+                    current.target = TabSwitcherReorderGeometry.dropTarget(at: drag.location, frames: rowFrames)
+                    reorder = current
+                default:
+                    break
+                }
+            }
+            .onEnded { _ in commitReorder() }
+    }
+
+    private func commitReorder() {
+        defer { withAnimation(.easeOut(duration: 0.15)) { reorder = nil } }
+        guard let drag = reorder, let target = drag.target,
+              let source = groups.first(where: { $0.id == drag.sourceGroupID }),
+              let dest = groups.first(where: { $0.id == target.groupID }),
+              source.tabs.contains(where: { $0.id == drag.tabID }) else { return }
+        // commitTabReorder / cross-window moveTab both no-op a same-slot move, so
+        // no explicit no-op guard is needed here.
+        onReorder(drag.tabID, source.tabManager, dest.tabManager, target.index)
     }
 
     @ViewBuilder
@@ -257,6 +367,7 @@ struct TabSwitcherView: View {
             }
         }
         .onTapGesture(perform: action)
+        .pageFlowClickCursor()
         .id(id)
     }
 
@@ -282,7 +393,7 @@ struct TabSwitcherView: View {
     }
 
     private var filteredGroups: [(group: WindowTabGroup, tabs: [TabModel])] {
-        groups.compactMap { group in
+        openGroups.compactMap { group in
             let tabs = group.tabs.filter { matches([$0.displayTitle, $0.documentURL?.path]) }
             return tabs.isEmpty ? nil : (group, tabs)
         }
@@ -300,6 +411,23 @@ struct TabSwitcherView: View {
     }
 
     // MARK: - Selection
+
+    /// The tab the user is on: the frontmost window's active tab.
+    static func currentTabID(in groups: [WindowTabGroup]) -> UUID? {
+        guard let group = groups.first(where: \.isFrontmost),
+              let active = group.activeTabID,
+              group.tabs.contains(where: { $0.id == active }) else { return nil }
+        return active
+    }
+
+    /// Where the highlight starts: on the tab the user is on, so Return stays
+    /// put and Up/Down step from it; on the top match once they type.
+    private var defaultSelection: RowID? {
+        if trimmedQuery.isEmpty, let current = Self.currentTabID(in: openGroups) {
+            return .open(current)
+        }
+        return orderedRowIDs.first
+    }
 
     private func moveSelection(by delta: Int) {
         scrollToSelection = true
@@ -340,6 +468,14 @@ struct TabSwitcherView: View {
     private static func prettyPath(_ url: URL?) -> String? {
         guard let url else { return nil }
         return (url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath
+    }
+
+    /// The row icon that distinguishes content type in the tab search, keyed off
+    /// the session's real discriminator (`TabSession.contentKind`) — never the URL
+    /// extension, so untitled Markdown tabs get the right icon too. `nil` (tab
+    /// vanished mid-render) falls back to the plain page.
+    private static func contentIcon(for kind: ContentKind?) -> String {
+        (kind ?? .pdf).tabIconSystemName
     }
 }
 

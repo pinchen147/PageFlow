@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Carbon.HIToolbox
+import MarkdownEngine
 
 // MARK: - View Extension for Dynamic Shortcuts
 
@@ -15,7 +16,13 @@ extension View {
     /// Reads from user settings, falls back to defaults.
     @ViewBuilder
     func keyboardShortcut(for action: String) -> some View {
-        if let (key, modifiers) = ShortcutModel.current(for: action).asKeyboardShortcut {
+        keyboardShortcut(ShortcutModel.current(for: action))
+    }
+
+    /// Applies `shortcut`, or none.
+    @ViewBuilder
+    func keyboardShortcut(_ shortcut: ShortcutModel?) -> some View {
+        if let (key, modifiers) = shortcut?.asKeyboardShortcut {
             self.keyboardShortcut(key, modifiers: modifiers)
         } else {
             self
@@ -40,9 +47,26 @@ struct ShortcutModel: Codable, Equatable {
         self.control = control
     }
 
+    /// No key: the command is left without a shortcut.
+    static let none = ShortcutModel(key: "", command: false)
+
+    var isNone: Bool { key.isEmpty }
+
+    /// F1…F12.
+    var isFunctionKey: Bool { Self.functionKeyNumber(key) != nil }
+
+    var hasModifier: Bool { command || shift || option || control }
+
+    private static func functionKeyNumber(_ key: String) -> Int? {
+        let lower = key.lowercased()
+        guard lower.hasPrefix("f"), let number = Int(lower.dropFirst()), (1...12).contains(number) else { return nil }
+        return number
+    }
+
     // MARK: - Display String
 
     var displayString: String {
+        guard !isNone else { return "None" }
         var parts: [String] = []
         if control { parts.append("⌃") }
         if option { parts.append("⌥") }
@@ -75,9 +99,22 @@ struct ShortcutModel: Codable, Equatable {
         case "pageup": return .pageUp
         case "pagedown": return .pageDown
         default:
+            if let number = Self.functionKeyNumber(key), let scalar = UnicodeScalar(NSF1FunctionKey + number - 1) {
+                return KeyEquivalent(Character(scalar))
+            }
             guard let char = key.lowercased().first else { return nil }
             return KeyEquivalent(char)
         }
+    }
+
+    /// The same chord for the Markdown editor's own key handling.
+    var editorChord: MarkdownKeyChord? {
+        guard !isNone else { return nil }
+        let named: [String: String] = ["↑": "up", "↓": "down", "←": "left", "→": "right", "⎋": "escape", "esc": "escape",
+                                       "↩": "return", "enter": "return", "⇥": "tab", "⌫": "delete", "backspace": "delete",
+                                       " ": "space"]
+        let lower = key.lowercased()
+        return MarkdownKeyChord(named[lower] ?? lower, command: command, shift: shift, option: option, control: control)
     }
 
     private var modifiers: SwiftUI.EventModifiers {
@@ -171,18 +208,27 @@ struct ShortcutModel: Codable, Equatable {
 
     // MARK: - Create from NSEvent
 
+    /// F1…F12 by key code.
+    private static let functionKeys: [UInt16: Int] = [
+        122: 1, 120: 2, 99: 3, 118: 4, 96: 5, 97: 6, 98: 7, 100: 8, 101: 9, 109: 10, 103: 11, 111: 12,
+    ]
+
     static func from(event: NSEvent) -> ShortcutModel? {
-        guard let characters = event.charactersIgnoringModifiers?.lowercased(),
+        // The key's own character, as it types with no modifiers: ⇧⌘8 is "8"
+        // with Shift (charactersIgnoringModifiers would say "*").
+        guard let characters = (event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers)?.lowercased(),
               !characters.isEmpty else { return nil }
 
         let flags = event.modifierFlags
         let hasModifier = flags.contains(.command) || flags.contains(.option) ||
                           flags.contains(.control) || flags.contains(.shift)
+        let functionKey = functionKeys[event.keyCode]
 
-        guard hasModifier else { return nil }
+        guard hasModifier || functionKey != nil else { return nil }
 
         let key: String
         switch event.keyCode {
+        case _ where functionKey != nil: key = "F" + String(functionKey ?? 0)
         case UInt16(kVK_UpArrow): key = "↑"
         case UInt16(kVK_DownArrow): key = "↓"
         case UInt16(kVK_LeftArrow): key = "←"

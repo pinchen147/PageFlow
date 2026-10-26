@@ -42,35 +42,6 @@ private struct VisibilityReporter: View {
     }
 }
 
-private final class ThumbnailImageCache {
-    static let shared = ThumbnailImageCache()
-
-    private let cache = NSCache<NSString, NSImage>()
-
-    private init() {
-        cache.countLimit = 400
-        // Ceiling on resident thumbnail memory regardless of count, so a long
-        // session over large/complex pages can't grow the cache without bound.
-        cache.totalCostLimit = 256 * 1024 * 1024
-    }
-
-    func image(for key: String) -> NSImage? {
-        cache.object(forKey: key as NSString)
-    }
-
-    func insert(_ image: NSImage, for key: String) {
-        cache.setObject(image, forKey: key as NSString, cost: Self.byteCost(of: image))
-    }
-
-    /// Approximate decoded footprint in bytes (4 bytes per device pixel).
-    private static func byteCost(of image: NSImage) -> Int {
-        if let rep = image.representations.first {
-            return rep.pixelsWide * rep.pixelsHigh * 4
-        }
-        return Int(image.size.width * image.size.height * 4)
-    }
-}
-
 /// The cache key for a page thumbnail. Shared by the grid cells and the drag
 /// preview so both read and write the same cached image.
 private func makeThumbnailCacheKey(documentID: ObjectIdentifier, pageIndex: Int, revision: PageThumbnailRevision) -> String {
@@ -226,7 +197,7 @@ struct ThumbnailGridView: View {
     @State private var reorderState = ThumbnailReorderState()
 
     // Custom drag preview (system preview is invisible, we draw our own)
-    @State private var dragPreviewImage: NSImage?
+    @State private var dragPreview = ThumbnailDragPreview()
     @State private var dragPreviewPosition: CGPoint = .zero
 
     // Autoscroll
@@ -268,7 +239,7 @@ struct ThumbnailGridView: View {
                             }
                             .modifier(DragDropModifier(
                                 index: index,
-                                isEditing: isEditing,
+                                isEditing: isEditing && pdfManager.permissions.editPages,
                                 reorderState: $reorderState,
                                 onDragStart: { captureDragPreview(pageIndex: index) },
                                 onDrop: { commitReorder() },
@@ -306,6 +277,7 @@ struct ThumbnailGridView: View {
             .onChange(of: pdfManager.currentPageIndex) { oldIndex, newIndex in
                 keepCurrentPageVisible(from: oldIndex, to: newIndex, proxy: proxy)
             }
+            .onDisappear { clearDragPreview() }
             .onChange(of: isEditing) { _, editing in
                 if !editing {
                     resetDragState()
@@ -322,7 +294,7 @@ struct ThumbnailGridView: View {
             }
             // Custom drag preview overlay - disappears instantly on drop
             .overlay {
-                if let image = dragPreviewImage {
+                if let image = dragPreview.image {
                     Image(nsImage: image)
                         .resizable()
                         .frame(width: DesignTokens.thumbnailWidth, height: DesignTokens.thumbnailHeight)
@@ -361,23 +333,18 @@ struct ThumbnailGridView: View {
         // cached — reuse it for instant, main-thread-free drag pickup.
         let revision = pdfManager.thumbnailRevision(for: pageIndex)
         let key = makeThumbnailCacheKey(documentID: ObjectIdentifier(document), pageIndex: pageIndex, revision: revision)
-        if let cached = ThumbnailImageCache.shared.image(for: key) {
-            dragPreviewImage = cached
-            return
-        }
-
-        // Cold cache (rare): render off the main thread, show the preview when ready.
         let targetSize = CGSize(width: DesignTokens.thumbnailRenderWidth,
                                 height: DesignTokens.thumbnailRenderHeight)
-        Task {
-            guard let image = await ThumbnailRenderer.shared.render(page: page, size: targetSize, box: .mediaBox) else { return }
-            ThumbnailImageCache.shared.insert(image, for: key)
-            dragPreviewImage = image
+        dragPreview.show(cached: ThumbnailImageCache.shared.image(for: key, document: document)) { [weak document] in
+            guard let image = await ThumbnailRenderer.shared.render(page: page, size: targetSize, box: .mediaBox),
+                  let document else { return nil }
+            ThumbnailImageCache.shared.insert(image, for: key, document: document)
+            return image
         }
     }
 
     private func clearDragPreview() {
-        dragPreviewImage = nil
+        dragPreview.clear()
         autoScrollManager.stopAll()
     }
 
@@ -530,9 +497,16 @@ private struct ThumbnailCellView: View {
             pdfManager.pushNavigationState()
             pdfManager.goToPage(pageIndex)
         }
+        .pointerStyle(isDragging ? .grabActive : (isEditing ? .grabIdle : .link))
         .contextMenu { contextMenu }
         .task(id: thumbnailLoadID(revision: thumbnailRevision)) {
             await loadThumbnail(revision: thumbnailRevision)
+        }
+        .onDisappear {
+            // LazyVStack can preserve offscreen cell state. Let the bounded
+            // cache own reuse instead of keeping every visited image alive.
+            thumbnailImage = nil
+            loadedThumbnailKey = nil
         }
     }
 
@@ -571,6 +545,7 @@ private struct ThumbnailCellView: View {
 
     @MainActor
     private func loadThumbnail(revision: PageThumbnailRevision) async {
+        weak var owner = pdfManager.document
         guard let key = thumbnailCacheKey(revision: revision) else {
             thumbnailImage = nil
             loadedThumbnailKey = nil
@@ -581,7 +556,7 @@ private struct ThumbnailCellView: View {
             return
         }
 
-        if let cachedImage = ThumbnailImageCache.shared.image(for: key) {
+        if let document = owner, let cachedImage = ThumbnailImageCache.shared.image(for: key, document: document) {
             thumbnailImage = cachedImage
             loadedThumbnailKey = key
             return
@@ -599,8 +574,8 @@ private struct ThumbnailCellView: View {
                                 height: DesignTokens.thumbnailRenderHeight)
         let image = await ThumbnailRenderer.shared.render(page: page, size: targetSize, box: .mediaBox)
 
-        guard !Task.isCancelled, let image else { return }
-        ThumbnailImageCache.shared.insert(image, for: key)
+        guard !Task.isCancelled, let image, let document = owner else { return }
+        ThumbnailImageCache.shared.insert(image, for: key, document: document)
         thumbnailImage = image
         loadedThumbnailKey = key
     }
@@ -631,36 +606,42 @@ private struct ThumbnailCellView: View {
 
     @ViewBuilder
     private var contextMenu: some View {
+        let permissions = pdfManager.permissions
         if isEditing {
             Button { pdfManager.copyPage(at: pageIndex) } label: {
                 Label("Copy Page", systemImage: "doc.on.doc")
             }
+            .disabled(!permissions.copy)
             Button { _ = pdfManager.pastePage(after: pageIndex) } label: {
                 Label("Paste Page", systemImage: "doc.on.clipboard")
             }
-            .disabled(!pdfManager.canPaste)
+            .disabled(!permissions.editPages || !pdfManager.canPaste)
             Divider()
-            Button { rotatePage(clockwise: true) } label: {
-                Label("Rotate Clockwise", systemImage: "rotate.right")
+            Group {
+                Button { rotatePage(clockwise: true) } label: {
+                    Label("Rotate Clockwise", systemImage: "rotate.right")
+                }
+                Button { rotatePage(clockwise: false) } label: {
+                    Label("Rotate Counter-Clockwise", systemImage: "rotate.left")
+                }
+                Divider()
+                Button { pdfManager.duplicatePage(at: pageIndex) } label: {
+                    Label("Duplicate Page", systemImage: "doc.badge.plus")
+                }
             }
-            Button { rotatePage(clockwise: false) } label: {
-                Label("Rotate Counter-Clockwise", systemImage: "rotate.left")
-            }
-            Divider()
-            Button { pdfManager.duplicatePage(at: pageIndex) } label: {
-                Label("Duplicate Page", systemImage: "doc.badge.plus")
-            }
+            .disabled(!permissions.editPages)
             Divider()
             Button(role: .destructive) { pdfManager.deletePage(at: pageIndex) } label: {
                 Label("Delete Page", systemImage: "trash")
             }
-            .disabled(pdfManager.pageCount <= 1)
+            .disabled(!permissions.editPages || pdfManager.pageCount <= 1)
             Divider()
         }
 
         Button { copyPageAsMarkdown() } label: {
             Label("Copy Page as Markdown", systemImage: "doc.text")
         }
+        .disabled(!permissions.copy)
         Divider()
         Button { bookmarkManager.toggleBookmark(at: pageIndex) } label: {
             Label(isBookmarked ? "Remove Bookmark" : "Add Bookmark",
@@ -673,8 +654,6 @@ private struct ThumbnailCellView: View {
     }
 
     private func copyPageAsMarkdown() {
-        guard let document = pdfManager.document else { return }
-        let markdown = MarkdownExporter.export(scope: .currentPage(pageIndex), document: document)
-        MarkdownExporter.copyToClipboard(markdown)
+        pdfManager.copyMarkdown(scope: .currentPage(pageIndex))
     }
 }

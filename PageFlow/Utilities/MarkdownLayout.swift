@@ -17,7 +17,7 @@ import AppKit
 /// `PDFPage`; every PDFKit read lives in `MarkdownExporter`, which is the
 /// companion adapter. That seam is what lets these heuristics be unit-tested
 /// from synthetic `NSAttributedString` + position data, with no rendered PDF.
-enum MarkdownLayout {
+nonisolated enum MarkdownLayout {
     /// Geometry for one line on the page, keyed elsewhere by trimmed line text.
     /// PDF coordinates: `y` has 0 at the bottom of the page.
     struct LinePosition: Equatable {
@@ -97,7 +97,7 @@ enum MarkdownLayout {
                     inCodeBlock = false
                 }
                 for comment in comments {
-                    output.append("> \(comment.text)")
+                    output.append(quoteComment(comment.text))
                 }
             }
         }
@@ -108,7 +108,7 @@ enum MarkdownLayout {
 
         // Append unmatched comments at end
         for comment in unmatchedComments {
-            output.append("> \(comment.text)")
+            output.append(quoteComment(comment.text))
         }
 
         var result = cleanupOutput(output)
@@ -168,6 +168,15 @@ enum MarkdownLayout {
     }
 
     // MARK: - Comment-Line Mapping
+
+    /// Keep every paragraph inside the comment's blockquote, including blank
+    /// lines. PDF export uses LF regardless of the comment's newline spelling.
+    static func quoteComment(_ text: String) -> String {
+        text.replacingOccurrences(of: "\r\n", with: "\n")
+            .components(separatedBy: .newlines)
+            .map { "> " + $0 }
+            .joined(separator: "\n")
+    }
 
     private static func mapCommentsToLines(_ comments: [CommentModel], lines: [LineData]) -> (lineComments: [Int: [CommentModel]], unmatched: [CommentModel]) {
         var lineComments: [Int: [CommentModel]] = [:]

@@ -67,23 +67,12 @@ final class AnnotationManager {
         return undoManager
     }
 
-    // MARK: - Document Loading
+    // MARK: - Document Changes
 
-    /// Prepares the manager for a newly loaded document.
-    /// Clears stale selection state so existing annotations can be selected fresh.
-    /// - Parameter document: The PDFDocument that was loaded
-    func loadAnnotations(from document: PDFDocument) {
-        // Clear any stale selection from previous document
-        selectedAnnotation = nil
-
-        // Note: PDFKit automatically manages annotations on each PDFPage.
-        // We don't need to store them separately - they're already accessible
-        // via page.annotations and clickable via page.annotation(at:).
-        // This method ensures clean state when switching documents.
-    }
-
-    /// Clears all annotation state when document is closed.
-    func clearAnnotations() {
+    /// Clears the stale annotation selection when the loaded document changes.
+    /// PDFKit owns annotation storage (page.annotations / page.annotation(at:));
+    /// the selection is the only per-document state this manager keeps.
+    func resetSelection() {
         selectedAnnotation = nil
     }
 
@@ -113,34 +102,54 @@ final class AnnotationManager {
         color: NSColor,
         actionName: String
     ) {
-        guard let (selectionOptional, pageOptional) = selectionProvider?(),
-              let selectionCopy = selectionOptional?.copy() as? PDFSelection,
-              let page = pageOptional else {
-            return
+        guard let manager = pdfManager, manager.permissions.annotate, let document = manager.document,
+              let (selectionOptional, _) = selectionProvider?(),
+              let selection = selectionOptional?.copy() as? PDFSelection else { return }
+        let pages = selection.pages
+        guard !pages.isEmpty,
+              pages.allSatisfy({ $0.document === document && document.index(for: $0) != NSNotFound }) else { return }
+
+        // Prepare every page before mutating any of them: stale selections or unusable
+        // geometry cannot leave a partially applied cross-page command.
+        var rectsByPage: [ObjectIdentifier: [CGRect]] = [:]
+        for line in selection.selectionsByLine() {
+            for page in line.pages {
+                let rect = line.bounds(for: page)
+                guard !rect.isNull, !rect.isEmpty else { continue }
+                rectsByPage[ObjectIdentifier(page), default: []].append(rect)
+            }
         }
+        var additions: [(page: PDFPage, annotation: PDFAnnotation)] = []
+        for page in pages {
+            let rects = rectsByPage[ObjectIdentifier(page)] ?? []
+            guard let first = rects.first else { continue }
+            let bounds = rects.dropFirst().reduce(first) { $0.union($1) }
+            guard rects.allSatisfy(Self.isFinite), Self.isFinite(bounds) else { return }
 
-        let lineSelections = selectionCopy.selectionsByLine()
-        guard !lineSelections.isEmpty else { return }
-
-        let lineRects = lineSelections
-            .map { $0.bounds(for: page) }
-            .filter { !$0.isNull && !$0.isEmpty }
-        guard let firstRect = lineRects.first else { return }
-        let union = lineRects.dropFirst().reduce(firstRect) { partial, rect in
-            partial.union(rect)
+            let annotation = PDFAnnotation(bounds: bounds, forType: subtype, withProperties: nil)
+            annotation.markupType = markupType
+            annotation.color = color
+            annotation.quadrilateralPoints = buildQuadrilateralPoints(from: rects, relativeTo: bounds)
+            additions.append((page, annotation))
         }
-        guard union.width > 0, union.height > 0 else { return }
+        guard !additions.isEmpty else { return }
 
-        let annotation = PDFAnnotation(bounds: union, forType: subtype, withProperties: nil)
-        annotation.markupType = markupType
-        annotation.color = color
-        annotation.quadrilateralPoints = buildQuadrilateralPoints(from: lineRects, relativeTo: union)
+        // An explicit group is also needed when the host disables event grouping.
+        // Nested groups preserve a caller's larger operation without closing it.
+        let undoManager = getUndoManager(for: actionName)
+        undoManager?.beginUndoGrouping()
+        for addition in additions {
+            addition.page.addAnnotation(addition.annotation)
+            registerUndoAdd(addition.annotation, on: addition.page, actionName: actionName)
+            pdfManager?.noteVisibleEdit(on: addition.page)
+        }
+        undoManager?.setActionName(actionName)
+        undoManager?.endUndoGrouping()
+        selectedAnnotation = additions.last?.annotation
+    }
 
-        page.addAnnotation(annotation)
-        registerUndoAdd(annotation, on: page, actionName: actionName)
-
-        selectedAnnotation = annotation
-        pdfManager?.noteVisibleEdit(on: page)
+    private static func isFinite(_ rect: CGRect) -> Bool {
+        rect.origin.x.isFinite && rect.origin.y.isFinite && rect.width.isFinite && rect.height.isFinite
     }
 
     func removeSelectedAnnotation() {
@@ -149,23 +158,17 @@ final class AnnotationManager {
             return
         }
 
-        remove(annotation, from: page, registerRedo: true)
-        selectedAnnotation = nil
-        pdfManager?.isDirty = true
+        remove(annotation, from: page, actionName: "Remove Annotation")
     }
 
     func removeAnnotation(_ annotation: PDFAnnotation) {
         guard let page = annotation.page else { return }
 
-        remove(annotation, from: page, registerRedo: true)
-        if selectedAnnotation === annotation {
-            selectedAnnotation = nil
-        }
-        pdfManager?.isDirty = true
+        remove(annotation, from: page, actionName: "Remove Annotation")
     }
 
     func updateSelectedAnnotationColor(_ color: NSColor) {
-        guard let annotation = selectedAnnotation else { return }
+        guard pdfManager?.permissions.annotate == true, let annotation = selectedAnnotation else { return }
         let previousColor = annotation.color
         guard previousColor != color else { return }
 
@@ -189,6 +192,7 @@ final class AnnotationManager {
     }
 
     private func restoreAnnotationColor(_ annotation: PDFAnnotation, to color: NSColor) {
+        guard pdfManager?.permissions.annotate == true else { return }
         let currentColor = annotation.color
         annotation.color = color
         pdfManager?.noteVisibleEdit(on: annotation.page)
@@ -212,7 +216,7 @@ final class AnnotationManager {
         undoManager.registerUndo(withTarget: self) { [weak page] target in
             MainActor.assumeIsolated {
                 guard let page = page else { return }
-                target.remove(annotation, from: page, registerRedo: true)
+                target.remove(annotation, from: page, actionName: actionName)
             }
         }
         undoManager.setActionName(actionName)
@@ -221,35 +225,27 @@ final class AnnotationManager {
         #endif
     }
 
-    private func remove(_ annotation: PDFAnnotation, from page: PDFPage, registerRedo: Bool) {
+    private func remove(_ annotation: PDFAnnotation, from page: PDFPage, actionName: String) {
+        guard pdfManager?.permissions.annotate == true else { return }
         page.removeAnnotation(annotation)
-        pdfManager?.pageVersion += 1
-        pdfManager?.markThumbnailDirty(for: page)
+        if selectedAnnotation === annotation { selectedAnnotation = nil }
+        pdfManager?.noteVisibleEdit(on: page)
 
-        if registerRedo, let undoManager = getUndoManager(for: "Remove Annotation") {
+        if let undoManager = getUndoManager(for: actionName) {
             undoManager.registerUndo(withTarget: self) { [weak page] target in
                 MainActor.assumeIsolated {
                     guard let page = page else { return }
-                    target.reAdd(annotation, to: page)
+                    target.reAdd(annotation, to: page, actionName: actionName)
                 }
             }
-            undoManager.setActionName("Remove Annotation")
+            undoManager.setActionName(actionName)
         }
     }
 
-    private func reAdd(_ annotation: PDFAnnotation, to page: PDFPage) {
+    private func reAdd(_ annotation: PDFAnnotation, to page: PDFPage, actionName: String) {
+        guard pdfManager?.permissions.annotate == true else { return }
         page.addAnnotation(annotation)
         pdfManager?.noteVisibleEdit(on: page)
-
-        // Register undo to enable infinite undo/redo cycle
-        if let undoManager = getUndoManager(for: "Add Annotation") {
-            undoManager.registerUndo(withTarget: self) { [weak page] target in
-                MainActor.assumeIsolated {
-                    guard let page = page else { return }
-                    target.remove(annotation, from: page, registerRedo: true)
-                }
-            }
-            undoManager.setActionName("Add Annotation")
-        }
+        registerUndoAdd(annotation, on: page, actionName: actionName)
     }
 }

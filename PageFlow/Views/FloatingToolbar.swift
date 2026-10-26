@@ -2,8 +2,9 @@
 //  FloatingToolbar.swift
 //  PageFlow
 //
-//  Floating Liquid Glass toolbar: document, zoom, annotation, and
-//  page-navigation controls.
+//  The PDF item set for the shared top-chrome toolbar slot: document, zoom,
+//  annotation, and page-navigation controls inside the shared
+//  `GlassToolbarShell` (see GlassToolbar.swift).
 //
 
 import SwiftUI
@@ -20,76 +21,71 @@ struct FloatingToolbar: View {
     @State private var settingsManager = SettingsManager.shared
     private let doubleTapWindow: TimeInterval = 0.3
 
-    private var toolbarMetrics: SettingsManager.ToolbarMetrics {
-        SettingsManager.toolbarMetrics(for: settingsManager.toolbarScale)
-    }
-
     var body: some View {
-        toolbarContent
-            .pageFlowLiquidGlassPanel(.toolbar)
-            .frame(height: toolbarMetrics.containerHeight)
-    }
-
-    private var toolbarContent: some View {
-        HStack(spacing: DesignTokens.spacingXS) {
-            toolbarButton(icon: "doc", action: onOpenFilePicker)
+        GlassToolbarShell {
+            GlassToolbarButton(icon: "doc", help: "Open a PDF", action: onOpenFilePicker)
             Divider().frame(height: 16)
-            toolbarButton(
+            GlassToolbarButton(
                 icon: pdfManager.interactionMode == .pan ? "cursorarrow" : "hand.raised",
+                help: "Switch between pan and text selection",
                 action: { pdfManager.interactionMode = pdfManager.interactionMode == .pan ? .select : .pan },
                 disabled: !pdfManager.hasDocument
             )
-            toolbarButton(icon: "minus.magnifyingglass", action: { pdfManager.zoomOut() }, disabled: !pdfManager.hasDocument)
-            toolbarButton(icon: "1.magnifyingglass", action: { pdfManager.resetZoom() }, disabled: !pdfManager.hasDocument)
-            toolbarButton(icon: "plus.magnifyingglass", action: { pdfManager.zoomIn() }, disabled: !pdfManager.hasDocument)
-            toolbarButton(
+            GlassToolbarButton(icon: "minus.magnifyingglass", help: "Zoom out", action: { pdfManager.zoomOut() }, disabled: !pdfManager.hasDocument)
+            GlassToolbarButton(icon: "1.magnifyingglass", help: "Actual size (100%)", action: { pdfManager.resetZoom() }, disabled: !pdfManager.hasDocument)
+            GlassToolbarButton(icon: "plus.magnifyingglass", help: "Zoom in", action: { pdfManager.zoomIn() }, disabled: !pdfManager.hasDocument)
+            GlassToolbarButton(
                 icon: pdfManager.isAutoScaling ? "arrow.down.forward.and.arrow.up.backward.circle.fill" : "arrow.down.forward.and.arrow.up.backward.circle",
+                help: "Fit page to window (double-click to toggle auto-fit)",
                 action: handleFitButtonTap,
                 disabled: !pdfManager.hasDocument
             )
-            toolbarButton(
+            GlassToolbarButton(
                 icon: "sidebar.leading",
+                help: "Show or hide the sidebar",
                 action: { withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { showingOutline.toggle() } },
                 disabled: !pdfManager.hasDocument
             )
-            toolbarButton(icon: "rotate.right", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.hasDocument)
+            GlassToolbarButton(icon: "rotate.right", help: "Rotate page clockwise", action: { pdfManager.rotateClockwise() }, disabled: !pdfManager.permissions.editPages)
             Divider().frame(height: 16)
-            toolbarButton(
+            GlassToolbarButton(
                 icon: "underline",
+                help: "Underline the selected text",
                 action: { annotationManager.underlineSelection(color: annotationManager.underlineColor) },
-                disabled: !pdfManager.hasDocument
+                disabled: !pdfManager.permissions.annotate
             )
-            toolbarButton(
+            GlassToolbarButton(
                 icon: "highlighter",
+                help: "Highlight the selected text",
                 action: { annotationManager.highlightSelection(color: annotationManager.highlightColor) },
-                disabled: !pdfManager.hasDocument
+                disabled: !pdfManager.permissions.annotate
             )
             colorMenu
-            toolbarButton(
+            GlassToolbarButton(
                 icon: "text.bubble",
+                help: "Add a comment",
                 action: { _ = commentManager.addComment() },
-                disabled: !pdfManager.hasDocument
+                disabled: !pdfManager.permissions.annotate
             )
-            toolbarButton(
+            GlassToolbarButton(
                 icon: showingComments ? "bubble.right.fill" : "bubble.right",
+                help: "Show or hide comments",
                 action: { withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { showingComments.toggle() } },
                 disabled: !pdfManager.hasDocument
             )
-            toolbarButton(
+            GlassToolbarButton(
                 icon: bookmarkManager.isBookmarked(pdfManager.currentPageIndex) ? "bookmark.fill" : "bookmark",
+                help: "Add or remove a bookmark on this page",
                 action: { bookmarkManager.toggleBookmark(at: pdfManager.currentPageIndex) },
                 disabled: !pdfManager.hasDocument
             )
             Divider().frame(height: 16)
-            toolbarButton(icon: "arrow.uturn.backward", action: { pdfManager.goBack() }, disabled: !pdfManager.canGoBack)
-            toolbarButton(icon: "arrow.uturn.forward", action: { pdfManager.goForward() }, disabled: !pdfManager.canGoForward)
+            GlassToolbarButton(icon: "arrow.uturn.backward", help: "Go back", action: { pdfManager.goBack() }, disabled: !pdfManager.canGoBack)
+            GlassToolbarButton(icon: "arrow.uturn.forward", help: "Go forward", action: { pdfManager.goForward() }, disabled: !pdfManager.canGoForward)
             Divider().frame(height: 16)
-            toolbarButton(icon: "chevron.left", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
-            toolbarButton(icon: "chevron.right", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
+            GlassToolbarButton(icon: "chevron.left", help: "Previous page", action: { pdfManager.previousPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex == 0)
+            GlassToolbarButton(icon: "chevron.right", help: "Next page", action: { pdfManager.nextPage() }, disabled: !pdfManager.hasDocument || pdfManager.currentPageIndex >= pdfManager.pageCount - 1)
         }
-        .padding(.horizontal, toolbarMetrics.horizontalPadding)
-        .padding(.vertical, toolbarMetrics.verticalPadding)
-        .proximityField(isEnabled: settingsManager.isToolbarMagnificationEnabled)
     }
 
     private var colorMenu: some View {
@@ -126,34 +122,13 @@ struct FloatingToolbar: View {
                 }
             }
         } label: {
-            Image(systemName: "paintpalette")
-                .font(.system(size: toolbarMetrics.iconSize, weight: .medium))
-                .frame(width: toolbarMetrics.buttonSize, height: toolbarMetrics.buttonSize)
-                .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
-                .pageFlowGlassControlLabel(
-                    interactive: pdfManager.hasDocument
-                )
-                .proximityMagnified()
+            GlassToolbarLabel(icon: "paintpalette", interactive: pdfManager.hasDocument)
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .disabled(!pdfManager.hasDocument)
         .opacity(pdfManager.hasDocument ? 1 : 0.3)
-    }
-
-    private func toolbarButton(icon: String, action: @escaping () -> Void, disabled: Bool = false) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: toolbarMetrics.iconSize, weight: .medium))
-                .frame(width: toolbarMetrics.buttonSize, height: toolbarMetrics.buttonSize)
-                .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
-                .pageFlowGlassControlLabel(
-                    interactive: !disabled
-                )
-                .proximityMagnified()
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.3 : 1.0)
+        .toolbarTooltip("Choose underline and highlight colors", enabled: settingsManager.showTooltips)
     }
 
     private func handleFitButtonTap() {

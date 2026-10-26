@@ -43,6 +43,3 @@ create-dmg \
 
 echo
 echo "DMG: $OUT ($(du -h "$OUT" | cut -f1 | tr -d ' '))"
-echo "Sparkle signature (for appcast.xml):"
-SIGN_UPDATE=$(find ~/Library/Developer/Xcode/DerivedData -name sign_update -path "*artifacts/sparkle/Sparkle/bin/*" 2>/dev/null | head -1)
-[ -n "$SIGN_UPDATE" ] && "$SIGN_UPDATE" "$OUT" || echo "  (sign_update not found — run Sparkle's sign_update manually)"
