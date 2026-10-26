@@ -97,6 +97,7 @@ final class StablePDFView: PDFView {
     var onCopyPageAsMarkdown: (() -> Void)?
     var onCopyDocumentAsMarkdown: (() -> Void)?
     var onToggleBookmark: (() -> Void)?
+    var onRequestFocus: (() -> Void)?
 
     private var rightClickMonitor: Any?
 
@@ -141,6 +142,9 @@ final class StablePDFView: PDFView {
               hitView === self || hitView.isDescendant(of: self) else {
             return event
         }
+
+        // Asks the host to focus this tab (a no-op when it is already active).
+        onRequestFocus?()
 
         let menu = buildContextMenu(for: event, at: viewPoint)
         menu.popUp(positioning: nil, at: viewPoint, in: self)
@@ -430,6 +434,8 @@ final class StablePDFView: PDFView {
     // MARK: - Mouse Handling
 
     override func mouseDown(with event: NSEvent) {
+        onRequestFocus?()
+
         // Pan mode: initiate panning
         if interactionMode == .pan {
             lastPanLocation = convert(event.locationInWindow, from: nil)
@@ -514,15 +520,15 @@ final class StablePDFView: PDFView {
             return
         }
 
-        guard let scrollView = documentScrollView else { return }
+        guard let scrollView = documentScrollView, let documentView = scrollView.documentView else { return }
 
         let currentLocation = convert(event.locationInWindow, from: nil)
-        let dx = currentLocation.x - lastLocation.x
-        let dy = currentLocation.y - lastLocation.y
+        // The page follows the hand, in the document's own coordinates.
+        let delta = PDFDocumentScroll.panDelta(from: lastLocation, to: currentLocation, in: self, documentView: documentView)
 
         var origin = scrollView.contentView.bounds.origin
-        origin.x -= dx
-        origin.y -= dy
+        origin.x += delta.x
+        origin.y += delta.y
 
         scrollView.contentView.scroll(to: origin)
         scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -547,6 +553,8 @@ final class StablePDFView: PDFView {
     var pendingCommentAnnotation: PDFAnnotation?
 
     override func rightMouseDown(with event: NSEvent) {
+        onRequestFocus?()
+
         let viewPoint = convert(event.locationInWindow, from: nil)
         let menu = buildContextMenu(for: event, at: viewPoint)
         menu.popUp(positioning: nil, at: viewPoint, in: self)

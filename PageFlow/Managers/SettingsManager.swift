@@ -7,8 +7,41 @@
 
 import Foundation
 import AppKit
+import SwiftUI
 import Observation
 import os.log
+
+/// The color scheme the Markdown editor renders in, independent of the system
+/// appearance. `.system` follows the OS; `.light`/`.dark` force the whole
+/// Markdown tab surface (`MarkdownTabView`: SwiftUI colorScheme + reading
+/// background) and the engine editor's `NSScrollView.appearance`
+/// (`NativeTextViewWrapper`). One canonical home for both mappings so the
+/// AppKit and SwiftUI legs can't drift.
+enum MarkdownColorScheme: String, CaseIterable {
+    case system
+    case light
+    case dark
+
+    /// AppKit leg: the forced appearance for the engine's scroll view
+    /// (`nil` = follow the system).
+    var forcedAppearanceName: NSAppearance.Name? {
+        switch self {
+        case .system: return nil
+        case .light: return .aqua
+        case .dark: return .darkAqua
+        }
+    }
+
+    /// SwiftUI leg: the forced scheme for the Markdown tab surface
+    /// (`nil` = follow the system).
+    var forcedColorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
 
 @Observable
 @MainActor
@@ -119,8 +152,41 @@ final class SettingsManager {
         static let topBarAlwaysVisible = "settings.topBarAlwaysVisible"
         static let floatingToolbarAlwaysVisible = "settings.floatingToolbarAlwaysVisible"
         static let pageIndicatorAlwaysVisible = "settings.pageIndicatorAlwaysVisible"
+        static let compactTabs = "settings.compactTabs"
         static let toolbarMagnificationEnabled = "settings.toolbarMagnificationEnabled"
+        static let showTooltips = "settings.showTooltips"
+        static let markdownColorScheme = "settings.markdownColorScheme"
+        static let markdownSideMargin = "settings.markdownSideMargin"
+        static let markdownFontFamily = "settings.markdownFontFamily"
+        static let markdownFontSize = "settings.markdownFontSize"
+        static let markdownCentersZoomedOut = "settings.markdownCentersZoomedOut"
+        static let markdownPageLook = "settings.markdownPageLook"
+        static let markdownShowsHiddenContentRow = "settings.markdownShowsHiddenContentRow"
     }
+
+    /// The app-default Markdown editor font. PINNED to the engine's own default
+    /// (`NativeTextViewWrapper.fontName` init default) — if one changes, the
+    /// Settings picker's "Default" tag stops matching stored values.
+    static let defaultMarkdownFontFamily = "SF Pro"
+    /// The CURATED Markdown font menu — the default plus the most common
+    /// English faces (sans + the two classics) and the two most common Chinese
+    /// faces (sans + serif). Every family here supports ⌘B/I/U end to end: the
+    /// Chinese families ship no italic faces, so ⌘I renders through the
+    /// engine's synthetic-oblique fallback (`ItalicFallback.resolveFont`).
+    /// Stored values outside this list reset to the default on load, so the
+    /// picker can never show a dangling selection.
+    static let markdownFontFamilies: [String] = [
+        defaultMarkdownFontFamily,   // SF Pro — the system sans serif
+        "Helvetica Neue",
+        "Times New Roman",
+        "PingFang SC",               // 苹方 — the system Chinese sans
+        "Songti SC",                 // 宋体 — the classic Chinese serif
+    ]
+    static let defaultMarkdownFontSize: Double = 16
+    /// The Settings stepper's range; stored values clamp to it on load.
+    static let markdownFontSizeRange: ClosedRange<Double> = 10...28
+    /// The side-margin slider's range (points); stored values clamp on load.
+    static let markdownSideMarginRange: ClosedRange<Double> = 0...300
 
     // MARK: - Default Presets
 
@@ -161,8 +227,14 @@ final class SettingsManager {
     }
 
     var customShortcuts: [String: ShortcutModel] = [:] {
-        didSet { if !isLoading { saveShortcuts() } }
+        didSet {
+            if !isLoading { saveShortcuts() }
+            NotificationCenter.default.post(name: Self.shortcutsDidChange, object: self)
+        }
     }
+
+    /// Posted when a shortcut changes, for the open editors to rebind live.
+    static let shortcutsDidChange = Notification.Name("PageFlow.shortcutsDidChange")
 
     var toolbarScale = SettingsManager.defaultToolbarScale {
         didSet {
@@ -201,11 +273,99 @@ final class SettingsManager {
         }
     }
 
+    /// The tab strip is the Deck: the focused tab full width, the rest as
+    /// slivers. Off keeps the full-width, scrolling strip. Enabled by default
+    /// (opt-out).
+    var isCompactTabsEnabled = true {
+        didSet {
+            if !isLoading {
+                defaults.set(isCompactTabsEnabled, forKey: Keys.compactTabs)
+            }
+        }
+    }
+
     /// Dock-style icon magnification on the floating toolbar. Enabled by default (opt-out).
     var isToolbarMagnificationEnabled = true {
         didSet {
             if !isLoading {
                 defaults.set(isToolbarMagnificationEnabled, forKey: Keys.toolbarMagnificationEnabled)
+            }
+        }
+    }
+
+    /// Hover tooltips (native macOS help tags) on the floating toolbar buttons. Enabled by default (opt-out).
+    var showTooltips = true {
+        didSet {
+            if !isLoading {
+                defaults.set(showTooltips, forKey: Keys.showTooltips)
+            }
+        }
+    }
+
+    /// The Markdown editor's forced color scheme. `.system` follows the OS.
+    var markdownColorScheme: MarkdownColorScheme = .system {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownColorScheme.rawValue, forKey: Keys.markdownColorScheme)
+            }
+        }
+    }
+
+    /// The Markdown editor's left/right margin in points, user-defined (replaces
+    /// the old Readable-line-length toggle). Reconciled LIVE by the engine
+    /// (text-container insets), so dragging the slider re-lays mounted editors.
+    var markdownSideMargin = Double(DesignTokens.markdownReadingGutter) {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownSideMargin, forKey: Keys.markdownSideMargin)
+            }
+        }
+    }
+
+    /// The Markdown editor's body font family — one of the curated
+    /// `markdownFontFamilies`. Headings/code scale off it in the engine.
+    var markdownFontFamily = SettingsManager.defaultMarkdownFontFamily {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownFontFamily, forKey: Keys.markdownFontFamily)
+            }
+        }
+    }
+
+    /// The Markdown editor's base body size in points.
+    var markdownFontSize = SettingsManager.defaultMarkdownFontSize {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownFontSize, forKey: Keys.markdownFontSize)
+            }
+        }
+    }
+
+    /// Whether the Markdown document centers in the window when zoomed OUT
+    /// (magnification < 1), PDF-style. Off = pinned left (default). Reconciled
+    /// LIVE by the engine, so the toggle re-lays mounted editors.
+    var markdownCentersZoomedOut = false {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownCentersZoomedOut, forKey: Keys.markdownCentersZoomedOut)
+            }
+        }
+    }
+
+    /// Page look: a centered 42-em reading column (doc 18 §4.3).
+    var markdownPageLook = true {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownPageLook, forKey: Keys.markdownPageLook)
+            }
+        }
+    }
+
+    /// Whether collapsed Markdown sections show their hidden-content summary row.
+    var markdownShowsHiddenContentRow = true {
+        didSet {
+            if !isLoading {
+                defaults.set(markdownShowsHiddenContentRow, forKey: Keys.markdownShowsHiddenContentRow)
             }
         }
     }
@@ -306,10 +466,49 @@ final class SettingsManager {
         isTopBarAlwaysVisible = defaults.bool(forKey: Keys.topBarAlwaysVisible)
         isFloatingToolbarAlwaysVisible = defaults.bool(forKey: Keys.floatingToolbarAlwaysVisible)
         isPageIndicatorAlwaysVisible = defaults.bool(forKey: Keys.pageIndicatorAlwaysVisible)
+        isCompactTabsEnabled = defaults.object(forKey: Keys.compactTabs) == nil ? true : defaults.bool(forKey: Keys.compactTabs)
 
         // Opt-out default: only override the `true` default when a value was explicitly stored.
         if defaults.object(forKey: Keys.toolbarMagnificationEnabled) != nil {
             isToolbarMagnificationEnabled = defaults.bool(forKey: Keys.toolbarMagnificationEnabled)
+        }
+
+        if defaults.object(forKey: Keys.showTooltips) != nil {
+            showTooltips = defaults.bool(forKey: Keys.showTooltips)
+        }
+
+        if let raw = defaults.string(forKey: Keys.markdownColorScheme),
+           let scheme = MarkdownColorScheme(rawValue: raw) {
+            markdownColorScheme = scheme
+        }
+
+        if defaults.object(forKey: Keys.markdownSideMargin) != nil {
+            markdownSideMargin = min(
+                max(defaults.double(forKey: Keys.markdownSideMargin), Self.markdownSideMarginRange.lowerBound),
+                Self.markdownSideMarginRange.upperBound
+            )
+        }
+
+        // Validate against the curated list, not just non-emptiness: fonts we
+        // no longer offer (or that were uninstalled) reset to the default so
+        // the Settings picker never shows a dangling selection.
+        if let family = defaults.string(forKey: Keys.markdownFontFamily),
+           Self.markdownFontFamilies.contains(family) {
+            markdownFontFamily = family
+        }
+        let storedSize = defaults.double(forKey: Keys.markdownFontSize)
+        if storedSize > 0 {
+            // Clamp on load, not just in the Stepper (house precedent: clampedToolbarScale).
+            markdownFontSize = min(
+                max(storedSize, Self.markdownFontSizeRange.lowerBound),
+                Self.markdownFontSizeRange.upperBound
+            )
+        }
+
+        markdownCentersZoomedOut = defaults.bool(forKey: Keys.markdownCentersZoomedOut)
+        markdownPageLook = defaults.object(forKey: Keys.markdownPageLook) == nil ? true : defaults.bool(forKey: Keys.markdownPageLook)
+        if defaults.object(forKey: Keys.markdownShowsHiddenContentRow) != nil {
+            markdownShowsHiddenContentRow = defaults.bool(forKey: Keys.markdownShowsHiddenContentRow)
         }
     }
 

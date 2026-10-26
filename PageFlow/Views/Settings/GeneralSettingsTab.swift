@@ -2,17 +2,21 @@
 //  GeneralSettingsTab.swift
 //  PageFlow
 //
-//  Settings tab for general app settings including updates
+//  Settings tab for general app settings
 //
 
 import SwiftUI
 import AppKit
 
 struct GeneralSettingsTab: View {
-    @Environment(UpdateManager.self) private var updateManager
     @State private var settingsManager = SettingsManager.shared
-    @State private var showingNoUpdatesAlert = false
     @State private var frontmostTab: TabManager?
+
+    /// The curated font menu (`SettingsManager.markdownFontFamilies`) minus
+    /// the app default, which gets its own labeled entry at the top.
+    private static let markdownFontFamilies: [String] =
+        SettingsManager.markdownFontFamilies
+            .filter { $0 != SettingsManager.defaultMarkdownFontFamily }
 
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -51,39 +55,6 @@ struct GeneralSettingsTab: View {
             }
 
             Section {
-                if updateManager.isSparkleEnabled {
-                    // Bind straight to the shared updater. Sparkle persists this in
-                    // the app's UserDefaults itself, so there is no separate local
-                    // @State to fall out of sync — the previous code mirrored it into
-                    // an @State that reset to false whenever this tab was re-created
-                    // (e.g. switching Settings tabs), which is why it "turned off by
-                    // itself." Hidden entirely when Sparkle isn't compiled in, so the
-                    // toggle can never be a no-op that silently reverts.
-                    Toggle("Check for updates automatically", isOn: Binding(
-                        get: { updateManager.automaticallyChecksForUpdates },
-                        set: { updateManager.automaticallyChecksForUpdates = $0 }
-                    ))
-                }
-
-                HStack {
-                    Spacer()
-                    Button("Check Now") {
-                        if updateManager.isSparkleEnabled {
-                            updateManager.checkForUpdates()
-                        } else {
-                            showingNoUpdatesAlert = true
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, DesignTokens.spacingMD)
-                    .padding(.vertical, DesignTokens.spacingXS)
-                    .pageFlowLiquidGlassSurface(.settingsRow)
-                }
-            } header: {
-                Text("Updates")
-            }
-
-            Section {
                 VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
                     HStack {
                         Text("Toolbar size")
@@ -109,6 +80,7 @@ struct GeneralSettingsTab: View {
                             settingsManager.resetToolbarScale()
                         }
                         .buttonStyle(.plain)
+                        .pageFlowClickCursor()
                         .padding(.horizontal, DesignTokens.spacingMD)
                         .padding(.vertical, DesignTokens.spacingXS)
                         .pageFlowLiquidGlassSurface(
@@ -122,10 +94,12 @@ struct GeneralSettingsTab: View {
                 }
 
                 Toggle("Magnify toolbar icons on hover", isOn: $settings.isToolbarMagnificationEnabled)
+                Toggle("Show button tooltips on hover", isOn: $settings.showTooltips)
 
                 Toggle("Always show top bar", isOn: $settings.isTopBarAlwaysVisible)
                 Toggle("Always show toolbar", isOn: $settings.isFloatingToolbarAlwaysVisible)
                 Toggle("Always show page number", isOn: $settings.isPageIndicatorAlwaysVisible)
+                Toggle("Compact tabs", isOn: $settings.isCompactTabsEnabled)
 
                 if let frontmostTab {
                     @Bindable var tab = frontmostTab
@@ -141,6 +115,47 @@ struct GeneralSettingsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                Picker("Color scheme", selection: $settings.markdownColorScheme) {
+                    Text("System").tag(MarkdownColorScheme.system)
+                    Text("Light").tag(MarkdownColorScheme.light)
+                    Text("Dark").tag(MarkdownColorScheme.dark)
+                }
+
+                Slider(
+                    value: $settings.markdownSideMargin,
+                    in: SettingsManager.markdownSideMarginRange
+                ) {
+                    Text("Side margins: \(Int(settings.markdownSideMargin)) px")
+                } minimumValueLabel: {
+                    Image(systemName: "rectangle.expand.horizontal")
+                } maximumValueLabel: {
+                    Image(systemName: "rectangle.compress.horizontal")
+                }
+
+                Picker("Font", selection: $settings.markdownFontFamily) {
+                    Text("Default (SF Pro)").tag(SettingsManager.defaultMarkdownFontFamily)
+                    Divider()
+                    ForEach(Self.markdownFontFamilies, id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                }
+
+                Stepper(value: $settings.markdownFontSize, in: SettingsManager.markdownFontSizeRange, step: 1) {
+                    Text("Font size: \(Int(settings.markdownFontSize)) pt")
+                }
+
+                Toggle("Page look (centered reading column)", isOn: $settings.markdownPageLook)
+                Toggle("Center document when zoomed out", isOn: $settings.markdownCentersZoomedOut)
+                Toggle("Show hidden-content row", isOn: $settings.markdownShowsHiddenContentRow)
+            } header: {
+                Text("Markdown")
+            } footer: {
+                Text("Applies to the Markdown editor. Side margins set the left/right whitespace around the text (live). Headings and code scale with the base size; bold, italic, and underline work with every offered font. When zoomed out, the document pins left unless centering is on; wide tables and diagrams use the extra width either way.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
@@ -149,11 +164,6 @@ struct GeneralSettingsTab: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeMainNotification)) { _ in
             frontmostTab = WindowRegistry.shared.frontmostTabManager()
-        }
-        .alert("Updates Not Available", isPresented: $showingNoUpdatesAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("Automatic updates are only available in the direct download version of PageFlow.")
         }
     }
 }

@@ -25,6 +25,55 @@ private final class CloseSpyWindow: NSWindow {
 
 @MainActor
 struct WindowCloseTests {
+    @Test(arguments: [ContentKind.pdf, .markdown])
+    func movingTabBackBeforeDeferredCloseKeepsWindowAlive(kind: ContentKind) async throws {
+        let source = TabManager()
+        if kind == .markdown { source.newMarkdownDocument() }
+        let destination = TabManager(createInitialTab: false)
+        let window = CloseSpyWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        WindowRegistry.shared.register(source, window: window)
+        defer { WindowRegistry.shared.unregister(source); window.close() }
+        let session = try #require(source.activeSession)
+
+        #expect(source.moveTab(session.id, to: destination, at: 0, select: false))
+        #expect(destination.moveTab(session.id, to: source, at: 0, select: false))
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        #expect(source.tabs.contains { $0.id == session.id })
+        #expect(window.closeCount == 0)
+    }
+
+    @Test(arguments: [ContentKind.pdf, .markdown])
+    func creatingDocumentBeforeEmptyCloseKeepsWindowAlive(kind: ContentKind) async throws {
+        let manager = TabManager()
+        if kind == .markdown { manager.newMarkdownDocument() }
+        let window = CloseSpyWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        WindowRegistry.shared.register(manager, window: window)
+        defer { WindowRegistry.shared.unregister(manager); window.close() }
+        let closedTabID = try #require(manager.activeTabID)
+
+        manager.closeTab(closedTabID)
+        manager.newMarkdownDocument()
+        let newSession = try #require(manager.activeSession)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        #expect(newSession.id != closedTabID)
+        #expect(manager.activeSession === newSession)
+        #expect(window.closeCount == 0)
+    }
+
 
     @Test
     func closingTheOnlyTabClosesItsWindow() async throws {

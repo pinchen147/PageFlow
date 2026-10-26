@@ -52,7 +52,7 @@ private struct TabSwitcherChevronTarget: NSViewRepresentable {
 }
 
 final class TabSwitcherChevronView: NSView {
-    weak var tabManager: TabManager?
+    weak var tabManager: TabManager? { didSet { window?.invalidateCursorRects(for: self) } }
     private weak var registeredWindow: NSWindow?
 
     // Match TabBarMouseView so the click is robust in the custom chrome:
@@ -62,6 +62,7 @@ final class TabSwitcherChevronView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        updateTrackingAreas()
         guard let window else { return }
         // Re-register on every window change (tear-off re-hosts this view),
         // mirroring the tracking-area reparent contract.
@@ -75,6 +76,20 @@ final class TabSwitcherChevronView: NSView {
             TabSwitcherController.shared.unregisterAnchor(for: registeredWindow)
             self.registeredWindow = nil
         }
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: tabManager == nil ? .arrow : .pointingHand)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self))
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        (tabManager == nil ? NSCursor.arrow : .pointingHand).set()
     }
 
     override func mouseDown(with event: NSEvent) {

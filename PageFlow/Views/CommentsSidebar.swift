@@ -45,10 +45,8 @@ struct CommentsSidebar: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .contentShape(Rectangle())
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
     }
 
     // MARK: - Comments List
@@ -64,6 +62,7 @@ struct CommentsSidebar: View {
                             comment: comment,
                             isSelected: commentManager.selectedCommentID == comment.id,
                             isEditing: commentManager.editingCommentID == comment.id,
+                            canEdit: commentManager.canEdit,
                             onSelect: { commentManager.selectComment(comment.id) },
                             onStartEditing: { commentManager.startEditing(comment.id) },
                             onTextChange: { commentManager.updateComment(comment.id, text: $0) },
@@ -105,6 +104,8 @@ struct CommentBubbleView: View {
     let comment: CommentModel
     let isSelected: Bool
     let isEditing: Bool
+    /// False for a document that forbids commenting: the comment is read-only.
+    let canEdit: Bool
     let onSelect: () -> Void
     let onStartEditing: () -> Void
     let onTextChange: (String) -> Void
@@ -148,11 +149,9 @@ struct CommentBubbleView: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
+        .pageFlowClickCursor()
         .padding(.leading, DesignTokens.commentTailSize + DesignTokens.spacingXS)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
     }
 
     private var bubbleContent: some View {
@@ -193,11 +192,7 @@ struct CommentBubbleView: View {
                     ClickCatcher(onSingleClick: onSelect, onDoubleClick: onStartEditing)
                 }
             }
-            .onHover { hovering in
-                if !isEditing {
-                    (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-                }
-            }
+            .pageFlowClickCursor(when: !isEditing)
             .contextMenu { contextMenuItems }
 
             bubbleCloseButton
@@ -224,9 +219,8 @@ struct CommentBubbleView: View {
                 .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
-        .onHover { hovering in
-            (hovering ? NSCursor.pointingHand : NSCursor.arrow).set()
-        }
+        .pageFlowClickCursor()
+        .disabled(!canEdit)
     }
 
         private var editableText: some View {
@@ -289,9 +283,11 @@ struct CommentBubbleView: View {
     @ViewBuilder
     private var contextMenuItems: some View {
         Button("Edit") { onStartEditing() }
+            .disabled(!canEdit)
         Button("Go to Page") { onSelect() }
         Divider()
         Button("Delete", role: .destructive) { onDelete() }
+            .disabled(!canEdit)
     }
 }
 

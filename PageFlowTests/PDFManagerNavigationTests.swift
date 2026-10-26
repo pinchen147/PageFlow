@@ -25,6 +25,26 @@ struct PDFManagerNavigationTests {
         return manager
     }
 
+    @Test("Find navigation without results preserves PDF back and forward history")
+    func emptyFindDoesNotNavigate() throws {
+        let manager = makeManager(pages: 3)
+        defer { manager.closeDocument() }
+        let page = try #require(manager.document?.page(at: 2))
+        manager.goToDestination(PDFDestination(page: page, at: .zero))
+        manager.goBack()
+        try #require(manager.currentPageIndex == 0 && manager.canGoForward && !manager.canGoBack)
+        let search = SearchManager()
+        search.searchQuery = "missing"
+        let driver = PDFFindDriver(searchManager: search, pdfManager: manager)
+        driver.next()
+        driver.previous()
+        #expect(manager.currentPageIndex == 0)
+        #expect(!manager.canGoBack)
+        #expect(manager.canGoForward)
+        manager.goForward()
+        #expect(manager.currentPageIndex == 2)
+    }
+
     // MARK: - goToDestination
 
     @Test

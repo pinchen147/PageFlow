@@ -25,8 +25,9 @@ final class SearchManager {
     var isSearching: Bool = false
 
     private var searchTask: Task<Void, Never>?
-    @ObservationIgnored private var fullyColored = false
-    @ObservationIgnored private var lastColoredIndex = 0
+    /// Deliberately not observable: recolor bookkeeping must never invalidate
+    /// views (the wrapper reads highlights inside updateNSView; ADR-0001).
+    @ObservationIgnored private var recolorState = SearchRecolor.State()
 
     var hasResults: Bool {
         !searchResults.isEmpty
@@ -75,7 +76,11 @@ final class SearchManager {
                 guard !Task.isCancelled else { return }
                 guard self.searchQuery == q else { return }
                 self.searchResults = results
-                self.fullyColored = false
+                // New result set: force the next highlight pass to walk all
+                // hits. lastColoredIndex deliberately survives (clearSearch is
+                // the full reset) — SearchRecolor degrades a stale index to a
+                // full walk anyway.
+                self.recolorState.fullyColored = false
                 self.currentResultIndex = min(max(0, initialResultIndex), max(0, results.count - 1))
                 self.isSearching = false
             }
@@ -99,8 +104,7 @@ final class SearchManager {
         searchTask = nil
         searchQuery = ""
         searchResults = []
-        fullyColored = false
-        lastColoredIndex = 0
+        recolorState = SearchRecolor.State()
         currentResultIndex = 0
         isSearching = false
     }
@@ -115,18 +119,73 @@ final class SearchManager {
     func highlightedSelections(currentColor: NSColor, othersColor: NSColor) -> [PDFSelection] {
         guard hasResults else { return [] }
 
-        if fullyColored, lastColoredIndex < searchResults.count {
+        let (plan, next) = SearchRecolor.plan(
+            state: recolorState,
+            currentIndex: currentResultIndex,
+            resultCount: searchResults.count
+        )
+        switch plan {
+        case .pair(let previous, let current):
             // Navigation only (result set unchanged): recolor just the two
             // affected selections rather than walking the whole set.
-            searchResults[lastColoredIndex].color = othersColor
-            searchResults[currentResultIndex].color = currentColor
-        } else {
+            searchResults[previous].color = othersColor
+            searchResults[current].color = currentColor
+        case .all:
             for (index, selection) in searchResults.enumerated() {
                 selection.color = index == currentResultIndex ? currentColor : othersColor
             }
-            fullyColored = true
         }
-        lastColoredIndex = currentResultIndex
+        recolorState = next
+
+        // Always the SAME instances: the wrapper's highlight signature and
+        // PDFView's shallow array copy both key on selection identity, and
+        // re-assigning `highlightedSelections` is the redraw trigger.
         return searchResults
+    }
+}
+
+// MARK: - PDFFindDriver (S7a)
+
+/// The PDF half of the shared Find surface — a lightweight value adapter that lets
+/// the shared `SearchBar` drive PDF find without `SearchManager` itself having to
+/// know about the bar. It holds the tab's `SearchManager` and a weak `PDFManager`;
+/// `runSearch()` resolves the live document and stepping pushes the PDF nav state,
+/// so PDF find stays byte-identical to the old inline bar (which read
+/// `pdfManager.document` and pushed nav state itself). A value type constructed
+/// fresh where needed (`PDFTabView`'s `body`, `TabManager.activeFindDriver`) —
+/// building it mutates no observable state.
+@MainActor
+struct PDFFindDriver: FindDriving {
+    let searchManager: SearchManager
+    weak var pdfManager: PDFManager?
+
+    var query: String { searchManager.searchQuery }
+
+    func setQuery(_ query: String) { searchManager.searchQuery = query }
+
+    var resultCount: Int { searchManager.totalResults }
+
+    /// 1-based focused match; `currentResultNumber` is already 0 when empty.
+    var currentMatch: Int { searchManager.currentResultNumber }
+
+    func runSearch() {
+        guard let document = pdfManager?.document else { return }
+        searchManager.search(searchManager.searchQuery, in: document)
+    }
+
+    func next() {
+        guard hasResults else { return }
+        pdfManager?.pushNavigationState()
+        searchManager.nextResult()
+    }
+
+    func previous() {
+        guard hasResults else { return }
+        pdfManager?.pushNavigationState()
+        searchManager.previousResult()
+    }
+
+    func clear() {
+        searchManager.clearSearch()
     }
 }

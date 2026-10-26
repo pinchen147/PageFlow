@@ -7,6 +7,8 @@
 //  recorder's validation (reserved / too-weak / conflicting combos).
 //
 
+import AppKit
+import MarkdownEngine
 import Testing
 @testable import PageFlow
 
@@ -21,10 +23,86 @@ struct ShortcutCatalogTests {
     }
 
     @Test
-    func defaultBindingsDoNotCollide() {
-        // Two commands sharing a default combo would make one silently dead.
-        let combos = ShortcutCatalog.all.map(\.defaultShortcut.displayString)
-        #expect(Set(combos).count == combos.count)
+    func defaultBindingsDoNotCollideWhereBothCanAct() {
+        // Two commands sharing a default combo where both act would make one
+        // silently dead; a PDF command and a Markdown one may share (⌘U).
+        let bound = ShortcutCatalog.all.filter { !$0.defaultShortcut.isNone }
+        for (index, action) in bound.enumerated() {
+            for other in bound[(index + 1)...] where action.scope.overlaps(other.scope) {
+                #expect(action.defaultShortcut.displayString != other.defaultShortcut.displayString,
+                        "\(action.title) and \(other.title)")
+            }
+        }
+    }
+
+    @Test
+    func everyMenuAndEditorCommandHasExactlyOneRow() {
+        let ids = Set(ShortcutCatalog.all.map(\.id))
+        for command in MarkdownFormatCommand.allCases {
+            #expect(ids.contains(command.shortcutID), "Format > \(command.title)")
+        }
+        for command in MarkdownEditorKeyCommand.allCases {
+            #expect(ShortcutCatalog.all.filter { $0.editorCommand == command }.count == 1, "\(command)")
+        }
+        for id in ["undo", "redo", "findAndReplace", "findNext", "findPrevious"] + (1...9).map(ShortcutCatalog.selectTabID) {
+            #expect(ids.contains(id), "\(id) is rebindable")
+        }
+    }
+
+    @Test
+    func theEditorsDefaultsAreTheCatalogs() {
+        // The engine's own defaults and Settings' must agree, or the menu and
+        // the focused editor would answer different keys.
+        let bindings = ShortcutCatalog.editorKeyBindings(current: { ShortcutCatalog.defaults[$0] ?? .none })
+        for command in MarkdownEditorKeyCommand.allCases where !MarkdownKeyBindings.default[command].isEmpty {
+            #expect(bindings[command] == MarkdownKeyBindings.default[command], "\(command)")
+        }
+    }
+
+    @Test
+    func theEditorFollowsARebinding() {
+        let custom = ["format.bold": ShortcutModel(key: "b", control: true), "markdownComment": ShortcutModel(key: "j", option: true),
+                      "format.strikethrough": ShortcutModel.none]
+        let bindings = ShortcutCatalog.editorKeyBindings(current: { custom[$0] ?? ShortcutCatalog.defaults[$0] ?? .none })
+        #expect(bindings[.bold] == [MarkdownKeyChord("b", command: true, control: true)])
+        #expect(bindings[.comment] == [MarkdownKeyChord("j", command: true, option: true)], "⌃⌥M goes with the default")
+        #expect(bindings[.strikethrough].isEmpty)
+        #expect(bindings[.toggleChecked] == [MarkdownKeyChord("return", command: true)])
+    }
+
+    @Test
+    func foldingChordsReachTheEditorAndFollowRebinding() throws {
+        for id in ["markdown.toggleFold", "markdown.collapseAll", "markdown.expandAll"] {
+            let action = try #require(ShortcutCatalog.action(for: id))
+            #expect(action.scope == .markdown)
+        }
+        let defaults = ShortcutCatalog.editorKeyBindings(current: { ShortcutCatalog.defaults[$0] ?? .none })
+        #expect(defaults.command(for: try key("\r", 36, [.command, .option])) == .toggleFold)
+        #expect(defaults.command(for: try key("\r", 36, [.command])) == .toggleChecked)
+        #expect(defaults[.collapseAll].isEmpty)
+        #expect(defaults[.expandAll].isEmpty)
+
+        let custom = ["markdown.toggleFold": ShortcutModel.none,
+                      "markdown.collapseAll": ShortcutModel(key: "j", control: true),
+                      "markdown.expandAll": ShortcutModel(key: "j", shift: true, control: true)]
+        let rebound = ShortcutCatalog.editorKeyBindings(current: { custom[$0] ?? ShortcutCatalog.defaults[$0] ?? .none })
+        #expect(rebound.command(for: try key("\r", 36, [.command, .option])) == nil)
+        #expect(rebound.command(for: try key("j", 38, [.command, .control])) == .collapseAll)
+        #expect(rebound.command(for: try key("j", 38, [.command, .shift, .control])) == .expandAll)
+    }
+
+    @Test
+    func findAndReplaceOwnsOptionCommandFAndZoomToFitMovesToOptionCommandZero() {
+        #expect(ShortcutCatalog.defaults["findAndReplace"] == ShortcutModel(key: "f", option: true))
+        #expect(ShortcutCatalog.defaults["zoomToFit"] == ShortcutModel(key: "0", option: true))
+    }
+
+    @Test
+    func validateWarnsOnlyWhereBothCanAct() {
+        #expect(ShortcutCatalog.validate(ShortcutModel(key: "g"), for: "newTab") == .conflict("Find Next"))
+        #expect(!ShortcutCatalog.validate(ShortcutModel(key: "g"), for: "newTab").blocksConfirm)
+        #expect(ShortcutCatalog.validate(ShortcutModel(key: "u"), for: "format.underline") == .ok, "PDF's Underline acts elsewhere")
+        #expect(ShortcutCatalog.validate(ShortcutModel(key: "s"), for: "format.bold") == .conflict("Save"))
     }
 
     @Test
@@ -47,10 +125,14 @@ struct ShortcutCatalogTests {
         // The migration must be behavior-preserving: the default equals the
         // shortcut the menu hard-coded before.
         let expected: [String: String] = [
-            "newTab": "⌘T", "newWindow": "⌘N", "openFile": "⌘O", "closeTab": "⌘W",
+            "newTab": "⌘T", "newMarkdownDocument": "⌘N", "newWindow": "⇧⌘N",
+            "openFile": "⌘O", "closeTab": "⌘W",
             "save": "⌘S", "saveAs": "⇧⌘S", "print": "⌘P", "search": "⌘F",
-            "toggleSidebar": "⌥⌘S", "toggleComments": "⌥⌘E", "enterFullScreen": "⌃⌘F",
-            "firstPage": "⌥⌘←", "lastPage": "⌥⌘→", "selectNextTab": "⇧⌘]", "selectPreviousTab": "⇧⌘["
+            "toggleSidebar": "⌥⌘S", "toggleComments": "⌥⌘E",
+            "firstPage": "⌥⌘←", "lastPage": "⌥⌘→", "selectNextTab": "⇧⌘]", "selectPreviousTab": "⇧⌘[",
+            "undo": "⌘Z", "redo": "⇧⌘Z", "findNext": "⌘G", "findPrevious": "⇧⌘G", "selectTab1": "⌘1",
+            "format.bold": "⌘B", "format.link": "⌘K", "format.heading": "⌥⌘1", "format.bulletedList": "⇧⌘8",
+            "format.quote": "⇧⌘9", "markdownComment": "⌥⌘M", "markdownToggleComments": "⌥⇧C",
         ]
         for (id, combo) in expected {
             #expect(ShortcutCatalog.defaults[id]?.displayString == combo, "\(id)")
@@ -83,6 +165,60 @@ struct ShortcutCatalogTests {
         // Assumes a clean install (no custom overrides), so `current` == default.
         let saveCombo = ShortcutCatalog.defaults["save"]!
         #expect(ShortcutCatalog.validate(saveCombo, for: "newTab") == .conflict("Save"))
+    }
+
+    @Test
+    func plainKeysAreForFunctionKeysAndCommandsOutsideTheText() {
+        let f6 = ShortcutModel(key: "F6", command: false)
+        #expect(ShortcutCatalog.validate(f6, for: "format.focusSelectionBar") == .ok)
+        #expect(ShortcutCatalog.validate(f6, for: "newTab") == .needsCommand)
+        #expect(ShortcutCatalog.validate(ShortcutModel(key: "h", command: false, shift: true, option: true),
+                                         for: "markdownToggleComments") == .ok)
+        #expect(ShortcutCatalog.validate(ShortcutModel(key: "h", command: false), for: "markdownToggleComments") == .needsCommand)
+        #expect(ShortcutCatalog.validate(.none, for: "save") == .ok, "a shortcut can always be cleared")
+        #expect(ShortcutModel.none.displayString == "None")
+    }
+
+    // MARK: - Search
+
+    private func found(_ query: String) -> Set<String> {
+        Set(ShortcutCatalog.all.filter { ShortcutCatalog.matches($0, query: query, current: { ShortcutCatalog.defaults[$0] ?? .none }) }
+            .map(\.id))
+    }
+
+    @Test
+    func searchFindsByNameSectionOrKeys() {
+        #expect(found("").count == ShortcutCatalog.all.count)
+        #expect(found("bold") == ["format.bold"])
+        #expect(found("Find").isSuperset(of: ["search", "findAndReplace", "findNext", "findPrevious"]))
+        #expect(found("comments (markdown)") == ["markdownComment", "markdownToggleComments"], "a section")
+        #expect(found("⌘B") == ["format.bold"], "the whole chord: not ⇧⌘B")
+        #expect(found("cmd b") == ["format.bold"])
+        #expect(found("shift cmd n") == ["newWindow"], "modifiers in any order")
+        #expect(found("⇧⌘N") == ["newWindow"])
+        #expect(found("⌥⌘M") == ["markdownComment"])
+        #expect(!found("ctrl").contains("format.bold"), "a modifier the key lacks")
+        #expect(found("⌃").contains("format.focusSelectionBar") == false && found("shift").contains("newWindow"),
+                "modifiers alone find every key that has them")
+        #expect(found("zzz").isEmpty)
+    }
+
+    // MARK: - Recording
+
+    private func key(_ characters: String, _ keyCode: UInt16, _ flags: NSEvent.ModifierFlags) throws -> NSEvent {
+        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                                      context: nil, characters: characters, charactersIgnoringModifiers: characters,
+                                      isARepeat: false, keyCode: keyCode))
+    }
+
+    @Test
+    func theRecorderKeepsTheKeyNotTheShiftedCharacter() throws {
+        let recorded = try #require(ShortcutModel.from(event: try key("*", 28, [.command, .shift])))
+        #expect(recorded == ShortcutModel(key: "8", shift: true))
+        #expect(recorded.displayString == "⇧⌘8")
+        let f6 = try #require(ShortcutModel.from(event: try key("\u{F709}", 97, [.function])))
+        #expect(f6 == ShortcutModel(key: "F6", command: false), "a function key needs no modifier")
+        #expect(ShortcutModel.from(event: try key("j", 38, [])) == nil, "a plain letter is typing, not a shortcut")
     }
 
     @Test
