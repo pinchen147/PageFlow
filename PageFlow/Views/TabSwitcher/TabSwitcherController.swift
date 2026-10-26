@@ -22,6 +22,11 @@ final class TabSwitcherController {
 
     private var panel: TabSwitcherPanel?
     private var clickMonitor: Any?
+    /// Re-snapshots the open tabs and re-hosts the list content, re-pinning the
+    /// panel's TOP edge to its launch anchor, so a drag-reorder / cross-window
+    /// move shows the new order without the dropdown drifting upward.
+    /// Set while the panel is open; cleared on hide.
+    private var rebuildContent: (() -> Void)?
 
     /// Per-window chevron anchors, so a menu/keyboard invocation drops the panel
     /// under the right window's button. Keyed by window identity.
@@ -76,39 +81,76 @@ final class TabSwitcherController {
         guard let window else { return }
         hide()  // never stack two
 
-        let groups = WindowRegistry.shared.allOpenTabs()
-        let closed = ClosedTabStore.shared.records
         let anchor = anchors[ObjectIdentifier(window)]?.view
         let anchorRect = anchorScreenRect(anchor: anchor, window: window)
 
-        let root = TabSwitcherView(
+        let panel = self.panel ?? TabSwitcherPanel()
+        panel.onClose = { [weak self] in self?.hide() }
+        self.panel = panel
+
+        // Build/refresh the list content from a fresh snapshot and re-pin the
+        // panel to the SAME anchor. `show` and a reorder/move both go through
+        // here, so the dropdown always hangs from the chevron at the new size.
+        rebuildContent = { [weak self] in
+            guard let self, let panel = self.panel else { return }
+            let root = self.makeRootView(
+                groups: WindowRegistry.shared.allOpenTabs(),
+                closed: ClosedTabStore.shared.records,
+                host: hostTabManager,
+                maxListHeight: self.maxListHeight(below: anchorRect, in: window)
+            )
+            let hosting = NSHostingController(rootView: root)
+            panel.contentViewController = hosting
+            panel.setContentSize(hosting.view.fittingSize)
+            // `setContentSize` anchors the window's BOTTOM-left, so a height
+            // change from a reorder/cross-window move (added window header, new
+            // tab count) would shove the TOP edge up under the chevron. Re-pin
+            // the top-left to the launch anchor so it grows/shrinks downward.
+            self.positionPanel(panel, below: anchorRect)
+        }
+        rebuildContent?()
+
+        #if DEBUG
+        QAPresentation.show(panel)
+        #else
+        panel.makeKeyAndOrderFront(nil)
+        #endif
+
+        launchAnchor = anchor
+        installClickMonitor()
+    }
+
+    /// The dropdown's SwiftUI root with all callbacks wired. Rebuilt in place on a
+    /// reorder so the list reflects the new tab order.
+    private func makeRootView(
+        groups: [WindowTabGroup],
+        closed: [ClosedTabStore.Record],
+        host: TabManager?,
+        maxListHeight: CGFloat
+    ) -> TabSwitcherView {
+        TabSwitcherView(
             groups: groups,
             closed: closed,
-            maxListHeight: maxListHeight(below: anchorRect, in: window),
+            maxListHeight: maxListHeight,
             onJump: { [weak self] tabID, manager in
                 WindowRegistry.shared.jumpToTab(tabID, in: manager)
                 self?.hide()
             },
             onReopen: { [weak self] record in
-                self?.reopen(record, host: hostTabManager)
+                self?.reopen(record, host: host)
                 self?.hide()
             },
-            onClose: { [weak self] in self?.hide() }
+            onClose: { [weak self] in self?.hide() },
+            onReorder: { [weak self] tabID, from, to, toIndex in
+                if from === to {
+                    from.commitTabReorder(tabID, toIndex: toIndex)
+                } else {
+                    // Cross-window move; don't steal focus (keep the switcher put).
+                    _ = from.moveTab(tabID, to: to, at: toIndex, select: false)
+                }
+                self?.rebuildContent?()
+            }
         )
-
-        let hosting = NSHostingController(rootView: root)
-
-        let panel = self.panel ?? TabSwitcherPanel()
-        panel.onClose = { [weak self] in self?.hide() }
-        panel.contentViewController = hosting
-        panel.setContentSize(hosting.view.fittingSize)
-        self.panel = panel
-
-        positionPanel(panel, below: anchorRect)
-        panel.makeKeyAndOrderFront(nil)
-
-        launchAnchor = anchor
-        installClickMonitor()
     }
 
     func hide() {
@@ -120,6 +162,7 @@ final class TabSwitcherController {
         // Drop the SwiftUI tree so its [WindowTabGroup] snapshot stops pinning
         // those windows' TabManagers/PDFManagers while the panel is hidden.
         panel?.contentViewController = nil
+        rebuildContent = nil
         launchAnchor = nil
     }
 

@@ -72,7 +72,7 @@ struct DocumentStateTests {
     }
 
     @Test
-    func bookmarkManagerReconcilesInsertedDeletedAndMovedPages() {
+    func bookmarkManagerReconcilesInsertedDeletedAndMovedPages() throws {
         let pdfManager = PDFManager()
         let bookmarkManager = BookmarkManager()
         let undoManager = UndoManager()
@@ -82,7 +82,7 @@ struct DocumentStateTests {
         bookmarkManager.addBookmark(at: 1)
         bookmarkManager.addBookmark(at: 3)
 
-        let secondBookmark = try! #require(bookmarkManager.bookmarks.first(where: { $0.pageIndex == 3 }))
+        let secondBookmark = try #require(bookmarkManager.bookmarks.first(where: { $0.pageIndex == 3 }))
         bookmarkManager.renameBookmark(secondBookmark.id, to: "Chapter")
 
         bookmarkManager.handlePageInsertion(at: 1)
@@ -100,7 +100,7 @@ struct DocumentStateTests {
 
         bookmarkManager.handlePageMove(from: 3, to: 0)
 
-        let movedBookmark = try! #require(bookmarkManager.sortedBookmarks.first)
+        let movedBookmark = try #require(bookmarkManager.sortedBookmarks.first)
         #expect(movedBookmark.pageIndex == 0)
         #expect(movedBookmark.title == "Chapter")
     }
@@ -130,7 +130,7 @@ struct DocumentStateTests {
 
         bookmarkManager.loadBookmarks(for: symlinkURL)
 
-        let loadedBookmark = try! #require(bookmarkManager.bookmarks.first)
+        let loadedBookmark = try #require(bookmarkManager.bookmarks.first)
         #expect(loadedBookmark.pageIndex == 2)
         #expect(bookmarkManager.bookmarks.count == 1)
     }
@@ -149,11 +149,16 @@ struct DocumentStateTests {
 
         let tabManager = TabManager()
         let originalTabID = tabManager.tabs[0].id
-        tabManager.tabs[0].documentURL = existingURL
+        // Load a real document into the fresh window's placeholder (reused in
+        // place), so the locked open below must create a temporary second tab
+        // instead of clobbering a tab that owns a document.
+        tabManager.openDocument(url: existingURL, isSecurityScoped: false)
+        #expect(tabManager.tabs.count == 1)
+        #expect(tabManager.activeTabID == originalTabID)
 
         tabManager.openDocument(url: lockedURL, isSecurityScoped: false)
 
-        let passwordRequest = try! #require(tabManager.pendingPasswordRequest)
+        let passwordRequest = try #require(tabManager.pendingPasswordRequest)
         #expect(passwordRequest.tabID != originalTabID)
         #expect(tabManager.tabID(for: lockedURL) == passwordRequest.tabID)
         #expect(tabManager.tabs.count == 2)
@@ -191,13 +196,12 @@ struct DocumentStateTests {
 
         #expect(pdfManager.pendingLockedURL == nil)
         #expect(pdfManager.pendingLockedDocument == nil)
-        #expect(pdfManager.pendingIsSecurityScoped == false)
     }
 
     @Test
     func recentFilesManagerRetainsBookmarkBackedEntriesWhenStoredPathIsMissing() throws {
         let suiteName = "RecentFilesManagerTests-\(UUID().uuidString)"
-        let defaults = try! #require(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -230,7 +234,7 @@ struct DocumentStateTests {
     @Test
     func settingsManagerPersistsToolbarPreferences() throws {
         let suiteName = "SettingsManagerTests-\(UUID().uuidString)"
-        let defaults = try! #require(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -239,23 +243,44 @@ struct DocumentStateTests {
         #expect(manager.isTopBarAlwaysVisible == false)
         #expect(manager.isFloatingToolbarAlwaysVisible == false)
         #expect(manager.isPageIndicatorAlwaysVisible == false)
+        #expect(manager.isCompactTabsEnabled)
 
         manager.toolbarScale = 1.35
         manager.isTopBarAlwaysVisible = true
         manager.isFloatingToolbarAlwaysVisible = true
         manager.isPageIndicatorAlwaysVisible = true
+        manager.isCompactTabsEnabled = false
 
         let reloadedManager = SettingsManager(defaults: defaults)
         #expect(reloadedManager.toolbarScale == 1.35)
         #expect(reloadedManager.isTopBarAlwaysVisible)
         #expect(reloadedManager.isFloatingToolbarAlwaysVisible)
         #expect(reloadedManager.isPageIndicatorAlwaysVisible)
+        #expect(reloadedManager.isCompactTabsEnabled == false)
+    }
+
+    @Test
+    func settingsManagerDefaultsHiddenContentRowVisibleAndPersistsChanges() throws {
+        let suiteName = "SettingsManagerHiddenContentRowTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let manager = SettingsManager(defaults: defaults)
+        #expect(manager.markdownShowsHiddenContentRow)
+
+        manager.markdownShowsHiddenContentRow = false
+        let reloadedManager = SettingsManager(defaults: defaults)
+        #expect(!reloadedManager.markdownShowsHiddenContentRow)
+
+        reloadedManager.markdownShowsHiddenContentRow = true
+        #expect(SettingsManager(defaults: defaults).markdownShowsHiddenContentRow)
     }
 
     @Test
     func settingsManagerInitializesSeparatedVisibilityControlsHidden() throws {
         let suiteName = "SettingsManagerDefaultVisibilityTests-\(UUID().uuidString)"
-        let defaults = try! #require(UserDefaults(suiteName: suiteName))
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
@@ -269,7 +294,43 @@ struct DocumentStateTests {
     }
 
     @Test
-    func commentManagerReconcilesAfterPageStructureChanges() {
+    func annotationUndoAfterSaveRemainsSaveable() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("annotation-undo-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try #require(makeTextDocument(text: "saved annotation"))
+        let page = try #require(document.page(at: 0))
+        let selection = try #require(document.findString("saved", withOptions: []).first)
+        let pdfManager = PDFManager()
+        pdfManager.document = document
+        pdfManager.documentURL = url
+        let annotations = AnnotationManager()
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        annotations.configure(pdfManager: pdfManager,
+                              selectionProvider: { (selection, page) },
+                              undoManagerProvider: { undo })
+        undo.beginUndoGrouping()
+        annotations.highlightSelection()
+        undo.endUndoGrouping()
+        #expect(page.annotations.count == 1)
+        try #require(pdfManager.saveSync())
+        #expect(!pdfManager.isDirty)
+
+        undo.undo()
+        #expect(page.annotations.isEmpty)
+        try #require(pdfManager.isDirty, "Undo changed the saved PDF and must enable saving/close protection")
+        try #require(pdfManager.saveSync())
+        #expect(PDFDocument(url: url)?.page(at: 0)?.annotations.isEmpty == true)
+
+        undo.redo()
+        #expect(page.annotations.count == 1)
+        #expect(pdfManager.isDirty)
+        try #require(pdfManager.saveSync())
+        #expect(PDFDocument(url: url)?.page(at: 0)?.annotations.count == 1)
+    }
+
+    @Test
+    func commentManagerReconcilesAfterPageStructureChanges() throws {
         let document = makeTestDocument(pageCount: 3)
         let pdfManager = PDFManager()
         let commentManager = CommentManager()
@@ -285,13 +346,13 @@ struct DocumentStateTests {
             undoManagerProvider: { undoManager }
         )
 
-        let commentID = try! #require(commentManager.addComment(text: "note"))
+        let commentID = try #require(commentManager.addComment(text: "note"))
         #expect(commentManager.comments.first?.pageIndex == 1)
 
         document.removePage(at: 0)
         commentManager.reconcilePageIndices()
 
-        let shiftedComment = try! #require(commentManager.comments.first(where: { $0.id == commentID }))
+        let shiftedComment = try #require(commentManager.comments.first(where: { $0.id == commentID }))
         #expect(shiftedComment.pageIndex == 0)
 
         document.removePage(at: 0)

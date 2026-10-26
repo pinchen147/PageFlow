@@ -11,6 +11,8 @@ final class PDFViewHost: NSView {
     let pdfView: StablePDFView
 
     private var isFreezingPDFLayout = false
+    private var isContentActive = true
+    private var visibilityUpdateScheduled = false
 
     init(pdfView: StablePDFView) {
         self.pdfView = pdfView
@@ -27,6 +29,26 @@ final class PDFViewHost: NSView {
     override var isOpaque: Bool { true }
 
     override var preservesContentDuringLiveResize: Bool { true }
+
+    /// Stop inactive-tab input immediately. Native hiding runs after the
+    /// representable update because AppKit's key-view traversal can re-enter
+    /// SwiftUI focus layout while updateNSView is projecting the warm set.
+    func setContentActive(_ active: Bool) {
+        isContentActive = active
+        guard isHidden != !active, !visibilityUpdateScheduled else { return }
+        visibilityUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.visibilityUpdateScheduled = false
+            let shouldHide = !self.isContentActive
+            if self.isHidden != shouldHide { self.isHidden = shouldHide }
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard isContentActive else { return nil }
+        return super.hitTest(point)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         DesignTokens.viewerBackground.setFill()

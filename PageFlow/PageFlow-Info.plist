@@ -2,40 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleExecutable</key>
-	<string>$(EXECUTABLE_NAME)</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
-	<key>CFBundleIdentifier</key>
-	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleVersion</key>
-	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.productivity</string>
-	<!-- Work around a macOS 26 Swift-concurrency runtime crash: the executor
-	     identity check (swift_task_isCurrentExecutor) segfaults from
-	     MainActor.assumeIsolated, including SwiftUI's own _ButtonGesture, so the
-	     app crashes on a click. `legacy` restores the non-crashing executor check.
-	     Safe here: the app is MainActor-by-default and single-main-thread, so the
-	     isolation assumptions are genuinely correct — only the check is buggy.
-	     See swiftlang/swift#76804. Revisit when the toolchain/OS fixes it. -->
-	<key>LSEnvironment</key>
-	<dict>
-		<key>SWIFT_IS_CURRENT_EXECUTOR_LEGACY_MODE_OVERRIDE</key>
-		<string>legacy</string>
-	</dict>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -55,6 +21,77 @@
 			<array>
 				<string>com.adobe.pdf</string>
 			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>md</string>
+				<string>markdown</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string>AppIcon</string>
+			<key>CFBundleTypeName</key>
+			<string>Markdown Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>net.daringfireball.markdown</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<!-- Works around the macOS 26 swift_task_isCurrentExecutor crash on clicks
+	     (swiftlang/swift#76804) by restoring the legacy executor check. Do not
+	     remove: the app segfaults on ordinary clicks without it. -->
+	<key>LSEnvironment</key>
+	<dict>
+		<key>SWIFT_IS_CURRENT_EXECUTOR_LEGACY_MODE_OVERRIDE</key>
+		<string>legacy</string>
+	</dict>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.plain-text</string>
+				<string>public.text</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Markdown Document</string>
+			<key>UTTypeIdentifier</key>
+			<string>net.daringfireball.markdown</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>md</string>
+					<string>markdown</string>
+				</array>
+			</dict>
 		</dict>
 	</array>
 </dict>

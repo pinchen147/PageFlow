@@ -13,36 +13,25 @@ import AppKit
 /// to `MarkdownLayout` — the pure pipeline that holds the column/heading/
 /// monospace/list heuristics. Keeping every live-PDFKit read here is what lets
 /// those heuristics be unit-tested without a rendered PDF.
-struct MarkdownExporter {
+nonisolated struct MarkdownExporter {
 
     // MARK: - Public API
 
-    static func export(
-        scope: ExportScope,
-        document: PDFDocument,
-        comments: [CommentModel] = []
-    ) -> String {
-        let range = scope.pageIndices(in: document)
+    /// Runs only against a document owned by this worker. A live UI document
+    /// stays on the main actor; cancellation never publishes a partial export.
+    static func exportPages(_ range: Range<Int>, document: PDFDocument, comments: [CommentModel]) throws -> String {
+        try Task.checkCancellation()
         guard !range.isEmpty else { return "" }
-
-        let commentsByPage = Dictionary(
-            grouping: comments.filter { !$0.text.isEmpty },
-            by: \.pageIndex
-        )
-
-        let pages = range.compactMap { index -> String? in
-            guard let page = document.page(at: index) else { return nil }
-            let pageComments = commentsByPage[index] ?? []
-            let markdown = convertPageToMarkdown(page, comments: pageComments)
-            return markdown.isEmpty ? nil : markdown
+        let commentsByPage = Dictionary(grouping: comments.filter { !$0.text.isEmpty }, by: \.pageIndex)
+        var pages: [String] = []
+        for index in range {
+            try Task.checkCancellation()
+            guard let page = document.page(at: index) else { continue }
+            let markdown = convertPageToMarkdown(page, comments: commentsByPage[index] ?? [])
+            if !markdown.isEmpty { pages.append(markdown) }
         }
-
+        try Task.checkCancellation()
         return pages.joined(separator: "\n\n---\n\n")
-    }
-
-    static func copyToClipboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
     }
 
     // MARK: - Page Conversion
@@ -64,8 +53,8 @@ struct MarkdownExporter {
         // Fallback: plain string with comments appended
         var result = page.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !comments.isEmpty {
-            let commentText = comments.map { "> \($0.text)" }.joined(separator: "\n>\n")
-            result += "\n\n" + commentText
+            let commentText = comments.map { MarkdownLayout.quoteComment($0.text) }.joined(separator: "\n>\n")
+            result += (result.isEmpty ? "" : "\n\n") + commentText
         }
         return result
     }

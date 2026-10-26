@@ -172,7 +172,7 @@ extension StablePDFView {
         colorMenuItem.submenu = colorSubmenu
         menu.addItem(colorMenuItem)
 
-        return menu
+        return annotationMenuRespectingPermissions(menu)
     }
 
     @objc func removeAnnotationAction(_ sender: NSMenuItem) {
@@ -212,7 +212,7 @@ extension StablePDFView {
         colorMenuItem.submenu = colorSubmenu
         menu.addItem(colorMenuItem)
 
-        return menu
+        return annotationMenuRespectingPermissions(menu)
     }
 
     @objc func removeCommentAction(_ sender: NSMenuItem) {
@@ -223,6 +223,14 @@ extension StablePDFView {
     @objc func changeCommentColorAction(_ sender: NSMenuItem) {
         guard let tuple = sender.representedObject as? (PDFAnnotation, NSColor) else { return }
         onCommentColorChange?(tuple.0, tuple.1)
+    }
+
+    /// A document that forbids commenting shows its annotation commands disabled.
+    private func annotationMenuRespectingPermissions(_ menu: NSMenu) -> NSMenu {
+        guard !PDFPermissions(document).annotate else { return menu }
+        menu.autoenablesItems = false
+        menu.items.forEach { $0.isEnabled = false }
+        return menu
     }
 
     // MARK: - Page Context Menu Actions
@@ -266,6 +274,7 @@ extension StablePDFView {
     }
 
     private func appendPageMenuItems(to menu: NSMenu) {
+        let allowsCopying = PDFPermissions(document).copy
         let bookmarkShortcut = ShortcutModel.current(for: "bookmark")
         let bookmarkItem = NSMenuItem(
             title: "Bookmark Page",
@@ -276,6 +285,8 @@ extension StablePDFView {
         bookmarkItem.target = self
         menu.addItem(bookmarkItem)
 
+        // Markdown export extracts text, which a copy-protected document forbids.
+        guard allowsCopying else { return }
         menu.addItem(.separator())
 
         let copyPageShortcut = ShortcutModel.current(for: "copyPageAsMarkdown")

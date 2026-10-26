@@ -10,114 +10,125 @@ import AppKit
 
 struct TabContainerView: View {
     @Environment(RecentFilesManager.self) private var recentFilesManager
+    @Environment(\.colorScheme) private var systemColorScheme
+    @State private var settingsManager = SettingsManager.shared
 
-    @State private var tabManager: TabManager
-    @State private var showingSearch = false
-    @State private var searchFocusRequest = 0
+    /// Holds this window's `TabManager`, constructed lazily on first use.
+    ///
+    /// SwiftUI re-runs a view's `init` on every scene/body recomputation. With
+    /// `State(wrappedValue: TabManager())` that built — then immediately threw
+    /// away — a full `TabManager` (five managers + wiring) on each of those
+    /// passes; with a second scene open that invalidates often, it churned
+    /// hundreds of throwaway managers and dominated frame time. The holder defers
+    /// construction to first access, so a re-init costs nothing.
+    @State private var holder: TabManagerHolder
 
-    /// Default init: each window creates its own empty TabManager.
+    /// Default init: each window lazily creates its own TabManager.
     init() {
-        self._tabManager = State(wrappedValue: TabManager())
+        self._holder = State(wrappedValue: TabManagerHolder())
     }
 
     /// Tear-off init: the caller hands us a pre-populated TabManager (e.g.
     /// one that already contains the dragged-out tab). The window opens with
     /// that state already in place — no race, no placeholder dance.
     init(tabManager: TabManager) {
-        self._tabManager = State(wrappedValue: tabManager)
+        self._holder = State(wrappedValue: TabManagerHolder(adopting: tabManager))
     }
 
-    private var alwaysOnTopBinding: Binding<Bool> {
-        Binding(
-            get: { tabManager.isAlwaysOnTop },
-            set: { tabManager.isAlwaysOnTop = $0 }
-        )
+    /// This window's TabManager, stable for the view's lifetime.
+    private var tabManager: TabManager { holder.manager }
+
+    /// A Markdown tab can be forced light or dark (Settings); the drop indicator
+    /// follows the page it is drawn over, else the Mac's appearance.
+    private var dropIndicatorColorScheme: ColorScheme {
+        guard let id = tabManager.activeTabID, tabManager.contentKind(for: id) == .markdown else {
+            return systemColorScheme
+        }
+        return settingsManager.markdownColorScheme.forcedColorScheme ?? systemColorScheme
+    }
+
+    private var showingSearch: Binding<Bool> {
+        Binding(get: { tabManager.showingSearch }, set: { tabManager.showingSearch = $0 })
     }
 
     private var activeWindowTitle: String {
-        tabManager.activePDFManager?.documentTitle ?? "PageFlow"
+        tabManager.activeSession?.content.document.documentTitle ?? "PageFlow"
     }
 
-    /// One warm tab in the ZStack: the active tab is visible, hit-testable, and on
-    /// top; the rest stay mounted but invisible and inert. Extracted from the
-    /// `ForEach` so the SwiftUI type-checker resolves `MainView`'s initializer once
-    /// here instead of inside the loop closure.
+    /// One warm tab in the ZStack: the active tab is visible, hit-testable and
+    /// on top; the rest stay mounted, hidden at full size (the editor inside is
+    /// hidden at the AppKit level and does no work), so switching back is an
+    /// instant show. `.id(tabID)` keeps each tab's PDFViewWrapper Coordinator
+    /// bound to that tab's managers.
     @ViewBuilder
-    private func warmTab(for runtime: TabRuntime) -> some View {
-        let isActiveTab = runtime.tabID == tabManager.activeTabID
-        MainView(
-            tabID: runtime.tabID,
-            pdfManager: runtime.pdfManager,
-            searchManager: runtime.searchManager,
-            annotationManager: runtime.annotationManager,
-            commentManager: runtime.commentManager,
-            bookmarkManager: runtime.bookmarkManager,
-            tabUndoManager: runtime.undoManager,
+    private func warmTab(for render: TabRender) -> some View {
+        let isActiveTab = render.id == tabManager.activeTabID
+        TabRenderView(
+            render: render,
             isActive: isActiveTab,
-            showingSearch: $showingSearch,
-            searchFocusRequest: searchFocusRequest,
-            tabManager: tabManager,
-            onOpenFile: { url, isSecurityScoped, replaceCurrent in
-                tabManager.openDocument(url: url, isSecurityScoped: isSecurityScoped, replaceCurrent: replaceCurrent)
-            }
+            isDisplayed: isActiveTab,
+            showingSearch: showingSearch,
+            searchFocusRequest: tabManager.searchFocusRequest,
+            tabManager: tabManager
         )
-        .id(runtime.tabID)
+        .id(render.id)
         .opacity(isActiveTab ? 1 : 0)
         .allowsHitTesting(isActiveTab)
         .zIndex(isActiveTab ? 1 : 0)
         .accessibilityHidden(!isActiveTab)
     }
 
-    var body: some View {
+    /// Every warm tab (TabManager.renderedTabs, LRU-capped) in one ZStack, so
+    /// ⌘-number / ⌘[ ⌘] switching is an instant show rather than a teardown +
+    /// cold rebuild. Only the active tab keeps its window-wide event monitors
+    /// installed (driven by `isActive`); the LRU cap frees least-recently-used
+    /// tabs. Per-tab reading position is restored by TabManager.restoreTabState
+    /// + DocumentStateStore.
+    private var content: some View {
         ZStack {
-            // Keep a small warm set of tabs mounted (TabManager.renderedRuntimes,
-            // LRU-capped) and switch by visibility, so Cmd-number/⌘[ ⌘] switching is
-            // an instant show rather than a teardown + cold PDFKit rebuild.
-            //
-            // Each tab keeps its own `.id(tabID)`, so its PDFViewWrapper Coordinator
-            // stays bound to that tab's managers (the original reason this `.id`
-            // exists — without it one reused MainView kept a Coordinator captured on
-            // the wrong tab's `let` managers). The grow-over-time lag that the
-            // earlier "tear down on every switch" fix targeted is instead prevented
-            // at its real source: only the active tab keeps its window-wide event
-            // monitors installed (driven by `isActive`), and the LRU cap tears down
-            // and frees least-recently-used tabs. Per-tab reading position is still
-            // restored by TabManager.restoreTabState + DocumentStateStore.
-            ForEach(tabManager.renderedRuntimes, id: \.tabID) { runtime in
-                warmTab(for: runtime)
+            ForEach(tabManager.renderedTabs) { render in
+                warmTab(for: render)
             }
         }
+    }
+
+    var body: some View {
+        content
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.all, edges: .all)
         .overlay(alignment: .top) {
             TopChromeView(tabManager: tabManager)
                 .ignoresSafeArea(.all, edges: .top)
+        }
+        // The ONE transient pill for this window ("Saved", open failures) —
+        // content-agnostic, mounted once so PDF and Markdown can't drift.
+        .overlay(alignment: .bottom) {
+            TransientToastOverlay(tabManager: tabManager)
+        }
+        // The ONE file-drop indicator for this window, around the whole window
+        // and above the chrome, in the active document's light or dark.
+        .overlay {
+            FileDropOverlay(isVisible: tabManager.isFileDropHovering)
+                .environment(\.colorScheme, dropIndicatorColorScheme)
         }
         .toolbar(.hidden)
         .background(WindowConfigurator(isAlwaysOnTop: tabManager.isAlwaysOnTop))
         .background(WindowTitleUpdater(title: activeWindowTitle))
         .background(WindowRegistrar(tabManager: tabManager))
         .focusedSceneValue(\.tabManager, tabManager)
-        .focusedSceneValue(\.showingSearch, $showingSearch)
-        .focusedSceneValue(\.searchFocusRequest, $searchFocusRequest)
-        .focusedSceneValue(\.alwaysOnTop, alwaysOnTopBinding)
-        .onChange(of: showingSearch) { _, isShowing in
-            if !isShowing {
-                tabManager.clearAllSearchState()
-            }
-        }
         .onAppear {
             tabManager.documentOpenedHandler = { [recentFilesManager] url, isSecurityScoped in
                 recentFilesManager.addRecentFile(url, isSecurityScoped: isSecurityScoped)
             }
 
-            // Flush any Finder-opened URLs immediately on cold launch
-            // (faster than waiting for WindowRegistrarView to mount + async dispatch)
+            // Deliver immediately if already registered. Otherwise keep launch
+            // URLs queued for WindowRegistrar so restore can deduplicate them.
             if let appDelegate = AppDelegate.shared {
                 appDelegate.flushPendingURLs(to: tabManager)
             }
         }
         .onOpenURL { url in
-            guard url.pathExtension.lowercased() == "pdf" else { return }
+            guard url.pageFlowIsOpenableDocument else { return }
             tabManager.closeFilePicker()
             tabManager.openDocument(url: url, isSecurityScoped: false)
         }
@@ -125,17 +136,53 @@ struct TabContainerView: View {
             tabManager.flushActiveTabViewState()
             WindowRegistry.shared.unregister(tabManager)
         }
-        .sheet(item: $tabManager.pendingPasswordRequest) { request in
-            PasswordDialogView(
-                fileName: request.url.lastPathComponent,
-                onSubmit: { password in
-                    tabManager.submitPassword(password)
-                },
-                onCancel: {
-                    tabManager.cancelPasswordPrompt()
-                }
-            )
+        .sheet(item: Self.passwordRequestBinding(in: tabManager)) { request in
+            Self.passwordDialog(for: request, in: tabManager)
         }
+    }
+
+    static func passwordRequestBinding(in tabManager: TabManager) -> Binding<TabManager.PasswordPrompt?> {
+        let presented = tabManager.pendingPasswordRequest
+        return Binding(
+            get: { presented },
+            set: { request in
+                guard request == nil, let presented else { return }
+                tabManager.cancelPasswordPrompt(for: presented)
+            }
+        )
+    }
+
+    static func passwordDialog(for request: TabManager.PasswordPrompt, in tabManager: TabManager) -> PasswordDialogView {
+        PasswordDialogView(
+            fileName: request.url.lastPathComponent,
+            onSubmit: { password in
+                tabManager.submitPassword(password, for: request)
+            },
+            onCancel: {
+                tabManager.cancelPasswordPrompt(for: request)
+            }
+        )
+    }
+}
+
+// MARK: - TabManager Holder
+
+/// Lazily constructs and retains a window's `TabManager`. Construction is
+/// deferred out of `TabContainerView.init` (which SwiftUI re-runs on every
+/// scene recompute) so a re-init never builds a throwaway manager — see the
+/// `holder` doc-comment on `TabContainerView`.
+@MainActor
+private final class TabManagerHolder {
+    private var stored: TabManager?
+
+    init() {}
+    init(adopting manager: TabManager) { stored = manager }
+
+    var manager: TabManager {
+        if let stored { return stored }
+        let created = TabManager()
+        stored = created
+        return created
     }
 }
 

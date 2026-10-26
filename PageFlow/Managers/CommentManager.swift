@@ -66,9 +66,11 @@ final class CommentManager {
 
     @discardableResult
     func addComment(text: String = "") -> UUID? {
-        guard let (selectionOptional, pageOptional) = selectionProvider?(),
+        guard let manager = pdfManager, manager.permissions.annotate,
+              let (selectionOptional, pageOptional) = selectionProvider?(),
               let page = pageOptional,
-              let document = pdfManager?.document else {
+              let document = manager.document,
+              page.document === document, document.index(for: page) != NSNotFound else {
             return nil
         }
 
@@ -105,7 +107,8 @@ final class CommentManager {
     }
 
     func updateComment(_ id: UUID, text: String) {
-        guard let index = comments.firstIndex(where: { $0.id == id }) else {
+        guard pdfManager?.permissions.annotate == true,
+              let index = comments.firstIndex(where: { $0.id == id }) else {
             return
         }
 
@@ -121,7 +124,8 @@ final class CommentManager {
     }
 
     func deleteComment(_ id: UUID) {
-        guard let index = comments.firstIndex(where: { $0.id == id }),
+        guard pdfManager?.permissions.annotate == true,
+              let index = comments.firstIndex(where: { $0.id == id }),
               let highlight = highlights[id] else {
             return
         }
@@ -176,7 +180,11 @@ final class CommentManager {
         return true
     }
 
+    /// Whether the open document lets comments be added, edited or removed.
+    var canEdit: Bool { pdfManager?.permissions.annotate == true }
+
     func startEditing(_ id: UUID) {
+        guard canEdit else { return }
         editingCommentID = id
     }
 
@@ -189,7 +197,7 @@ final class CommentManager {
     }
 
     func updateCommentColor(_ id: UUID, color: NSColor) {
-        guard let highlight = highlights[id] else { return }
+        guard pdfManager?.permissions.annotate == true, let highlight = highlights[id] else { return }
         let previousColor = highlight.color
         guard previousColor != color else { return }
 
