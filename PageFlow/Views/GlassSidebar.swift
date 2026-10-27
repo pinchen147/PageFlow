@@ -61,7 +61,7 @@ struct GlassSidebarTitle: View {
     var body: some View {
         Text(text)
             .font(.headline)
-            .pageFlowGlassControlLabel()
+            .foregroundStyle(.primary)
     }
 }
 
@@ -72,8 +72,7 @@ struct GlassSidebarEmptyState: View {
     var body: some View {
         Text(text)
             .font(.caption)
-            .foregroundStyle(DesignTokens.sidebarSecondaryText)
-            .pageFlowGlassControlLabel()
+            .foregroundStyle(.secondary)
             .padding(DesignTokens.spacingMD)
     }
 }
@@ -88,7 +87,6 @@ struct GlassSidebarCloseButton: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()

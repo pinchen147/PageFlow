@@ -31,7 +31,13 @@ import AppKit
 public final class MarkdownEditorController {
     /// Set by ``NativeTextViewCoordinator`` when the editor is created; cleared on teardown.
     /// Weak so the controller never keeps a torn-down editor alive.
-    weak var coordinator: NativeTextViewCoordinator?
+    weak var coordinator: NativeTextViewCoordinator? {
+        didSet {
+            guard oldValue !== coordinator else { return }
+            oldValue?.invalidateSectionNavigation()
+            coordinator?.refreshSectionNavigation()
+        }
+    }
 
     let foldSession = MarkdownFoldSession()
 
@@ -247,6 +253,41 @@ public final class MarkdownEditorController {
         return coordinator.moveBlock(payload, to: slot, copying: copying)
     }
 
+    // MARK: - Section navigation
+
+    /// Enables canonical heading publication for the displayed editor. Disabled by default.
+    public var isSectionNavigationEnabled = false {
+        didSet {
+            guard oldValue != isSectionNavigationEnabled else { return }
+            coordinator?.invalidateSectionNavigation()
+            if isSectionNavigationEnabled { coordinator?.refreshSectionNavigation() }
+        }
+    }
+
+    /// Delivers the committed snapshot when targets, visibility or availability change.
+    /// Consume this value directly; querying `sectionNavigationSnapshot` reconciles again.
+    public var onSectionNavigationChange: ((MarkdownSectionNavigationSnapshot?) -> Void)?
+
+    /// Reconciles the native viewport and returns current headings/visible ranks;
+    /// nil while unavailable. Publication callbacks receive this committed value directly.
+    public var sectionNavigationSnapshot: MarkdownSectionNavigationSnapshot? {
+        coordinator?.refreshSectionNavigation()
+        return coordinator?.sectionNavigationState.snapshot
+    }
+
+    /// Reads a bounded excerpt, or nil when the target's editor revision has retired.
+    public func sectionPreview(for target: MarkdownSectionTarget) -> MarkdownSectionPreview? {
+        coordinator?.sectionPreview(for: target)
+    }
+
+    /// Scrolls without changing source, selection, Find or Undo. Input protection defers
+    /// execution; validity is checked again then. Reports departure only after a changed landing.
+    public func scrollToSection(_ target: MarkdownSectionTarget,
+                                whileValid: @escaping () -> Bool,
+                                didNavigate: @escaping (ReadingPosition) -> Void) {
+        coordinator?.scrollToSection(target, whileValid: whileValid, didNavigate: didNavigate)
+    }
+
     // MARK: - Reading position (D7)
 
     /// Where the reader is, in document terms (top source line + its offset in
@@ -261,6 +302,13 @@ public final class MarkdownEditorController {
     @discardableResult
     public func restore(_ position: ReadingPosition) -> Bool {
         (coordinator?.textView as? NativeTextView)?.restore(position) ?? false
+    }
+
+    /// Defers restoration until protected native input settles. Reports the execution-time
+    /// departure only after a successful restore, provided host ownership remains valid.
+    public func restore(_ position: ReadingPosition, whileValid: @escaping () -> Bool,
+                        didRestore: @escaping (ReadingPosition) -> Void) {
+        coordinator?.restoreWhenInputSettles(position, whileValid: whileValid, didRestore: didRestore)
     }
 
     /// Asks the editor to put the caret and the reader back after the NEXT

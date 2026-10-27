@@ -65,8 +65,10 @@ struct PDFDeferredProjectionTests {
         if interruption == .none {
             #expect(PDFViewWrapper.scalesDiffer(manager.scaleFactor, expectedScale), "Positive control: an uninterrupted display-mode change must still fit")
             #expect(!PDFViewWrapper.scalesDiffer(view.scaleFactor, manager.scaleFactor))
+            #expect(manager.suppressesNavigationRail)
         } else {
             #expect(manager.scaleFactor == expectedScale, "An obsolete view callback must not overwrite newer intent")
+            #expect(manager.suppressesNavigationRail == (interruption == .autoScale))
         }
     }
 

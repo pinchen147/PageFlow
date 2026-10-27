@@ -93,6 +93,8 @@ final class StablePDFView: PDFView {
     var onAnnotationColorChange: ((PDFAnnotation, NSColor) -> Void)?
     var onCommentColorChange: ((PDFAnnotation, NSColor) -> Void)?
     var onControlScroll: ((NSEvent) -> Bool)?
+    /// Returns false when this native view no longer owns the displayed document.
+    var onUserZoom: ((PDFUserZoomIntent) -> Bool)?
     var onLinkNavigation: (() -> Void)?
     var onCopyPageAsMarkdown: (() -> Void)?
     var onCopyDocumentAsMarkdown: (() -> Void)?
@@ -130,18 +132,7 @@ final class StablePDFView: PDFView {
             return event
         }
 
-        let windowPoint = event.locationInWindow
-        let viewPoint = self.convert(windowPoint, from: nil)
-
-        guard self.bounds.contains(viewPoint) else {
-            return event
-        }
-
-        // Verify this view is the frontmost at click point (fixes multi-tab bug)
-        guard let hitView = window.contentView?.hitTest(windowPoint),
-              hitView === self || hitView.isDescendant(of: self) else {
-            return event
-        }
+        guard let viewPoint = frontmostEventPoint(event) else { return event }
 
         // Asks the host to focus this tab (a no-op when it is already active).
         onRequestFocus?()
