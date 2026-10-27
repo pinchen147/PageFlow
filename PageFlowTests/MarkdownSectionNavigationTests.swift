@@ -438,4 +438,68 @@ struct MarkdownSectionNavigationTests {
         #expect(try widths(rail) == [21, 6])
     }
 
+    @Test("Native window delivery preserves editor ownership and protected input when clicking a rail",
+          arguments: ["selection", "marked", "table", "tableMarked"])
+    func nativeRailClickKeepsInputOwner(input: String) async throws {
+        let source = "# First\n| H |\n| --- |\n| cell |\n\n"
+            + String(repeating: "paragraph\n\n", count: 100) + "# Last\ntail\n"
+        let mounted = Mounted(source: source)
+        defer { mounted.close() }
+        let rail = try await prepareRail(mounted)
+        // Restore production native-control admission; raster helpers clear it.
+        rail.reservedNativeHit = { [weak container = mounted.container] in container?.nativeControl(at: $0) }
+        try #require(mounted.window.makeFirstResponder(mounted.native))
+        let inputView: NSTextView
+        if input.hasPrefix("table") {
+            let coordinator = mounted.coordinator
+            let token = try #require(coordinator.parsedDocument(for: mounted.native.string).tokens.first { $0.kind == .table })
+            let table = try #require(MarkdownTableSource(source: mounted.native.string, range: token.range))
+            let session = coordinator.tableEditingSession
+            let rect = try #require(session.geometry(for: table)?.cellRects[1][0])
+            try #require(session.begin(range: token.range,
+                point: NSPoint(x: rect.midX, y: rect.midY), in: mounted.native))
+            inputView = session.editor
+        } else {
+            inputView = mounted.native
+        }
+        try #require(mounted.window.firstResponder === inputView)
+        let composing = input == "marked" || input == "tableMarked"
+        if composing {
+            inputView.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0),
+                replacementRange: NSRange(location: input.hasPrefix("table") ? 0 : 2, length: 0))
+            try #require(inputView.hasMarkedText())
+        } else {
+            inputView.setSelectedRange(NSRange(location: 1, length: 2))
+        }
+        let selections = inputView.selectedRanges
+        let nativeSource = mounted.native.string
+        let durableSource = mounted.content.documentManager.text
+        let undo = mounted.content.undoManager.canUndo
+        let trail = mounted.content.navigationTrail
+        let last = try #require(rail.geometry.marks.last)
+        let point = rail.convert(NSPoint(x: 12, y: last.y), to: nil)
+        let content = try #require(mounted.window.contentView)
+        let hitPoint = content.superview?.convert(point, from: nil) ?? point
+        try #require(content.hitTest(hitPoint) === rail, "A real window hit must reach the rail, not an editor control")
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: mounted.window.windowNumber,
+                context: nil, eventNumber: 91, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+            mounted.window.sendEvent(event)
+            #expect(mounted.window.firstResponder === inputView,
+                "Native \(type) changed \(input) ownership to \(String(describing: mounted.window.firstResponder))")
+        }
+        #expect(inputView.selectedRanges == selections)
+        #expect(inputView.hasMarkedText() == composing)
+        #expect(mounted.native.string == nativeSource)
+        #expect(mounted.content.documentManager.text == durableSource)
+        #expect(mounted.content.undoManager.canUndo == undo)
+        if input.hasPrefix("table") { #expect(mounted.coordinator.tableEditingSession.isActive) }
+        if composing {
+            #expect(mounted.content.navigationTrail == trail, "Composition must defer navigation")
+        } else {
+            #expect(mounted.content.navigationTrail.canGoBack, "The native click must actually navigate")
+        }
+    }
+
 }

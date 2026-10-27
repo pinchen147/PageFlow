@@ -106,6 +106,28 @@ struct NavigationRailTests {
         #expect(window.firstResponder === native)
     }
 
+    @Test("Keyboard traversal and Space or Return still open the exact-access sidebar",
+          arguments: [UInt16(49), UInt16(36)])
+    func keyboardSidebar(keyCode: UInt16) async throws {
+        let (window, rail, native) = try await mount()
+        defer { native.nextKeyView = nil; rail.nextKeyView = nil; window.close() }
+        var opened = 0
+        rail.onShowSidebar = { opened += 1 }
+        window.autorecalculatesKeyViewLoop = false
+        native.nextKeyView = rail
+        rail.nextKeyView = native
+        window.selectKeyView(following: native)
+        try #require(window.firstResponder === rail)
+        let characters = keyCode == 49 ? " " : "\r"
+        let key = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, characters: characters, charactersIgnoringModifiers: characters,
+            isARepeat: false, keyCode: keyCode))
+        window.sendEvent(key)
+        #expect(opened == 1)
+        #expect(native.string.isEmpty)
+    }
+
     @Test("Escape and policy invalidation require fresh entry and leave exact-access sidebar available")
     func dismissalAndEligibility() async throws {
         let (window, rail, native) = try await mount()

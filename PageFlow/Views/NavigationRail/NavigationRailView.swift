@@ -33,6 +33,8 @@ final class NavigationRailView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+    // Clicks preserve editor input; keyboard traversal can still focus the rail.
+    override var needsPanelToBecomeKey: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { false }
 
     override init(frame: NSRect) {
