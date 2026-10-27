@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import MarkdownEngine
 
@@ -297,24 +298,101 @@ struct SectionNavigationTests {
         #expect(controller.sectionPreview(for: target) == nil)
     }
 
-    @Test("Navigation preserves the active table cell, text selection and keyboard owner")
-    func activeTableSurvives() async throws {
-        let source = "# A\n| H |\n| --- |\n| cell |\n\n# B\n" + String(repeating: "tail\n", count: 100)
+    @Test("Distant navigation preserves narrow and wide table input through cleanup and remount",
+          arguments: [false, true])
+    func activeTableSurvives(wide: Bool) async throws {
+        let table = wide
+            ? "| H | Long second heading | Long third heading | Long fourth heading |\n| --- | --- | --- | --- |\n| cell | second value | third value | fourth value |\n"
+            : "| H |\n| --- |\n| cell |\n"
+        let source = "# A\n" + table + "\n" + String(repeating: "A distant paragraph.\n\n", count: 160)
+            + "# B\n" + String(repeating: "tail\n", count: 100)
         let editor = try mount(source)
         defer { editor.close() }
         await editor.settle()
-        let cell = try editor.focusCell(inTableContaining: "cell", row: 1, column: 0)
-        cell.setSelectedRange(NSRange(location: 1, length: 2))
+        let session = editor.coordinator.tableEditingSession
+        let range = try #require(editor.coordinator.parsedDocument(for: source).tokens.first { $0.kind == .table }).range
+        try #require(session.begin(range: range, row: 1, column: 0,
+                                  selecting: .range(NSRange(location: 1, length: 2))))
+        let cell = session.editor
+        let initialGrid = try #require(session.grid)
+        try #require(wide == editor.main.wideTableOverlays.values.contains { cell.isDescendant(of: $0) })
         let selection = cell.selectedRanges
-        let target = try #require(editor.state.controller.sectionNavigationSnapshot?.targets.last)
-        var departures = 0
-        editor.state.controller.scrollToSection(target, whileValid: { true }, didNavigate: { _ in departures += 1 })
-        #expect(editor.coordinator.tableEditingSession.isActive)
-        #expect(editor.window.firstResponder === cell)
+        let documentSelection = editor.main.selectedRanges
+        let controller = editor.state.controller
+        let target = try #require(controller.sectionNavigationSnapshot?.targets.last)
+        var departure: ReadingPosition?
+        controller.scrollToSection(target, whileValid: { true }, didNavigate: { departure = $0 })
+        await editor.settle()
+        editor.main.performWideTableOverlayUpdate()
+        try #require(departure != nil)
+        try #require(!NSLocationInRange(range.location, try #require(editor.main.viewportCharacterRange)),
+                     "The table must leave TextKit's laid-out band to exercise presentation disposal")
+        #expect(initialGrid.superview == nil)
+        #expect(editor.main.wideTableOverlays.isEmpty)
+        #expect(session.isActive)
+        try #require(editor.window.firstResponder === cell)
+        #expect(cell.window === editor.window)
+        #expect(cell.visibleRect.isEmpty)
         #expect(cell.selectedRanges == selection)
+        #expect(editor.main.selectedRanges == documentSelection)
         #expect(editor.main.string == source)
         #expect(!editor.state.undo.canUndo)
-        #expect(departures == 1)
+
+        // Continue through the actual keyboard owner, not a detached editor reference.
+        let input = try #require(editor.window.firstResponder as? NSTextView)
+        input.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0),
+                            replacementRange: NSRange(location: NSNotFound, length: 0))
+        try #require(input.hasMarkedText())
+        // Ordinary scrolling may return to the table during composition; the
+        // provisional input must not be reparented until it commits.
+        editor.scroll.contentView.scroll(to: .zero)
+        editor.scroll.reflectScrolledClipView(editor.scroll.contentView)
+        await editor.settle()
+        #expect(input.hasMarkedText())
+        #expect(editor.window.firstResponder === input)
+        #expect(editor.main.string == source)
+        input.insertText("X", replacementRange: input.markedRange())
+        await editor.settle()
+        #expect(editor.main.string == source.replacingOccurrences(of: "| cell |", with: "| cXl |"))
+        #expect(session.grid?.window === editor.window)
+        #expect(editor.window.firstResponder === cell)
+        editor.state.undo.undo()
+        #expect(editor.main.string == source)
+        #expect(!editor.state.undo.canUndo)
+        try #require(controller.restore(try #require(departure)))
+        await editor.settle()
+        #expect(session.grid?.window === editor.window)
+        #expect(editor.window.firstResponder === cell)
+
+        // A control that deliberately took focus keeps it when the table returns.
+        let current = try #require(controller.sectionNavigationSnapshot?.targets.last)
+        controller.scrollToSection(current, whileValid: { true }, didNavigate: { _ in })
+        await editor.settle()
+        let control = NSTextView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+        editor.window.contentView?.addSubview(control)
+        try #require(editor.window.makeFirstResponder(control))
+        try #require(controller.restore(try #require(departure)))
+        await editor.settle()
+        #expect(editor.window.firstResponder === control)
+        control.removeFromSuperview()
+
+        // Replacing a document must retire even a parked input and its old write target.
+        session.focusEditor()
+        controller.scrollToSection(current, whileValid: { true }, didNavigate: { _ in })
+        await editor.settle()
+        let incoming = TableEditorState("# Replacement\nnew source")
+        let replacement = NativeTextViewWrapper(
+            text: Binding(get: { incoming.text }, set: { incoming.text = $0 }),
+            documentId: UUID().uuidString, editorController: incoming.controller, undoManager: incoming.undo
+        )
+        replacement.updateNativeView(editor.scroll, coordinator: editor.coordinator)
+        await editor.settle()
+        #expect(!session.isActive)
+        #expect(cell.window == nil)
+        cell.insertText("stale", replacementRange: NSRange(location: NSNotFound, length: 0))
+        #expect(editor.main.string == "# Replacement\nnew source")
+        #expect(incoming.text == "# Replacement\nnew source")
+        #expect(!incoming.undo.canUndo)
     }
 
     @Test("Distant activation and previews preserve lazy layout")
