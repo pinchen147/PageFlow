@@ -69,6 +69,38 @@ struct SectionNavigationTests {
         #expect(controller.sectionNavigationSnapshot?.targets.map(\.title) == ["A", "B"])
     }
 
+    @Test("Re-enabling publication during marked replacement waits for committed heading offsets")
+    func publicationDuringMarkedReplacement() async throws {
+        let editor = try mount("# First\nBody text.\n# Second\nMore body.\n")
+        defer { editor.close() }
+        let controller = editor.state.controller
+        let previous = try #require(controller.sectionNavigationSnapshot)
+        try #require(previous.targets.count == 2)
+        let generation = editor.coordinator.nativeSourceGeneration
+        let replacement = NSRange(location: 0, length: editor.main.string.utf16.count)
+        editor.state.undo.beginUndoGrouping()
+        editor.main.setSelectedRange(replacement)
+        editor.main.setMarkedText("a", selectedRange: NSRange(location: 1, length: 0), replacementRange: replacement)
+        try #require(editor.main.hasMarkedText())
+        try #require(editor.main.string == "a")
+        try #require(editor.coordinator.nativeSourceGeneration == generation)
+        let selection = editor.main.selectedRanges
+        controller.isSectionNavigationEnabled = false
+        controller.isSectionNavigationEnabled = true
+        #expect(controller.sectionNavigationSnapshot == nil)
+        #expect(editor.main.hasMarkedText())
+        #expect(editor.main.selectedRanges == selection)
+        #expect(editor.main.string == "a")
+
+        editor.main.insertText("# Committed\nbody\n", replacementRange: editor.main.markedRange())
+        editor.state.undo.endUndoGrouping()
+        for _ in 0..<100 where controller.sectionNavigationSnapshot == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(controller.sectionNavigationSnapshot?.targets.map(\.title) == ["Committed"])
+        #expect(controller.sectionPreview(for: previous.targets[0]) == nil)
+    }
+
     @Test("Hidden, disabled, rebound and detached editors retire targets")
     func lifecycleInvalidatesTargets() throws {
         let editor = try mount("# A\nbody\n# B\ntail")

@@ -53,6 +53,7 @@ extension NativeTextViewCoordinator {
     /// inspect available native line fragments and binary-search the compact anchors.
     func refreshSectionNavigation() {
         guard sectionNavigationAvailable, let view = textView as? NativeTextView,
+              !isComposing(in: view), !isWritingToolsActive,
               let receipt = cachedBlockParseRevision,
               receipt.source == nativeSourceGeneration, receipt.document == documentGeneration,
               let parsed = cachedBlockParse else {
