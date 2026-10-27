@@ -116,6 +116,8 @@ struct NavigationRailTests {
         window.autorecalculatesKeyViewLoop = false
         native.nextKeyView = rail
         rail.nextKeyView = native
+        #expect(rail.canBecomeKeyView)
+        #expect(native.nextValidKeyView === rail)
         window.selectKeyView(following: native)
         try #require(window.firstResponder === rail)
         let characters = keyCode == 49 ? " " : "\r"
@@ -126,6 +128,34 @@ struct NavigationRailTests {
         window.sendEvent(key)
         #expect(opened == 1)
         #expect(native.string.isEmpty)
+    }
+
+    @Test("Unavailable rails stay outside the native keyboard loop")
+    func unavailableKeyboardTargets() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let parent = NSView(frame: window.contentView!.bounds)
+        window.contentView?.addSubview(parent)
+        let rail = NavigationRailView(frame: parent.bounds)
+        parent.addSubview(rail)
+        rail.configure(kind: .pdf, count: 100, visible: [], identity: "doc", eligible: true, topInset: 0)
+        #expect(rail.canBecomeKeyView)
+        parent.isHidden = true
+        #expect(!rail.canBecomeKeyView)
+        parent.isHidden = false
+        rail.configure(kind: .pdf, count: 100, visible: [], identity: "doc", eligible: false, topInset: 0)
+        #expect(!rail.canBecomeKeyView)
+        rail.configure(kind: .pdf, count: 0, visible: [], identity: "doc", eligible: true, topInset: 0)
+        #expect(!rail.canBecomeKeyView)
+        rail.configure(kind: .pdf, count: 100, visible: [], identity: "doc", eligible: true, topInset: 0)
+        rail.setFrameSize(NSSize(width: 800, height: 10))
+        #expect(!rail.canBecomeKeyView)
+        rail.setFrameSize(parent.bounds.size)
+        #expect(rail.canBecomeKeyView)
+        rail.removeFromSuperview()
+        #expect(!rail.canBecomeKeyView)
     }
 
     @Test("Escape and policy invalidation require fresh entry and leave exact-access sidebar available")
