@@ -171,7 +171,9 @@ struct MarkdownTabView: View {
                 undoManager: content.undoManager,
                 zoomScale: content.zoomScale,
                 onZoomChanged: { [weak content] in content?.handleMagnificationChanged($0) }
-            ))
+            ), railEnabled: isActive && isDisplayed && settingsManager.showNavigationRail && !showingOutline,
+                railTopInset: TopChromeView.height(toolbarScale: settingsManager.toolbarScale),
+                onShowSidebar: { showingOutline = true })
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             FindOverlay(
@@ -272,7 +274,7 @@ struct MarkdownTabView: View {
         Text(wordCount.label)
             .font(.caption)
             .fontWeight(.medium)
-            .pageFlowGlassControlLabel()
+            .foregroundStyle(.primary)
             .padding(.horizontal, DesignTokens.spacingSM + 2)
             .padding(.vertical, DesignTokens.spacingSM)
             .pageFlowLiquidGlassSurface(.pageIndicator)

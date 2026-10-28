@@ -14,27 +14,8 @@
 		0040E81B2F19446D000B1D33 /* SwiftMath in Frameworks */ = {isa = PBXBuildFile; productRef = 00MATH0012F1A00000000002 /* SwiftMath */; };
 /* End PBXBuildFile section */
 
-/* Begin PBXContainerItemProxy section */
-		00985C722EE4A10600E48813 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 00985C5C2EE4A10500E48813 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 00985C632EE4A10500E48813;
-			remoteInfo = PageFlow;
-		};
-		00985C7C2EE4A10600E48813 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 00985C5C2EE4A10500E48813 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 00985C632EE4A10500E48813;
-			remoteInfo = PageFlow;
-		};
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXFileReference section */
 		00985C642EE4A10500E48813 /* PageFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PageFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		00985C712EE4A10600E48813 /* PageFlowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PageFlowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		00985C7B2EE4A10600E48813 /* PageFlowUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PageFlowUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -57,16 +38,6 @@
 			path = PageFlow;
 			sourceTree = "<group>";
 		};
-		00985C742EE4A10600E48813 /* PageFlowTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PageFlowTests;
-			sourceTree = "<group>";
-		};
-		00985C7E2EE4A10600E48813 /* PageFlowUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PageFlowUITests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,20 +53,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		00985C6E2EE4A10600E48813 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		00985C782EE4A10600E48813 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -103,8 +60,6 @@
 			isa = PBXGroup;
 			children = (
 				00985C662EE4A10500E48813 /* PageFlow */,
-				00985C742EE4A10600E48813 /* PageFlowTests */,
-				00985C7E2EE4A10600E48813 /* PageFlowUITests */,
 				00985C652EE4A10500E48813 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -113,8 +68,6 @@
 			isa = PBXGroup;
 			children = (
 				00985C642EE4A10500E48813 /* PageFlow.app */,
-				00985C712EE4A10600E48813 /* PageFlowTests.xctest */,
-				00985C7B2EE4A10600E48813 /* PageFlowUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -150,52 +103,6 @@
 			productReference = 00985C642EE4A10500E48813 /* PageFlow.app */;
 			productType = "com.apple.product-type.application";
 		};
-		00985C702EE4A10600E48813 /* PageFlowTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 00985C882EE4A10600E48813 /* Build configuration list for PBXNativeTarget "PageFlowTests" */;
-			buildPhases = (
-				00985C6D2EE4A10600E48813 /* Sources */,
-				00985C6E2EE4A10600E48813 /* Frameworks */,
-				00985C6F2EE4A10600E48813 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				00985C732EE4A10600E48813 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				00985C742EE4A10600E48813 /* PageFlowTests */,
-			);
-			name = PageFlowTests;
-			packageProductDependencies = (
-			);
-			productName = PageFlowTests;
-			productReference = 00985C712EE4A10600E48813 /* PageFlowTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
-		00985C7A2EE4A10600E48813 /* PageFlowUITests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 00985C8B2EE4A10600E48813 /* Build configuration list for PBXNativeTarget "PageFlowUITests" */;
-			buildPhases = (
-				00985C772EE4A10600E48813 /* Sources */,
-				00985C782EE4A10600E48813 /* Frameworks */,
-				00985C792EE4A10600E48813 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				00985C7D2EE4A10600E48813 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				00985C7E2EE4A10600E48813 /* PageFlowUITests */,
-			);
-			name = PageFlowUITests;
-			packageProductDependencies = (
-			);
-			productName = PageFlowUITests;
-			productReference = 00985C7B2EE4A10600E48813 /* PageFlowUITests.xctest */;
-			productType = "com.apple.product-type.bundle.ui-testing";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -208,14 +115,6 @@
 				TargetAttributes = {
 					00985C632EE4A10500E48813 = {
 						CreatedOnToolsVersion = 26.0.1;
-					};
-					00985C702EE4A10600E48813 = {
-						CreatedOnToolsVersion = 26.0.1;
-						TestTargetID = 00985C632EE4A10500E48813;
-					};
-					00985C7A2EE4A10600E48813 = {
-						CreatedOnToolsVersion = 26.0.1;
-						TestTargetID = 00985C632EE4A10500E48813;
 					};
 				};
 			};
@@ -238,28 +137,12 @@
 			projectRoot = "";
 			targets = (
 				00985C632EE4A10500E48813 /* PageFlow */,
-				00985C702EE4A10600E48813 /* PageFlowTests */,
-				00985C7A2EE4A10600E48813 /* PageFlowUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		00985C622EE4A10500E48813 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		00985C6F2EE4A10600E48813 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		00985C792EE4A10600E48813 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -308,34 +191,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		00985C6D2EE4A10600E48813 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		00985C772EE4A10600E48813 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
-
-/* Begin PBXTargetDependency section */
-		00985C732EE4A10600E48813 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 00985C632EE4A10500E48813 /* PageFlow */;
-			targetProxy = 00985C722EE4A10600E48813 /* PBXContainerItemProxy */;
-		};
-		00985C7D2EE4A10600E48813 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 00985C632EE4A10500E48813 /* PageFlow */;
-			targetProxy = 00985C7C2EE4A10600E48813 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		00985C832EE4A10600E48813 /* Debug */ = {
@@ -470,7 +326,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -485,7 +341,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -506,7 +362,7 @@
 				CODE_SIGN_ENTITLEMENTS = PageFlow/PageFlow.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = YES;
@@ -521,7 +377,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -532,90 +388,6 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-			};
-			name = Release;
-		};
-		00985C892EE4A10600E48813 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = V43797R8Q6;
-				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlowTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PageFlow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PageFlow";
-			};
-			name = Debug;
-		};
-		00985C8A2EE4A10600E48813 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = V43797R8Q6;
-				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlowTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PageFlow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PageFlow";
-			};
-			name = Release;
-		};
-		00985C8C2EE4A10600E48813 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = V43797R8Q6;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlowUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = PageFlow;
-			};
-			name = Debug;
-		};
-		00985C8D2EE4A10600E48813 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = V43797R8Q6;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlowUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = PageFlow;
 			};
 			name = Release;
 		};
@@ -685,7 +457,7 @@
 				CODE_SIGN_ENTITLEMENTS = "PageFlow/PageFlow-Direct.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = V43797R8Q6;
 				ENABLE_APP_SANDBOX = NO;
@@ -700,7 +472,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.0;
+				MARKETING_VERSION = 2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlow;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = NO;
@@ -711,48 +483,6 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-			};
-			name = "Release-Direct";
-		};
-		00985CA02EE4A10600E48813 /* Release-Direct */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = V43797R8Q6;
-				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlowTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PageFlow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PageFlow";
-			};
-			name = "Release-Direct";
-		};
-		00985CA12EE4A10600E48813 /* Release-Direct */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
-				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = V43797R8Q6;
-				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.raccoontechnologies.PageFlowUITests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = PageFlow;
 			};
 			name = "Release-Direct";
 		};
@@ -775,26 +505,6 @@
 				00985C862EE4A10600E48813 /* Debug */,
 				00985C872EE4A10600E48813 /* Release */,
 				00985C9F2EE4A10600E48813 /* Release-Direct */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		00985C882EE4A10600E48813 /* Build configuration list for PBXNativeTarget "PageFlowTests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				00985C892EE4A10600E48813 /* Debug */,
-				00985C8A2EE4A10600E48813 /* Release */,
-				00985CA02EE4A10600E48813 /* Release-Direct */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		00985C8B2EE4A10600E48813 /* Build configuration list for PBXNativeTarget "PageFlowUITests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				00985C8C2EE4A10600E48813 /* Debug */,
-				00985C8D2EE4A10600E48813 /* Release */,
-				00985CA12EE4A10600E48813 /* Release-Direct */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

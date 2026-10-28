@@ -68,7 +68,7 @@ struct SearchBar: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .medium))
                     .frame(width: 20, height: 20)
-                    .pageFlowGlassControlLabel()
+                    .foregroundStyle(.primary)
             }
             .buttonStyle(.plain)
             .pageFlowClickCursor()
@@ -82,7 +82,7 @@ struct SearchBar: View {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .medium))
                 .frame(width: 20, height: 20)
-                .pageFlowGlassControlLabel()
+                .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()

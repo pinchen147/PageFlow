@@ -117,6 +117,16 @@ struct GeneralSettingsTab: View {
             }
 
             Section {
+                Toggle("Show navigation rail", isOn: $settings.showNavigationRail)
+            } header: {
+                Text("Navigation")
+            } footer: {
+                Text("Show page and section markers with previews. The sidebar remains available from the toolbar and View menu.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Picker("Color scheme", selection: $settings.markdownColorScheme) {
                     Text("System").tag(MarkdownColorScheme.system)
                     Text("Light").tag(MarkdownColorScheme.light)

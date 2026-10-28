@@ -67,7 +67,14 @@ final class PDFManager {
     // on every command, including equal-valued fit requests (the ABA case).
     @ObservationIgnored private(set) var viewIntentRevision: UInt64 = 0
     @ObservationIgnored private var isIngestingPageChange = false
-    var document: PDFDocument? { didSet { viewIntentRevision &+= 1 } }
+    var document: PDFDocument? {
+        didSet {
+            viewIntentRevision &+= 1
+            if oldValue !== document { suppressesNavigationRail = false }
+        }
+    }
+    /// In-session reading intent, independent of the consumed fit request and scale.
+    private(set) var suppressesNavigationRail = false
     var currentPage: PDFPage? { didSet { if !isIngestingPageChange { viewIntentRevision &+= 1 } } }
     var currentPageIndex: Int = 0 { didSet { if !isIngestingPageChange { viewIntentRevision &+= 1 } } }
     var scaleFactor: CGFloat = 1.0 { didSet { viewIntentRevision &+= 1 } }
@@ -387,6 +394,7 @@ final class PDFManager {
     }
 
     func closeDocument() {
+        suppressesNavigationRail = false
         markdownExportJob.cancel()
         finishPendingWrites()
         documentEpoch &+= 1
@@ -421,6 +429,7 @@ final class PDFManager {
             currentPageIndex = saved.pageIndex
             currentPage = page
             isAutoScaling = saved.isAutoScaling
+            suppressesNavigationRail = saved.isAutoScaling
             scaleFactor = min(max(saved.scaleFactor, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
             pendingFit = nil
             pendingScrollRestore = saved.scrollPoint.map { PDFDestination(page: page, at: $0) }
@@ -430,6 +439,7 @@ final class PDFManager {
             isAutoScaling = false
             scaleFactor = DesignTokens.pdfDefaultScale
             pendingFit = FitRequest(scrollToTop: true)
+            suppressesNavigationRail = true
             pendingScrollRestore = nil
         }
     }
@@ -534,35 +544,49 @@ final class PDFManager {
     // MARK: - Zoom
 
     func zoomIn() {
-        isAutoScaling = false
-        pendingFit = nil
+        beginManualZoom()
         scaleFactor = min(scaleFactor + DesignTokens.pdfZoomStep, DesignTokens.pdfMaxScale)
     }
 
     func zoomOut() {
-        isAutoScaling = false
-        pendingFit = nil
+        beginManualZoom()
         scaleFactor = max(scaleFactor - DesignTokens.pdfZoomStep, DesignTokens.pdfMinScale)
     }
 
     func resetZoom() {
-        isAutoScaling = false
-        pendingFit = nil
+        beginManualZoom()
         scaleFactor = DesignTokens.pdfDefaultScale
     }
 
     func setZoom(_ scale: CGFloat) {
-        isAutoScaling = false
-        pendingFit = nil
+        beginManualZoom()
+        restoreZoom(scale)
+    }
+
+    /// A restored scale is projection state, not a new manual-zoom command.
+    func restoreZoom(_ scale: CGFloat) {
         scaleFactor = max(DesignTokens.pdfMinScale, min(scale, DesignTokens.pdfMaxScale))
     }
 
-    func toggleAutoScale() {
-        isAutoScaling.toggle()
+    /// Begins a manual command, including native input accepted by the view.
+    func beginManualZoom() {
+        suppressesNavigationRail = false
+        isAutoScaling = false
         pendingFit = nil
     }
 
+    func setAutoScaling(_ enabled: Bool) {
+        suppressesNavigationRail = enabled
+        isAutoScaling = enabled
+        pendingFit = nil
+    }
+
+    func toggleAutoScale() {
+        setAutoScaling(!isAutoScaling)
+    }
+
     func requestFitOnce() {
+        suppressesNavigationRail = true
         isAutoScaling = false
         pendingFit = FitRequest(scrollToTop: false)
     }
@@ -587,6 +611,12 @@ final class PDFManager {
     /// PDFKit reported the scale changed (user pinch / control-scroll / internal).
     func ingestScaleChange(_ scale: CGFloat) {
         if scaleFactor != scale { scaleFactor = scale }
+    }
+
+    /// A completed fit is fitted reading even when initiated by display reflow.
+    func ingestFitCompletion(scale: CGFloat) {
+        suppressesNavigationRail = true
+        scaleFactor = scale
     }
 
     /// PDFKit reported the display mode changed (e.g. via its own context menu).

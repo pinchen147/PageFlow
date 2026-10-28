@@ -120,8 +120,7 @@ struct TabSwitcherView: View {
         HStack(spacing: DesignTokens.spacingSM) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(DesignTokens.glassTextSecondary)
-                .pageFlowGlassTextHalo()
+                .foregroundStyle(.secondary)
 
             TabSwitcherSearchField(
                 text: $query,
@@ -215,7 +214,7 @@ struct TabSwitcherView: View {
 
     private var dropIndicator: some View {
         Capsule()
-            .fill(DesignTokens.glassTextPrimary.opacity(0.55))
+            .fill(.primary.opacity(0.55))
             .frame(height: 2)
             .padding(.horizontal, DesignTokens.spacingMD)
     }
@@ -291,8 +290,7 @@ struct TabSwitcherView: View {
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(DesignTokens.glassTextSecondary)
-            .pageFlowGlassTextHalo()
+            .foregroundStyle(.secondary)
             .padding(.horizontal, DesignTokens.spacingSM)
             .padding(.top, DesignTokens.spacingSM)
             .padding(.bottom, 2)
@@ -302,8 +300,7 @@ struct TabSwitcherView: View {
     private func windowHeader(for group: WindowTabGroup) -> some View {
         Text(group.isFrontmost ? "This Window" : Self.windowTitle(group))
             .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(DesignTokens.glassTextTertiary)
-            .pageFlowGlassTextHalo()
+            .foregroundStyle(.tertiary)
             .padding(.horizontal, DesignTokens.spacingSM)
             .padding(.top, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -323,18 +320,18 @@ struct TabSwitcherView: View {
         HStack(spacing: DesignTokens.spacingSM) {
             Image(systemName: icon)
                 .font(.system(size: 14))
-                .foregroundStyle(DesignTokens.glassTextSecondary)
+                .foregroundStyle(.secondary)
                 .frame(width: 20)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 13, weight: isActiveInWindow ? .semibold : .regular))
-                    .foregroundStyle(DesignTokens.glassTextPrimary)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 12))
-                        .foregroundStyle(DesignTokens.glassTextSecondary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
@@ -344,16 +341,15 @@ struct TabSwitcherView: View {
 
             if isDirty {
                 Circle()
-                    .fill(DesignTokens.glassTextSecondary)
+                    .fill(.secondary)
                     .frame(width: 6, height: 6)
             }
         }
-        .pageFlowGlassTextHalo()
         .padding(.horizontal, DesignTokens.spacingSM)
         .frame(height: TabSwitcherMetrics.rowHeight)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(.white.opacity(isSelected ? 0.35 : 0))
+                .fill(.primary.opacity(isSelected ? 0.10 : 0))
         )
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -374,8 +370,7 @@ struct TabSwitcherView: View {
     private var emptyState: some View {
         Text("No matching tabs")
             .font(.system(size: 12))
-            .foregroundStyle(DesignTokens.glassTextSecondary)
-            .pageFlowGlassTextHalo()
+            .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, DesignTokens.spacingMD)
     }
@@ -499,14 +494,11 @@ private struct TabSwitcherSearchField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 14)
-        // The dropdown glass is always light (white tint), so force dark text +
-        // a readable placeholder rather than the system label color, which is
-        // light in dark mode and would vanish on the glass.
-        field.textColor = NSColor(DesignTokens.glassTextPrimary)
+        field.textColor = .labelColor
         field.placeholderAttributedString = NSAttributedString(
             string: "Search Tabs",
             attributes: [
-                .foregroundColor: NSColor(DesignTokens.glassTextTertiary),
+                .foregroundColor: NSColor.placeholderTextColor,
                 .font: NSFont.systemFont(ofSize: 14)
             ]
         )

@@ -27,7 +27,7 @@ struct CommentsSidebar: View {
         HStack {
             Text("Comments")
                 .font(.headline)
-                .pageFlowGlassControlLabel()
+                .foregroundStyle(.primary)
             Spacer()
             sidebarCloseButton
         }
@@ -40,9 +40,8 @@ struct CommentsSidebar: View {
         Button(action: onClose) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                .foregroundStyle(.secondary)
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()
@@ -81,16 +80,13 @@ struct CommentsSidebar: View {
         VStack(spacing: DesignTokens.spacingSM) {
             Image(systemName: "text.bubble")
                 .font(.system(size: 24))
-                .foregroundStyle(DesignTokens.sidebarTertiaryText)
-                .pageFlowGlassTextHalo()
+                .foregroundStyle(.tertiary)
             Text("No comments yet")
                 .font(.caption)
-                .foregroundStyle(DesignTokens.sidebarSecondaryText)
-                .pageFlowGlassTextHalo()
+                .foregroundStyle(.secondary)
             Text("Select text and press ⌘E")
                 .font(.caption2)
-                .foregroundStyle(DesignTokens.sidebarTertiaryText)
-                .pageFlowGlassTextHalo()
+                .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, DesignTokens.spacingXL)
@@ -142,11 +138,10 @@ struct CommentBubbleView: View {
         Button(action: onSelect) {
             Text("Page \(comment.pageIndex + 1)")
                 .font(.caption2)
-                .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, DesignTokens.spacingXS)
                 .padding(.vertical, 2)
-                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()
@@ -179,6 +174,7 @@ struct CommentBubbleView: View {
             .padding(.vertical, DesignTokens.spacingXS)
             .frame(minHeight: DesignTokens.tabHeight)
             .background(bubbleBackground)
+            .environment(\.colorScheme, .light)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
             .shadow(color: .black.opacity(DesignTokens.commentBubbleShadowOpacity), radius: DesignTokens.commentBubbleShadowRadius, y: 2)
             .contentShape(Rectangle())
@@ -214,12 +210,12 @@ struct CommentBubbleView: View {
         Button(action: onDelete) {
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                .foregroundStyle(.secondary)
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()
+        .environment(\.colorScheme, .light)
         .disabled(!canEdit)
     }
 
@@ -228,7 +224,7 @@ struct CommentBubbleView: View {
                 if editText.isEmpty {
                     Text("Add a comment...")
                         .font(.system(size: DesignTokens.commentFontSize))
-                        .foregroundStyle(DesignTokens.sidebarTertiaryText)
+                        .foregroundStyle(.tertiary)
                         .italic()
                         .allowsHitTesting(false)
                 }
@@ -256,7 +252,7 @@ struct CommentBubbleView: View {
                 if comment.text.isEmpty {
                     Text("Add a comment...")
                         .font(.system(size: DesignTokens.commentFontSize))
-                        .foregroundStyle(DesignTokens.sidebarTertiaryText)
+                        .foregroundStyle(.tertiary)
                         .italic()
                 } else {
                     MathTextView(text: comment.text)
