@@ -362,6 +362,16 @@ final class NavigationRailView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard eligible else { return }
+        // PDF paper keeps its own colors, so semantic marks need a stable
+        // native surface rather than blending into white or dark page content.
+        if kind == .pdf, let first = geometry.marks.first, let last = geometry.marks.last {
+            let background = NSRect(x: 6, y: first.y - 8, width: 30,
+                                    height: last.y - first.y + 16).intersection(lane)
+            if !background.isEmpty {
+                NSColor.windowBackgroundColor.setFill()
+                NSBezierPath(roundedRect: background, xRadius: 8, yRadius: 8).fill()
+            }
+        }
         let exclusions = paintExclusions?() ?? []
         let hoveredIndex = hoveredRank.flatMap { rank in geometry.marks.firstIndex { $0.representative == rank } }
         for (index, mark) in geometry.marks.enumerated() {
