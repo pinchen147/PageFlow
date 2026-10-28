@@ -160,7 +160,7 @@ final class PDFContent {
         if pdfManager.hasDocument {
             pdfManager.goToPage(viewSnapshot.pageIndex)
             if !pdfManager.isAutoScaling {
-                pdfManager.setZoom(viewSnapshot.scaleFactor)
+                pdfManager.restoreZoom(viewSnapshot.scaleFactor)
             }
         }
 

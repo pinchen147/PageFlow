@@ -512,16 +512,31 @@ final class MarkdownContent {
     var canGoBack: Bool { navigationTrail.canGoBack }
     var canGoForward: Bool { navigationTrail.canGoForward }
 
-    func goBack() {
-        guard let current = editorController.readingPosition,
-              let target = navigationTrail.goBack(from: current) else { return }
-        editorController.restore(target)
+    func navigateToSection(_ target: MarkdownSectionTarget, whileValid: @escaping () -> Bool) {
+        guard let surface = retainedEditorSurface, let presentation = surface.activePresentation else { return }
+        editorController.scrollToSection(target, whileValid: { [weak surface] in
+            surface?.ownsPresentation(presentation) == true && whileValid()
+        }, didNavigate: { [weak self, weak surface] departure in
+            guard let self, surface?.ownsPresentation(presentation) == true, whileValid() else { return }
+            self.navigationTrail.recordJump(from: departure)
+        })
     }
 
-    func goForward() {
-        guard let current = editorController.readingPosition,
-              let target = navigationTrail.goForward(from: current) else { return }
-        editorController.restore(target)
+    func goBack() { restoreHistory(back: true) }
+    func goForward() { restoreHistory(back: false) }
+
+    private func restoreHistory(back: Bool) {
+        let expectedTrail = navigationTrail
+        guard let target = back ? expectedTrail.backStack.last : expectedTrail.forwardStack.last,
+              let surface = retainedEditorSurface, let presentation = surface.activePresentation else { return }
+        editorController.restore(target, whileValid: { [weak self, weak surface] in
+            surface?.ownsPresentation(presentation) == true && self?.navigationTrail == expectedTrail
+        }, didRestore: { [weak self, weak surface] departure in
+            guard let self, surface?.ownsPresentation(presentation) == true,
+                  self.navigationTrail == expectedTrail else { return }
+            if back { _ = self.navigationTrail.goBack(from: departure) }
+            else { _ = self.navigationTrail.goForward(from: departure) }
+        })
     }
 
     // MARK: - External-change reload (ADR-0012 D5, S9)

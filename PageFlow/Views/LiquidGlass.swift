@@ -91,32 +91,6 @@ extension View {
         )
         .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: shadowRadius, y: shadowY)
     }
-
-    @ViewBuilder
-    func pageFlowGlassControlLabel(
-        interactive: Bool = true
-    ) -> some View {
-        self
-            .foregroundStyle(DesignTokens.glassControlForeground.opacity(interactive ? 1 : 0.52))
-            .pageFlowGlassTextHalo()
-    }
-
-    /// A soft light halo behind text/glyphs so they stay legible over TRANSLUCENT
-    /// liquid glass — whatever busy content shows through the surface — without
-    /// frosting the glass opaque. Two stacked passes (tight + soft) give a clean,
-    /// dense separation; the white glow is invisible over light areas.
-    ///
-    /// ONLY for DARK text — i.e. the fixed `glassText*` / `sidebar*Text` /
-    /// `glassControlForeground` tokens (the design's "dark text on glass"). Do NOT
-    /// apply it to light/white or system-adaptive (`.secondary`, default-label)
-    /// text — e.g. a button over the dark empty state — where a WHITE glow on light
-    /// text just smudges. Used on tab titles, the toolbar/sidebars (via
-    /// `pageFlowGlassControlLabel`), `ChromeGlassIcon`, and the Tab Switcher.
-    func pageFlowGlassTextHalo() -> some View {
-        self
-            .shadow(color: .white.opacity(0.6), radius: 1)
-            .shadow(color: .white.opacity(0.55), radius: 2.5)
-    }
 }
 
 @available(macOS 26.0, *)
@@ -198,7 +172,7 @@ extension GlassStyle {
     /// Shared by the outline sidebar and the comments sidebar (identical tuple).
     static let sidebar = GlassStyle(
         cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-        tint: .light, tintOpacity: DesignTokens.sidebarGlassTintOpacity, variant: .clear,
+        tint: .light, tintOpacity: DesignTokens.sidebarGlassTintOpacity, variant: .regular,
         strokeOpacity: 0.22, shadowRadius: 4, shadowY: -2
     )
     /// Shared by the search bar and the toast (identical after defaults).
@@ -207,13 +181,10 @@ extension GlassStyle {
         tint: .light, tintOpacity: DesignTokens.glassPanelTintOpacity, variant: .regular,
         strokeOpacity: 0.22, shadowRadius: 10, shadowY: 5
     )
-    /// The Tab Switcher dropdown — TRANSLUCENT liquid glass (CLEAR variant), not
-    /// frosted. Text legibility over busy document content comes from a soft light
-    /// halo behind the glyphs (see `pageFlowGlassTextHalo`), NOT from making the panel
-    /// opaque — so it stays see-through liquid glass while the words still read.
+    /// Regular material supplies contrast for the native foreground hierarchy.
     static let tabSwitcher = GlassStyle(
         cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-        tint: .light, tintOpacity: 0.4, variant: .clear,
+        tint: .light, tintOpacity: 0.4, variant: .regular,
         strokeOpacity: 0.22, shadowRadius: 10, shadowY: 5
     )
     /// The "Open PDF" empty-state button.
@@ -226,7 +197,7 @@ extension GlassStyle {
     // Chrome surfaces (no built-in shadow; an external .shadow stays at the call site).
     static let pageIndicator = GlassStyle(
         cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-        tint: .light, tintOpacity: DesignTokens.sidebarControlGlassTintOpacity, variant: .clear
+        tint: .light, tintOpacity: DesignTokens.sidebarControlGlassTintOpacity, variant: .regular
     )
     static let newTabButton = GlassStyle(
         cornerRadius: DesignTokens.tabCornerRadius,
@@ -329,7 +300,6 @@ struct ChromeGlassIcon: View {
         Image(systemName: systemName)
             .font(.system(size: pointSize, weight: .semibold))
             .foregroundStyle(DesignTokens.glassTextPrimary.opacity(0.78))
-            .pageFlowGlassTextHalo()
             .frame(width: DesignTokens.chromeIconSize, height: DesignTokens.chromeIconSize)
             .pageFlowLiquidGlassSurface(.newTabButton)
             .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 4, y: -2)

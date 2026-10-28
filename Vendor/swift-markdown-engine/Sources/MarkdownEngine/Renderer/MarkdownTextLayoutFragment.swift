@@ -144,6 +144,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
             if coordinator.objectSelection != nil { coordinator.imageChrome?.setNeedsRefresh() }
             coordinator.imageControls?.setNeedsRefresh()
             coordinator.foldControls?.setNeedsRefresh()
+            coordinator.scheduleSectionNavigationRefresh()
         }
         // 0. Wide-table overlays: re-glue the sibling overlay to the anchor line
         //    it reserves (self-heals stale positions; see syncWideTableOverlay).
