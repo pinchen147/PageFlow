@@ -189,9 +189,15 @@ private final class AutoScrollManager {
 // MARK: - Thumbnail Grid View
 
 struct ThumbnailGridView: View {
+    enum Presentation { case sidebar, navigationPreview }
+
     @Bindable var pdfManager: PDFManager
     @Bindable var bookmarkManager: BookmarkManager
     let isEditing: Bool
+    var presentation: Presentation = .sidebar
+    var previewPageIndex: Int? = nil
+
+    private var editsPages: Bool { isEditing && presentation == .sidebar }
 
     // Drag state - visual only, no PDFDocument changes until drop
     @State private var reorderState = ThumbnailReorderState()
@@ -227,7 +233,8 @@ struct ThumbnailGridView: View {
                                 pageIndex: displayIndex,
                                 displayNumber: index + 1,
                                 isSelected: displayIndex == pdfManager.currentPageIndex,
-                                isEditing: isEditing,
+                                isEditing: editsPages,
+                                presentation: presentation,
                                 isDragging: reorderState.isDraggingPlaceholder(at: index)
                             )
                             .id("page-\(index)")
@@ -239,7 +246,7 @@ struct ThumbnailGridView: View {
                             }
                             .modifier(DragDropModifier(
                                 index: index,
-                                isEditing: isEditing && pdfManager.permissions.editPages,
+                                isEditing: editsPages && pdfManager.permissions.editPages,
                                 reorderState: $reorderState,
                                 onDragStart: { captureDragPreview(pageIndex: index) },
                                 onDrop: { commitReorder() },
@@ -272,13 +279,21 @@ struct ThumbnailGridView: View {
             }
             .onAppear {
                 resetDragState()
-                proxy.scrollTo("page-\(pdfManager.currentPageIndex)", anchor: .center)
+                if presentation == .navigationPreview {
+                    revealPreviewPage(previewPageIndex, proxy: proxy)
+                } else {
+                    proxy.scrollTo("page-\(pdfManager.currentPageIndex)", anchor: .center)
+                }
+            }
+            .onChange(of: previewPageIndex) { _, index in
+                revealPreviewPage(index, proxy: proxy)
             }
             .onChange(of: pdfManager.currentPageIndex) { oldIndex, newIndex in
+                guard presentation == .sidebar else { return }
                 keepCurrentPageVisible(from: oldIndex, to: newIndex, proxy: proxy)
             }
             .onDisappear { clearDragPreview() }
-            .onChange(of: isEditing) { _, editing in
+            .onChange(of: editsPages) { _, editing in
                 if !editing {
                     resetDragState()
                     clearDragPreview()
@@ -304,6 +319,15 @@ struct ThumbnailGridView: View {
                         .allowsHitTesting(false)
                 }
             }
+        }
+    }
+
+    /// Hover changes only the existing preview scroll position, without queuing
+    /// animations or changing PDF navigation and the manual sidebar follow policy.
+    private func revealPreviewPage(_ index: Int?, proxy: ScrollViewProxy) {
+        guard presentation == .navigationPreview, let index, (0..<pdfManager.pageCount).contains(index) else { return }
+        withTransaction(Transaction(animation: nil)) {
+            proxy.scrollTo("page-\(index)", anchor: .center)
         }
     }
 
@@ -466,12 +490,13 @@ private struct ThumbnailCellView: View {
     let displayNumber: Int  // Number shown to user (1-based position)
     let isSelected: Bool    // Computed by the parent so the cell never observes currentPageIndex
     let isEditing: Bool
+    let presentation: ThumbnailGridView.Presentation
     let isDragging: Bool
 
     @State private var thumbnailImage: NSImage?
     @State private var loadedThumbnailKey: String?
 
-    private var isBookmarked: Bool { bookmarkManager.isBookmarked(pageIndex) }
+    private var isBookmarked: Bool { presentation == .sidebar && bookmarkManager.isBookmarked(pageIndex) }
 
     var body: some View {
         let thumbnailRevision = pdfManager.thumbnailRevision(for: pageIndex)
@@ -488,8 +513,8 @@ private struct ThumbnailCellView: View {
             }
             Text("\(displayNumber)")
                 .font(.caption2)
-                .foregroundStyle(DesignTokens.sidebarSecondaryText)
-                .pageFlowGlassControlLabel()
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
         }
         .opacity(isDragging ? 0.4 : 1.0)
         .contentShape(Rectangle())
@@ -498,7 +523,7 @@ private struct ThumbnailCellView: View {
             pdfManager.goToPage(pageIndex)
         }
         .pointerStyle(isDragging ? .grabActive : (isEditing ? .grabIdle : .link))
-        .contextMenu { contextMenu }
+        .contextMenu { if presentation == .sidebar { contextMenu } }
         .task(id: thumbnailLoadID(revision: thumbnailRevision)) {
             await loadThumbnail(revision: thumbnailRevision)
         }

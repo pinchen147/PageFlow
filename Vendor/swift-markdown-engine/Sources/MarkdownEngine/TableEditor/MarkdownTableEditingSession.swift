@@ -352,7 +352,15 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     }
 
     private func mount(in canvas: NSView, geometry: MarkdownTableLayout) {
-        let view = grid ?? MarkdownTableGridView(geometry: geometry, session: self)
+        // Reparenting a protected native input would finish its composition.
+        guard !isComposing || grid?.superview === canvas else { return }
+        let previousGrid = grid
+        let view: MarkdownTableGridView
+        if let previousGrid, previousGrid.superview === canvas {
+            view = previousGrid
+        } else {
+            view = MarkdownTableGridView(geometry: geometry, session: self)
+        }
         view.geometry = geometry
         view.frame = NSRect(origin: presentationOrigin, size: geometry.size)
         if view.superview !== canvas { canvas.addSubview(view) }
@@ -364,16 +372,47 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         }
         grid = view
         placeEditor()
+        if previousGrid !== view { previousGrid?.removeFromSuperview() }
         view.needsDisplay = true
     }
 
-    /// The grid may leave the viewport; the session and its input survive and
-    /// take the keyboard back when the table is mounted again.
-    func detachPresentation() {
-        if isActive, editor.window?.firstResponder === editor { refocusOnMount = true }
-        editorScroll.removeFromSuperview()
+    /// Discard an offscreen grid while keeping its one native input in the
+    /// document hierarchy. A marked input must stay in its current hierarchy
+    /// until composition finishes and requests another presentation refresh.
+    @discardableResult
+    func detachPresentation() -> Bool {
+        guard !isActive || !isComposing else { return false }
+        if isActive, let main = coordinator?.textView {
+            editorScroll.frame.origin = NSPoint(x: main.bounds.minX - editorScroll.frame.width - 1,
+                                               y: main.bounds.minY - editorScroll.frame.height - 1)
+            moveEditor(to: main)
+        } else {
+            editorScroll.removeFromSuperview()
+        }
         grid?.removeFromSuperview()
         grid = nil
+        return true
+    }
+
+    /// AppKit can yield the first responder when a view changes parents even
+    /// within one window. Restore only this session's existing keyboard owner;
+    /// a different control or a replaced document must keep its new focus.
+    private func moveEditor(to parent: NSView) {
+        guard editorScroll.superview !== parent, !isComposing,
+              let coordinator, let main = coordinator.textView,
+              isActive, documentGeneration == coordinator.documentGeneration else { return }
+        let sessionEpoch = epoch
+        let window = editor.window
+        let hadKeyboard = window?.firstResponder === editor
+        parent.addSubview(editorScroll)
+        guard hadKeyboard, let window, isActive, epoch == sessionEpoch,
+              self.coordinator === coordinator, coordinator.textView === main,
+              documentGeneration == coordinator.documentGeneration,
+              main.window === window, editor.window === window else { return }
+        let responder = window.firstResponder
+        if responder == nil || responder === window || responder === main {
+            window.makeFirstResponder(editor)
+        }
     }
 
     func focusEditor() {
@@ -392,7 +431,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         editor.minSize = NSSize(width: rect.width, height: rect.height)
         editor.setFrameSize(NSSize(width: rect.width, height: max(rect.height, editor.frame.height)))
         editor.sizeToFit()
-        if editorScroll.superview !== grid { grid.addSubview(editorScroll) }
+        moveEditor(to: grid)
         editor.scrollRangeToVisible(editor.selectedRange())
     }
 
@@ -639,6 +678,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     func finishDeferredInputWork() {
         guard !isComposing, let coordinator, let main = coordinator.textView as? NativeTextView else { return }
         coordinator.finishComposition(in: main)
+        main.updateWideTableOverlays()
     }
 
     /// After a source change the session neither made nor followed: keep editing

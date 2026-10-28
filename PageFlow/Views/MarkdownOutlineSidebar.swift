@@ -42,11 +42,10 @@ struct MarkdownOutlineSidebar: View {
         } label: {
             HStack {
                 Text(item.title.isEmpty ? "Untitled" : item.title)
-                    .foregroundStyle(DesignTokens.sidebarPrimaryText)
+                    .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer()
             }
-            .pageFlowGlassControlLabel(interactive: true)
             // ATX depth → indent, mirroring the PDF outline's hierarchy feel.
             .padding(.leading, CGFloat(item.level - 1) * DesignTokens.spacingMD)
             .padding(.vertical, DesignTokens.spacingXS)

@@ -67,7 +67,7 @@ struct GlassToolbarShell<Items: View>: View {
 /// only it: the item buttons arrive as `content` and are never rebuilt. Per
 /// frame the fold stays cheap too — the items keep their natural width (only
 /// the panel's width animates), and a plain rectangular clip trims them (a
-/// mask would re-render every glyph halo offscreen each frame). The pointer
+/// mask would render the content offscreen each frame). The pointer
 /// is sensed by the chrome's peek zone, which covers the whole toolbar.
 private struct ToolbarFoldEffect: ViewModifier {
     let metrics: SettingsManager.ToolbarMetrics
@@ -121,6 +121,7 @@ private struct ToolbarFoldEffect: ViewModifier {
         .overlay(alignment: .trailing) {
             if let fold {
                 sphere(diameter: height, isOpen: isOpen, open: fold.onPin)
+                    .environment(\.colorScheme, .light)
             }
         }
         .frame(height: height)
@@ -134,7 +135,7 @@ private struct ToolbarFoldEffect: ViewModifier {
                 .font(.system(size: metrics.iconSize, weight: .bold))
                 .frame(width: diameter, height: diameter)
                 .contentShape(Circle())
-                .pageFlowGlassControlLabel()
+                .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()
@@ -165,7 +166,8 @@ struct GlassToolbarLabel: View {
             .font(.system(size: metrics.iconSize, weight: .medium))
             .frame(width: metrics.buttonSize, height: metrics.buttonSize)
             .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
-            .pageFlowGlassControlLabel(interactive: interactive)
+            .foregroundStyle(.primary)
+            .opacity(interactive ? 1 : 0.52)
             .proximityMagnified()
     }
 }

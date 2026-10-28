@@ -155,6 +155,7 @@ final class SettingsManager {
         static let compactTabs = "settings.compactTabs"
         static let toolbarMagnificationEnabled = "settings.toolbarMagnificationEnabled"
         static let showTooltips = "settings.showTooltips"
+        static let showNavigationRail = "settings.showNavigationRail"
         static let markdownColorScheme = "settings.markdownColorScheme"
         static let markdownSideMargin = "settings.markdownSideMargin"
         static let markdownFontFamily = "settings.markdownFontFamily"
@@ -298,6 +299,14 @@ final class SettingsManager {
         didSet {
             if !isLoading {
                 defaults.set(showTooltips, forKey: Keys.showTooltips)
+            }
+        }
+    }
+
+    var showNavigationRail = true {
+        didSet {
+            if !isLoading {
+                defaults.set(showNavigationRail, forKey: Keys.showNavigationRail)
             }
         }
     }
@@ -475,6 +484,10 @@ final class SettingsManager {
 
         if defaults.object(forKey: Keys.showTooltips) != nil {
             showTooltips = defaults.bool(forKey: Keys.showTooltips)
+        }
+
+        if defaults.object(forKey: Keys.showNavigationRail) != nil {
+            showNavigationRail = defaults.bool(forKey: Keys.showNavigationRail)
         }
 
         if let raw = defaults.string(forKey: Keys.markdownColorScheme),

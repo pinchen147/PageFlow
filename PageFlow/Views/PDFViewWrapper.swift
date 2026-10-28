@@ -116,6 +116,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     private func configureZoomCallbacks(_ pdfView: StablePDFView, context: Context) {
         pdfView.onRequestFocus = onRequestFocus
+        context.coordinator.configureUserZoom(on: pdfView)
 
         pdfView.onControlScroll = { [weak pdfView, weak coordinator = context.coordinator] event in
             guard let pdfView = pdfView,
@@ -316,6 +317,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.onAnnotationColorChange = nil
         pdfView.onCommentColorChange = nil
         pdfView.onControlScroll = nil
+        pdfView.onUserZoom = nil
         pdfView.onLinkNavigation = nil
         pdfView.onCopyPageAsMarkdown = nil
         pdfView.onCopyDocumentAsMarkdown = nil
@@ -483,7 +485,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         func setupScrollMonitor(for pdfView: StablePDFView) {
             guard scrollMonitor == nil else { return }
-            scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self, weak pdfView] event in
+            scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { [weak self, weak pdfView] event in
                 guard let self = self,
                       let pdfView = pdfView,
                       let eventWindow = event.window,
@@ -496,6 +498,10 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         private func handleZoomScroll(event: NSEvent, pdfView: StablePDFView) -> NSEvent? {
+            if event.type == .magnify {
+                _ = processMagnification(event: event, pdfView: pdfView)
+                return event
+            }
             let handled = processControlScroll(event: event, pdfView: pdfView)
             return handled ? nil : event
         }
@@ -581,23 +587,42 @@ struct PDFViewWrapper: NSViewRepresentable {
             else { ingest() }
         }
 
+        func configureUserZoom(on pdfView: StablePDFView) {
+            pdfView.onUserZoom = { [weak self, weak pdfView] intent in
+                guard let self, let pdfView, self.ownsUserInput(in: pdfView) else { return false }
+                switch intent {
+                case .manual: self.pdfManager.beginManualZoom()
+                case .autoScaling(let enabled): self.pdfManager.setAutoScaling(enabled)
+                }
+                return true
+            }
+        }
+
+        private func ownsUserInput(in pdfView: PDFView) -> Bool {
+            !isDismantled && !isProjecting && lastDisplayed != false
+                && pdfView.document != nil && pdfView.document === pdfManager.document
+                && (pdfManager.liveDestinationProviderOwner == nil
+                    || pdfManager.liveDestinationProviderOwner == ObjectIdentifier(self))
+        }
+
+        func processMagnification(event: NSEvent, pdfView: StablePDFView) -> Bool {
+            guard ownsUserInput(in: pdfView), event.type == .magnify else { return false }
+            return pdfView.beginUserMagnification(with: event)
+        }
+
         func processControlScroll(event: NSEvent, pdfView: StablePDFView) -> Bool {
-            // No focus gate: the cursor-bounds check routes ctrl-scroll to the view the
-            // pointer is over. Monitors only exist on the visible tab, so a hidden tab
-            // never reaches here.
-            guard event.modifierFlags.contains(.control),
-                  let pointInView = convertEventPoint(event, in: pdfView),
-                  pdfView.bounds.contains(pointInView) else {
+            // Input follows the pointer's actual native hit, independently of focus.
+            guard ownsUserInput(in: pdfView),
+                  event.modifierFlags.contains(.control), event.scrollingDeltaY != 0,
+                  let pointInView = pdfView.frontmostEventPoint(event) else {
                 return false
             }
 
             beginInteractiveZoomQuality(on: pdfView)
             pdfView.autoScales = false
-            pdfManager.isAutoScaling = false
-            pdfManager.pendingFit = nil
+            pdfManager.beginManualZoom()
 
             let delta = event.scrollingDeltaY
-            guard delta != 0 else { return true }
 
             let oldScale = pdfView.scaleFactor
             let zoomFactor = DesignTokens.pdfControlScrollZoomFactor
@@ -671,18 +696,6 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
             zoomQualityRestore = restore
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: restore)
-        }
-
-        private func convertEventPoint(_ event: NSEvent, in pdfView: StablePDFView) -> NSPoint? {
-            if event.window != nil {
-                return pdfView.convert(event.locationInWindow, from: nil)
-            }
-
-            // Fallback to screen location if window is unavailable (rare during monitoring)
-            let screenPoint = NSEvent.mouseLocation
-            guard let window = pdfView.window else { return nil }
-            let windowPoint = window.convertPoint(fromScreen: screenPoint)
-            return pdfView.convert(windowPoint, from: nil)
         }
 
         func removeScrollMonitor() {
@@ -760,7 +773,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 let fitScale = baseScale + DesignTokens.pdfFitZoomBump
                 if fitScale > 0 {
                     let clamped = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
-                    self.pdfManager.scaleFactor = clamped   // source of truth first
+                    self.pdfManager.ingestFitCompletion(scale: clamped) // source of truth first
                     self.applyScale(clamped, to: pdfView)   // then mirror onto the view
                 }
 
@@ -834,7 +847,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 guard fitScale > 0 else { return }
 
                 let clamped = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
-                self.pdfManager.scaleFactor = clamped
+                self.pdfManager.ingestFitCompletion(scale: clamped)
                 self.applyScale(clamped, to: pdfView)
 
                 let pageBounds = currentPage.bounds(for: .mediaBox)

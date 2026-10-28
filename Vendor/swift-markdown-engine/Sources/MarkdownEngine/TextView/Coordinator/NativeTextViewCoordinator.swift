@@ -89,7 +89,10 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     weak var textView: NSTextView?
     /// PageFlow fork patch P1 (doc 10 §3 / ADR-0010): host-retained handle for the
     /// synchronous save-time text read/flush. Weak — the host owns it.
-    weak var editorController: MarkdownEditorController?
+    weak var editorController: MarkdownEditorController? {
+        didSet { if oldValue !== editorController { invalidateSectionNavigation() } }
+    }
+    var sectionNavigationState = SectionNavigationState()
     /// The document's single in-place table cell editor (TableEditor/).
     lazy var tableEditingSession = MarkdownTableEditingSession(coordinator: self)
     /// PageFlow fork knob: host-supplied per-document UndoManager, returned by
@@ -219,7 +222,9 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var cachedCodeBlockTokens: [(index: Int, token: MarkdownToken)] = []
     var codeBlockSelectionGeneration: Int = 0
     /// Accepted native source edits; binding publication alone does not advance it.
-    var nativeSourceGeneration: Int = 0
+    var nativeSourceGeneration: Int = 0 {
+        didSet { scheduleSectionNavigationRefresh() }
+    }
     var cachedCodeBlockSourceGeneration: Int = -1
     /// Source snapshot for exact cache hits. Plain typing keeps it current and
     /// records the insertions (`plainInsertionsSinceParse`) so the next lookup
@@ -344,6 +349,7 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
         didSet {
             cachedBlockParseRevision = cachedBlockParse.map { _ in (nativeSourceGeneration, documentGeneration) }
             blockMover.prepareIndex()
+            scheduleSectionNavigationRefresh()
         }
     }
 

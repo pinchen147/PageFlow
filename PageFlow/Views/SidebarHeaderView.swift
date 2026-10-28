@@ -48,9 +48,8 @@ struct SidebarHeaderView: View {
                 .font(.system(size: 12))
                 .padding(.horizontal, DesignTokens.spacingSM)
                 .padding(.vertical, DesignTokens.spacingXS)
-                .pageFlowGlassControlLabel()
+                .foregroundStyle(.primary)
         }
-        .foregroundStyle(.primary)
         .buttonStyle(.plain)
         .pageFlowClickCursor()
     }
@@ -70,7 +69,6 @@ struct SidebarHeaderView: View {
                     height: DesignTokens.sidebarToggleButtonSize
                 )
                 .contentShape(Rectangle())
-                .pageFlowGlassControlLabel()
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()

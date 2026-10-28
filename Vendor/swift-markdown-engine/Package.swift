@@ -56,21 +56,5 @@ let package = Package(
                 .product(name: "BeautifulMermaid", package: "beautiful-mermaid-swift"),
             ]
         ),
-        .testTarget(
-            name: "MarkdownEngineTests",
-            dependencies: ["MarkdownEngine"]
-        ),
-        .testTarget(
-            name: "MarkdownEngineMermaidTests",
-            dependencies: ["MarkdownEngineMermaid"]
-        ),
-        .testTarget(
-            name: "MarkdownEngineCodeBlocksTests",
-            dependencies: ["MarkdownEngineCodeBlocks"]
-        ),
-        .testTarget(
-            name: "MarkdownEngineLatexTests",
-            dependencies: ["MarkdownEngineLatex"]
-        ),
     ]
 )

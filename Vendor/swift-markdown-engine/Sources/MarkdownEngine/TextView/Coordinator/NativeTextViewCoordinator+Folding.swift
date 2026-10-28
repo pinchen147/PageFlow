@@ -313,6 +313,7 @@ extension NativeTextViewCoordinator {
         }
         foldControls?.refresh()
         notifyFoldingStateChange()
+        scheduleSectionNavigationRefresh()
     }
 
     private func storageLength(_ view: NSTextView) -> Int { view.textStorage?.length ?? 0 }

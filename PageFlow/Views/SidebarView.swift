@@ -75,15 +75,14 @@ struct SidebarView: View {
         } label: {
             HStack {
                 Text(item.title)
-                    .foregroundStyle(item.pageIndex == nil ? DesignTokens.sidebarSecondaryText : DesignTokens.sidebarPrimaryText)
+                    .foregroundStyle(item.pageIndex == nil ? .secondary : .primary)
                     .lineLimit(1)
                 Spacer()
                 if let page = item.pageIndex {
                     Text("\(page + 1)")
-                        .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .pageFlowGlassControlLabel(interactive: item.pageIndex != nil)
             .padding(.vertical, DesignTokens.spacingXS)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
@@ -129,7 +128,7 @@ struct SidebarView: View {
                 HStack {
                     Image(systemName: "bookmark.fill")
                         .font(.system(size: 10))
-                        .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                        .foregroundStyle(.secondary)
 
                     if editingBookmarkID == bookmark.id {
                         TextField("", text: $editingTitle)
@@ -145,9 +144,8 @@ struct SidebarView: View {
 
                     Spacer()
                     Text("\(bookmark.pageIndex + 1)")
-                        .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                        .foregroundStyle(.secondary)
                 }
-                .pageFlowGlassControlLabel()
                 .padding(.vertical, DesignTokens.spacingXS)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -160,9 +158,8 @@ struct SidebarView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(DesignTokens.sidebarSecondaryText)
+                    .foregroundStyle(.secondary)
                     .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-                    .pageFlowGlassControlLabel()
             }
             .buttonStyle(.plain)
             .pageFlowClickCursor()

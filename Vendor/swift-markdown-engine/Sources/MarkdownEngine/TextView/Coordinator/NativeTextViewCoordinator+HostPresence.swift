@@ -23,6 +23,7 @@ extension NativeTextViewCoordinator {
     func applyDisplayed(_ displayed: Bool, scrollView: ClampedScrollView, textView: NativeTextView) {
         guard displayed != lastDisplayed || scrollView.isHidden == displayed else { return }
         lastDisplayed = displayed
+        invalidateSectionNavigation()
         if displayed {
             scrollView.isHidden = false
             installViewObservers(scrollView: scrollView, textView: textView)
@@ -112,6 +113,7 @@ extension NativeTextViewCoordinator {
         }
         applyPendingReadingPosition(scrollView: scrollView, textView: textView)
         foldControls?.refresh()
+        scheduleSectionNavigationRefresh()
     }
 
     // MARK: - Observers
@@ -172,6 +174,7 @@ extension NativeTextViewCoordinator {
             textView.realignWideTableOverlays()
             coordinator.selectionBar?.reposition()
             coordinator.foldControls?.refresh()
+            coordinator.scheduleSectionNavigationRefresh()
         }
         viewObserverTokens = [frameObserver, boundsObserver]
     }

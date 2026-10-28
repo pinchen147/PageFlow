@@ -15,6 +15,7 @@ extension NativeTextViewCoordinator {
     enum PendingFindCommand {
         case show(FindRequest, source: String, generation: Int)
         case navigation(source: String, generation: Int, action: () -> Void)
+        case sectionNavigation(SectionNavigationRequest)
         case clear
     }
 
@@ -116,6 +117,8 @@ extension NativeTextViewCoordinator {
         case .navigation(let source, let generation, let action):
             guard generation == documentGeneration, (view.string as NSString).isEqual(to: source) else { return }
             action()
+        case .sectionNavigation(let request):
+            executeSectionNavigation(request)
         case .clear:
             activeFindHighlights.removeAll()
             refreshFindRendering(in: view)

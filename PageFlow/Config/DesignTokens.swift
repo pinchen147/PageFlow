@@ -98,15 +98,9 @@ struct DesignTokens {
     static let sidebarGlassTintOpacity: CGFloat = 0.32
     static let sidebarControlGlassTintOpacity: CGFloat = 0.18
     static let glassElevationShadowOpacity: Double = 0.055
+    // Fixed foregrounds for porcelain chrome and opaque white content cards only.
     static let glassTextPrimary = Color(red: 0.08, green: 0.08, blue: 0.08)
     static let glassTextSecondary = Color(red: 0.24, green: 0.24, blue: 0.24)
-    static let glassTextTertiary = Color(red: 0.42, green: 0.42, blue: 0.42)
-    static let glassControlForeground = glassTextPrimary
-    static let glassGlyphHighlight = Color.white.opacity(0.78)
-    static let glassGlyphShadow = Color.black.opacity(0.28)
-    static let sidebarPrimaryText = glassTextPrimary
-    static let sidebarSecondaryText = glassTextSecondary
-    static let sidebarTertiaryText = glassTextTertiary
 
     // MARK: - Traffic Lights
 
@@ -192,16 +186,7 @@ struct DesignTokens {
     static let commentNoteIconSize: CGFloat = 24
     static let commentNoteOffset: CGFloat = 12
 
-    // Comment card styling.
-    //
-    // The sidebar bubbles were too transparent: a translucent white bubble on the
-    // translucent (white-tinted) glass sidebar let the dark PDF page bleed through,
-    // collapsing text contrast. PageFlow's glass chrome is a *fixed* light-frosted
-    // look (white tint + dark `glassTextPrimary` text) regardless of system
-    // appearance, so the fix is an OPAQUE light card carrying that same dark glass
-    // text — NOT an appearance-adaptive surface, which renders dark in the viewer's
-    // dark appearance context and clashes with the light chrome. Glass stays on the
-    // panel; text rides on the opaque card.
+    // Opaque white content cards retain dark text in either appearance.
     /// The opaque content-card surface, shared by comment bubbles, the thumbnail
     /// letterbox fill, and the tab drag pill so they all read as the same card.
     static let contentCardSurface = Color.white

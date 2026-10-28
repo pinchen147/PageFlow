@@ -30,28 +30,6 @@
       shouldUseLaunchSchemeArgsEnv = "YES"
       shouldAutocreateTestPlan = "YES">
       <Testables>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "00985C702EE4A10600E48813"
-               BuildableName = "PageFlowTests.xctest"
-               BlueprintName = "PageFlowTests"
-               ReferencedContainer = "container:PageFlow.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "00985C7A2EE4A10600E48813"
-               BuildableName = "PageFlowUITests.xctest"
-               BlueprintName = "PageFlowUITests"
-               ReferencedContainer = "container:PageFlow.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

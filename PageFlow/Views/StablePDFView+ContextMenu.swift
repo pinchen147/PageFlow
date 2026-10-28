@@ -54,6 +54,7 @@ extension StablePDFView {
             }
         }
 
+        configureNativeSizingActions(in: menu)
         applyKeyboardShortcuts(to: menu)
 
         if !menu.items.isEmpty {
@@ -63,6 +64,26 @@ extension StablePDFView {
         appendPageMenuItems(to: menu)
 
         return menu
+    }
+
+    /// Native identifiers come from PDFKit's returned menu metadata. The label
+    /// fallback uses keys verified in PDFKit's own Localizable table.
+    func configureNativeSizingActions(in menu: NSMenu) {
+        let pdfKit = Bundle(for: PDFView.self)
+        let resizeTitle = pdfKit.localizedString(forKey: "Auto Size", value: "Automatically Resize", table: "Localizable")
+        let actualSizeTitle = pdfKit.localizedString(forKey: "Actual Size", value: "Actual Size", table: "Localizable")
+        for item in menu.items {
+            if item.identifier?.rawValue == "_setAutoSize:" || item.title == resizeTitle {
+                item.target = self
+                item.action = #selector(automaticallyResize(_:))
+            } else if item.identifier?.rawValue == "_setActualSize:" || item.title == actualSizeTitle {
+                item.target = self
+                item.action = #selector(actualSize(_:))
+                let shortcut = ShortcutModel.current(for: "actualSize")
+                item.keyEquivalent = shortcut.nsKeyEquivalent
+                item.keyEquivalentModifierMask = shortcut.nsModifierFlags
+            }
+        }
     }
 
     // MARK: - Annotation Hit Testing
@@ -253,7 +274,6 @@ extension StablePDFView {
         let shortcutMap: [String: String] = [
             "Zoom In": "zoomIn",
             "Zoom Out": "zoomOut",
-            "Actual Size": "actualSize",
             "Next Page": "nextPage",
             "Previous Page": "previousPage"
         ]

@@ -441,6 +441,7 @@ extension NativeTextView {
                 // host whose coordinate space its frame is derived in, or it
                 // could neither draw nor hit-test where the geometry puts it.
                 if existing.superview !== host {
+                    guard detachTableEditor(from: existing) else { return }
                     existing.superview?.setNeedsDisplay(existing.frame)
                     host.addSubview(existing)
                 }
@@ -482,6 +483,7 @@ extension NativeTextView {
         // a re-created table's horizontal offset (tableHorizontalScrollOffsets
         // outlives the view).
         for (sourceID, overlay) in wideTableOverlays where !seenSourceIDs.contains(sourceID) {
+            guard detachTableEditor(from: overlay) else { continue }
             host.setNeedsDisplay(overlay.frame)
             overlay.removeFromSuperview()
             wideTableOverlays.removeValue(forKey: sourceID)
@@ -511,10 +513,21 @@ extension NativeTextView {
         return max(0, full - commentTableKeepout)
     }
 
-    /// Drop all overlays synchronously (file switch path).
+    /// Before removing or reparenting a disposable overlay, move its input to
+    /// the stable document view. Protected input defers this teardown.
+    private func detachTableEditor(from overlay: WideTableOverlay) -> Bool {
+        guard let session = (delegate as? NativeTextViewCoordinator)?.tableEditingSession,
+              session.grid?.isDescendant(of: overlay) == true else { return true }
+        return session.detachPresentation()
+    }
+
+    /// Drop overlays synchronously after the file-switch path retires its input.
     func removeAllWideTableOverlays() {
-        for (_, overlay) in wideTableOverlays { overlay.removeFromSuperview() }
-        wideTableOverlays.removeAll()
+        for (sourceID, overlay) in wideTableOverlays {
+            guard detachTableEditor(from: overlay) else { continue }
+            overlay.removeFromSuperview()
+            wideTableOverlays.removeValue(forKey: sourceID)
+        }
     }
 
     /// Overlay frame + left inset from the anchor line's rect (text-container

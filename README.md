@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/icon.png" alt="PageFlow Icon" width="128">
+<img src="assets/icon.png" alt="PageFlow Icon" width="128">
 
 # PageFlow
 
@@ -10,28 +10,36 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-1d1d1f?style=flat-square&labelColor=6e6e73)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-15%2B-1d1d1f?style=flat-square&labelColor=6e6e73)](https://www.apple.com/macos/)
 
-<img src="docs/screenshot.png" alt="A Markdown note in PageFlow 2.0: live preview with a checklist, a formula, a table, a diagram and a margin comment" width="720">
+<img src="assets/screenshot.png" alt="A Markdown note in PageFlow 2.0: live preview with a checklist, a formula, a table, a diagram and a margin comment" width="720">
+
+<sub>Screenshot from PageFlow 2.0.</sub>
 
 </div>
 
 ---
 
-PageFlow 2.0 is a PDF reader and a Markdown editor in the same tabs and windows.
+PageFlow 2.1 is a PDF reader and a Markdown editor in the same tabs and windows.
 It is written in SwiftUI and AppKit on PDFKit and TextKit 2: no Electron, no web view.
 Every tool stays out of sight until you reach for it.
+
+## New in 2.1
+
+- **PDF navigation rails** — hover over a page mark to preview its thumbnail, then click the mark or thumbnail to jump there. The preview follows your pointer across marks. Rails stay hidden while the PDF is fitted to the window, including its initial fit.
+- **Markdown navigation rails** — heading lengths show the hierarchy from H1 to H6. Hover to widen nearby marks and preview a heading with its text; click to jump to that section.
+- **Your choice of navigation** — rails are on by default and can be turned off in Settings → General → Navigation. The manual sidebar remains available and stays open until you close it.
 
 ## Markdown (new in 2.0)
 
 - **Live preview** — notes render as you type; the markup shows only where you are editing.
-- **[Collapsible sections](docs/heading-folding.md)** — fold a heading with its chevron or ⌥⌘↩. The quiet hidden-content row can be switched off in Settings; folding leaves the Markdown file unchanged.
+- **Collapsible sections** — fold a heading with its chevron or ⌥⌘↩. The quiet hidden-content row can be switched off in Settings; folding leaves the Markdown file unchanged.
 - **Tables you edit as tables** — click a cell and type, Tab to move on (Tab past the last cell adds a row), right-click to insert, delete, move, sort or align. Select a range of cells to copy, paste, clear or format them.
 - **Math, diagrams, code** — `$…$` and `$$…$$` LaTeX, Mermaid flowchart, sequence, class, state, ER and XY charts, and syntax colouring for about 190 languages.
 - **Images you can edit** — select an image to change its description, size, alignment or crop, or attach a margin comment. Crops preserve the original file.
-- **[Move whole blocks](docs/block-dragging.md)** — hover to reveal grips for paragraphs, headings, quotes, list groups, tables, images, code, formulas and diagrams. A collapsed heading carries its entire hidden section and nested fold choices; an expanded heading moves only its heading text. Drops, copies, Undo and Redo preserve those choices.
+- **Move whole blocks** — hover to reveal grips for paragraphs, headings, quotes, list groups, tables, images, code, formulas and diagrams. A collapsed heading carries its entire hidden section and nested fold choices; an expanded heading moves only its heading text. Drops, copies, Undo and Redo preserve those choices.
 - **Comments in the file** — select text and press ⌥⌘M. Threads sit in the margin, can be replied to and resolved, and are saved in a hidden block at the end of the `.md`, so they travel with it.
 - **Plain files** — `.md` and `.markdown` anywhere on your Mac; line endings kept. `[next](other.md)` opens the linked note or PDF, `[see](#heading)` jumps within the note, a pasted screenshot lands in an `attachments` folder beside the note.
 - **Outline, Find and Replace, zoom, print** — a heading outline with Back and Forward, Find and Replace (⌥⌘F), PDF-style zoom, and printing that keeps math, tables and diagrams.
-- **Dark notes** — notes follow your Mac's appearance, or pin them to light or dark. The chrome stays light, and PDF pages are never recoloured.
+- **Dark notes** — notes follow your Mac's appearance, or pin them to light or dark. PDF pages are never recoloured.
 
 ## PDF
 
@@ -52,7 +60,7 @@ Every tool stays out of sight until you reach for it.
 
 ## Install
 
-Download the [2.0 build 18 DMG containing the signed, notarized app](https://github.com/pinchen147/PageFlow/releases/download/v2.0/PageFlow-2.0-build18.dmg), or visit [pageflow.pinchen.me](https://pageflow.pinchen.me).
+The latest signed installer is the [2.0 build 18 DMG containing the signed, notarized app](https://github.com/pinchen147/PageFlow/releases/download/v2.0/PageFlow-2.0-build18.dmg). The navigation rails described above are in the 2.1 source build; this 2.0 installer does not include them. You can also visit [pageflow.pinchen.me](https://pageflow.pinchen.me).
 
 For a local unsigned build with Xcode installed:
 
@@ -87,7 +95,7 @@ Bindings can be changed in Settings → Shortcuts.
 
 ## Changelog
 
-Release notes for every version are at [pageflow.pinchen.me/changelog](https://pageflow.pinchen.me/changelog).
+The 2.1 navigation changes are described [above](#new-in-21). Earlier release notes are at [pageflow.pinchen.me/changelog](https://pageflow.pinchen.me/changelog).
 
 ## License
 

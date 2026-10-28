@@ -411,10 +411,7 @@ struct PageFlowApp: App {
             get: { pdfManager?.isAutoScaling ?? false },
             set: { newValue in
                 guard let manager = pdfManager else { return }
-                manager.isAutoScaling = newValue
-                if newValue {
-                    manager.requestFitOnce()
-                }
+                manager.setAutoScaling(newValue)
             }
         ))
         .disabled(!hasDocument || (pdfManager?.displayMode == .twoUp || pdfManager?.displayMode == .twoUpContinuous))

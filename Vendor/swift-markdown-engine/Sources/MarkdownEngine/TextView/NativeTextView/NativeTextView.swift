@@ -345,6 +345,10 @@ final class NativeTextView: NSTextView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if let coordinator = delegate as? NativeTextViewCoordinator {
+            coordinator.invalidateSectionNavigation()
+            coordinator.scheduleSectionNavigationRefresh()
+        }
         updateKeyMonitor()
     }
 

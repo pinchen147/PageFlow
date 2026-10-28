@@ -92,6 +92,13 @@ struct PDFTabView: View {
             }
         }
         .ignoresSafeArea(.all, edges: .all)
+        .overlay {
+            if isActive, isDisplayed {
+                PDFNavigationRail(pdfManager: pdfManager, bookmarkManager: bookmarkManager,
+                    eligible: settingsManager.showNavigationRail && !showingOutline && !pdfManager.suppressesNavigationRail,
+                    topInset: topChromeHeight, onShowSidebar: { showingOutline = true })
+            }
+        }
         .overlay(alignment: .topTrailing) {
             commentsSidebarOverlay
         }
@@ -244,7 +251,7 @@ struct PDFTabView: View {
             Text("Page \(pdfManager.currentPageIndex + 1) of \(pdfManager.pageCount)")
                 .font(.caption)
                 .fontWeight(.medium)
-                .pageFlowGlassControlLabel()
+                .foregroundStyle(.primary)
                 .padding(.horizontal, DesignTokens.spacingSM + 2)
                 .padding(.vertical, DesignTokens.spacingSM)
                 .pageFlowLiquidGlassSurface(.pageIndicator)
