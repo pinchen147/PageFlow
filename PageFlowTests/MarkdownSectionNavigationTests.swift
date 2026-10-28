@@ -256,7 +256,7 @@ struct MarkdownSectionNavigationTests {
         #expect(rail.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
     }
 
-    // Rasterize the production draw override into a transparent, point-normalized bitmap.
+    // Rasterize production drawing; PDF marks are measured against their opaque backing.
     private func inkColumns(_ rail: NavigationRailView, scale: Int = 2) throws -> [Set<Int>] {
         let width = Int(rail.bounds.width) * scale
         let height = Int(rail.bounds.height) * scale
@@ -273,10 +273,20 @@ struct MarkdownSectionNavigationTests {
         rail.effectiveAppearance.performAsCurrentDrawingAppearance { rail.draw(rail.bounds) }
         context.flushGraphics()
         return rail.geometry.marks.map { mark in
+            // The gap below a tick samples its actual backing, independent of appearance.
+            let backing = rail.kind == .pdf
+                ? bitmap.colorAt(x: 16 * scale, y: Int((mark.y + 2) * CGFloat(scale)))?.usingColorSpace(.sRGB) : nil
             var columns: Set<Int> = []
             for x in 0..<(44 * scale) {
                 for y in Int((mark.y - 1) * CGFloat(scale))..<Int((mark.y + 1) * CGFloat(scale)) {
-                    if (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.01 { columns.insert(x) }
+                    guard let pixel = bitmap.colorAt(x: x, y: y), pixel.alphaComponent > 0.01 else { continue }
+                    if let backing {
+                        guard let color = pixel.usingColorSpace(.sRGB),
+                              max(abs(color.redComponent - backing.redComponent),
+                                  abs(color.greenComponent - backing.greenComponent),
+                                  abs(color.blueComponent - backing.blueComponent)) > 0.02 else { continue }
+                    }
+                    columns.insert(x)
                 }
             }
             return columns
@@ -388,7 +398,12 @@ struct MarkdownSectionNavigationTests {
         #expect(columns.contains(24) && columns.contains(47))
         rail.paintExclusions = nil
         rail.configure(kind: .pdf, count: 2, visible: [1], identity: "pdf-control", eligible: true, topInset: 0)
-        #expect(try widths(rail) == [12, 18])
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            rail.appearance = NSAppearance(named: appearance)
+            for scale in [1, 2] {
+                #expect(try widths(rail, scale: scale) == [12, 18])
+            }
+        }
     }
 
     @Test("A later heading-prefix edit and Undo publish new levels and resting ink without reviving old tokens")
