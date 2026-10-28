@@ -233,36 +233,113 @@ struct NavigationRailTests {
         #expect(sidebarOpens == 0)
     }
 
-    private final class WeakRail {
-        weak var value: NavigationRailView?
+    private final class CallbackOwner {
+        let didCall: () -> Void
+        init(didCall: @escaping () -> Void) { self.didCall = didCall }
     }
 
-    private func exerciseMarkedInputAndDetach() async throws -> (NSWindow, WeakRail, ContinuousClock.Instant) {
+    private final class WeakCallbackOwner {
+        weak var value: CallbackOwner?
+        var isReleased: Bool { value == nil }
+    }
+
+    /// The helper's scope owns no reference after returning. Only the rail's
+    /// production callbacks (and the deliberate negative control) retain it.
+    private func installOwnedCallbacks(on rail: NavigationRailView,
+                                       didCall: @escaping () -> Void) -> WeakCallbackOwner {
+        let owner = CallbackOwner(didCall: didCall)
+        let observation = WeakCallbackOwner()
+        observation.value = owner
+        rail.targetAtRank = { rank in owner.didCall(); return .page(rank) }
+        rail.makePreview = { _ in
+            owner.didCall()
+            return NSView(frame: NSRect(x: 0, y: 0, width: 352, height: 104))
+        }
+        rail.updatePreview = { _ in owner.didCall() }
+        rail.onActivate = { _, _ in owner.didCall() }
+        rail.onShowSidebar = { owner.didCall() }
+        rail.reservedNativeHit = { _ in owner.didCall(); return nil }
+        rail.paintExclusions = { owner.didCall(); return [] }
+        return observation
+    }
+
+    @Test("Marked input and queued dismissal survive until retirement clears presentation and callback ownership",
+          arguments: [false, true])
+    func dismissalAndComposition(retainingCallback: Bool) async throws {
+        // Keep the native rail alive: retirement must release app ownership even
+        // when AppKit or accessibility still holds the former native shell.
         let (window, rail, native) = try await mount()
-        let observation = WeakRail()
-        observation.value = rail
-        rail.pointerMoved(to: NSPoint(x: 20, y: 100))
-        native.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: NSRange(location: 0, length: 0))
+        defer { window.close() }
+        let replay = try #require(window as? TrackingWindow)
+        let parent = try #require(rail.superview)
+        var calls = 0
+        let observation = installOwnedCallbacks(on: rail) { calls += 1 }
+        try #require(!observation.isReleased)
+        var retainedCallback = retainingCallback ? rail.onShowSidebar : nil
+        let point = NSPoint(x: 20, y: 100)
+        let outside = NSPoint(x: 500, y: 300)
+        let hitPoint = parent.convert(point, from: rail)
+        let screenPoint = window.convertPoint(toScreen: rail.convert(point, to: nil))
+        let mouseUp = try event(.leftMouseUp, in: rail, point: point)
+        replay.replayedPointer = rail.convert(point, to: nil)
+        rail.pointerMoved(to: point)
+        let panel = try #require(rail.panel)
+        try #require(rail.presentedTarget != nil)
+
+        native.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0),
+                             replacementRange: NSRange(location: 0, length: 0))
+        try #require(native.hasMarkedText())
         #expect(!rail.handleEscape())
-        #expect(rail.panel != nil)
+        #expect(rail.panel === panel)
+        #expect(window.firstResponder === native)
         native.unmarkText()
-        rail.pointerMoved(to: NSPoint(x: 500, y: 300))
-        #expect(rail.panel != nil)
-        rail.pointerMoved(to: NSPoint(x: 20, y: 100))
-        #expect(rail.panel != nil)
+        replay.replayedPointer = rail.convert(outside, to: nil)
+        rail.pointerMoved(to: outside)
+        #expect(rail.panel === panel)
+        replay.replayedPointer = rail.convert(point, to: nil)
+        rail.pointerMoved(to: point)
+        await nextMainTurn()
+        try #require(window.isKeyWindow)
+        #expect(rail.panel === panel, "Re-entry must cancel the queued exit")
+
+        // Leave both a pressed target and an exit callback pending at teardown.
+        rail.mouseDown(with: try event(.leftMouseDown, in: rail, point: point))
+        replay.replayedPointer = rail.convert(outside, to: nil)
+        rail.pointerMoved(to: outside)
+        let callsBeforeRetirement = calls
+        rail.retire()
+        #expect(rail.panel == nil)
+        #expect(panel.superview == nil)
+        #expect(rail.presentedTarget == nil)
+        #expect(window.firstResponder === native)
+        #expect(rail.hitTest(hitPoint) == nil)
+        #expect(rail.accessibilityHitTest(screenPoint) == nil)
+        #expect(rail.accessibilityFrame() == .zero)
+        #expect(!rail.canBecomeKeyView)
+        #expect(!rail.accessibilityPerformPress())
+        withExtendedLifetime(retainedCallback) {
+            #expect(observation.isReleased == !retainingCallback,
+                    "The same release predicate must detect an externally retained production callback")
+        }
+        retainedCallback = nil
+        #expect(observation.isReleased)
+
         rail.removeFromSuperview()
-        return (window, observation, .now.advanced(by: .milliseconds(350)))
+        rail.pointerMoved(to: point)
+        rail.mouseUp(with: mouseUp)
+        #expect(!rail.handleEscape())
+        #expect(!rail.accessibilityPerformPress())
+        window.update()
+        await nextMainTurn()
+        #expect(rail.panel == nil)
+        #expect(rail.presentedTarget == nil)
+        #expect(rail.hitTest(hitPoint) == nil)
+        #expect(rail.accessibilityHitTest(screenPoint) == nil)
+        #expect(window.firstResponder === native)
+        #expect(calls == callsBeforeRetirement, "Late native work must not invoke retired callbacks")
+        #expect(observation.isReleased)
     }
 
-    @Test("Marked text retains Escape; queued dismissal cancels and teardown releases the host")
-    func dismissalAndComposition() async throws {
-        // End every setup-owned strong reference before observing native teardown.
-        // The original post-detach deadline and live window remain unchanged.
-        let (window, observation, deadline) = try await exerciseMarkedInputAndDetach()
-        defer { window.close() }
-        try await ContinuousClock().sleep(until: deadline)
-        #expect(observation.value == nil)
-    }
     @Test("Tracking callbacks preserve bridge travel and promptly dismiss departed passive previews",
           arguments: ["pdf", "markdown"])
     func trackingAndPromptExit(kind: String) async throws {
