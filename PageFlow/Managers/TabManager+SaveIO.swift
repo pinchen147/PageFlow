@@ -17,7 +17,8 @@ extension TabManager {
     /// prints the STYLED Live-Preview document rendered THROUGH the engine (fork seam
     /// `makePrintView`) so math, tables, and code-block backgrounds print as on screen.
     /// No reconcile is needed: the seam reads the live `NSTextStorage` directly, which
-    /// already carries the trailing keystroke. Exhaustive over `TabContent` so a new
+    /// already carries the trailing keystroke. A book lays out for the paper off the
+    /// main thread first (`EPUBPrintView`). Exhaustive over `TabContent` so a new
     /// content type must define its print path.
     func printActiveDocument() {
         guard let content = activeSession?.content else { return }
@@ -29,6 +30,42 @@ extension TabManager {
             runMarkdownPrintPanel(jobTitle: c.documentManager.documentTitle) { pageWidth in
                 c.makePrintView(pageWidth: pageWidth)
             }
+        case .epub(let c):
+            guard let session = activeSession else { return }
+            printBook(session, content: c)
+        }
+    }
+
+    /// Lays the book out, then brings the panel up on the window holding its tab
+    /// by then, or says why not. Only a wait worth mentioning gets a word, and it
+    /// goes when the wait ends. A repeat ⌘P meanwhile starts nothing. `show`
+    /// replaces only the panel.
+    func printBook(_ session: TabSession, content: EPUBContent, beat: Duration = .milliseconds(400),
+                   show: @escaping @MainActor (NSPrintOperation, NSWindow?) -> Void = { present($0, parent: $1) }) {
+        guard content.isReady, session.printPreparation == nil else { return }
+        let printInfo = makeEPUBPrintInfo()
+        let waiting = "Preparing pages…"
+        let registry = WindowRegistry.shared
+        session.printPreparation = Task { [weak self, weak session] in
+            let notice = Task { @MainActor [weak self, weak session] () -> TabManager? in
+                try? await Task.sleep(for: beat)
+                guard !Task.isCancelled, let session,
+                      let owner = registry.owner(of: session, document: content, fallback: self) else { return nil }
+                owner.postTransientToast(waiting, duration: 60)
+                return owner
+            }
+            let view = await content.makePrintView(for: printInfo)
+            notice.cancel()
+            await notice.value?.dismissTransientToast(waiting)
+            session?.printPreparation = nil
+            guard let view, let session, !Task.isCancelled,
+                  let owner = registry.owner(of: session, document: content, fallback: self) else { return }
+            guard owner.activeTabID == session.id else {
+                owner.postTransientToast("Didn’t print “\(content.documentTitle)”: its tab isn’t in front.")
+                return
+            }
+            show(makeEPUBPrintOperation(view: view, printInfo: printInfo, jobTitle: content.documentTitle),
+                 registry.window(for: owner))
         }
     }
 
@@ -44,6 +81,8 @@ extension TabManager {
             return await savePDFDocument(c.pdfManager)
         case .markdown(let c):
             return await saveMarkdownDocument(c)
+        case .epub:
+            return .failure(message: "EPUB publications are read-only.")
         }
     }
 
@@ -72,6 +111,7 @@ extension TabManager {
             return await saveActiveDocumentAs()
         }
         guard documentManager.isDirty || documentManager.hasPendingWrites else {
+            content.recoverySession?.clearCheckpoint()
             return .success(message: "")
         }
         guard let session = sessions.values.first(where: { $0.content.markdown === content }) else {
@@ -104,7 +144,18 @@ extension TabManager {
             return await savePDFDocumentAs(id: id, session: session, pdfManager: c.pdfManager)
         case .markdown(let c):
             return await saveMarkdownDocumentAs(id: id, content: c)
+        case .epub(let c):
+            return await saveBookAs(session: session, content: c)
         }
+    }
+
+    /// The panel Save As shows for a file that has a name and one type.
+    private func chooseSaveAsDestination(type: UTType, for originalURL: URL) -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [type]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = originalURL.lastPathComponent
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     private func savePDFDocumentAs(id: UUID, session: TabSession, pdfManager: PDFManager) async -> SaveResult {
@@ -113,18 +164,20 @@ extension TabManager {
         }
 
         let expectedDocument = session.content.document
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType.pdf]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = originalURL.lastPathComponent
-
-        let response = panel.runModal()
-        guard response == .OK, let url = panel.url else {
-            return .cancelled
-        }
+        guard let url = chooseSaveAsDestination(type: .pdf, for: originalURL) else { return .cancelled }
 
         guard session.pdfManager === pdfManager, pdfManager.document === originalDocument else { return .cancelled }
         return await saveDocumentAs(session, to: url, isSecurityScoped: true, expectedDocument: expectedDocument)
+    }
+
+    /// The same panel and the same re-homed tab as a PDF; what is written is a
+    /// copy of the book's file.
+    private func saveBookAs(session: TabSession, content: EPUBContent) async -> SaveResult {
+        guard content.isReady else { return .failure(message: "Open a document before saving.") }
+        let originalURL = content.documentURL
+        guard let url = chooseSaveAsDestination(type: .epub, for: originalURL) else { return .cancelled }
+        guard session.content.epub === content, content.documentURL == originalURL else { return .cancelled }
+        return await saveDocumentAs(session, to: url, isSecurityScoped: true, expectedDocument: content)
     }
 
     /// The session can move windows while disk I/O runs; a replacement can also
@@ -186,6 +239,54 @@ extension TabManager {
             content.reconcileLiveText()
             let completion = await content.documentManager.saveAsWithCompletion(to: url, isSecurityScoped: isSecurityScoped)
             return completeMarkdownSave(session: session, content: content, completion: completion, saveAs: true)
+        case .epub(let content):
+            return await saveBookCopy(session, content: content, to: url, isSecurityScoped: isSecurityScoped)
+        }
+    }
+
+    /// Copies the book off the main thread. The tab moves to the copy only if it
+    /// still holds this book once the copy lands.
+    private func saveBookCopy(_ session: TabSession, content: EPUBContent, to url: URL,
+                              isSecurityScoped: Bool) async -> SaveResult {
+        let source = content.documentURL
+        let isSameFile = source.pageFlowCanonicalDocumentURL == url.pageFlowCanonicalDocumentURL
+        let access = isSecurityScoped && url.startAccessingSecurityScopedResource()
+        let failure: String? = await Task.detached(priority: .userInitiated) {
+            do {
+                if !isSameFile { try Self.copyBook(from: source, to: url) }
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }.value
+        guard failure == nil, let owner = WindowRegistry.shared.owner(of: session, document: content, fallback: self) else {
+            if access { url.stopAccessingSecurityScopedResource() }
+            return failure.map { Self.saveResult(didWrite: false, saveAs: true, failureReason: $0) } ?? .cancelled
+        }
+        content.adoptSavedCopy(at: url, scopedAccess: access)
+        owner.publishSavedDocumentIdentity(session)
+        let result = Self.saveResult(didWrite: true, saveAs: true)
+        owner.postSaveNotification(result)
+        return result
+    }
+
+    /// Writes a copy of the book's file over whatever is at `destination`, which
+    /// stays as it was until the whole copy swaps in: a quit mid-copy leaves no
+    /// truncated book. The copy is staged on the destination's volume in the
+    /// system's replacement folder, since a sandboxed app may have been granted
+    /// only the chosen file, not its siblings.
+    nonisolated static func copyBook(from source: URL, to destination: URL,
+                                     copying copy: (URL, URL) throws -> Void = { try FileManager.default.copyItem(at: $0, to: $1) }) throws {
+        let files = FileManager.default
+        let staging = try files.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                                    appropriateFor: destination.deletingLastPathComponent(), create: true)
+        defer { try? files.removeItem(at: staging) }
+        let staged = staging.appendingPathComponent(destination.lastPathComponent)
+        try copy(source, staged)
+        if files.fileExists(atPath: destination.path) {
+            _ = try files.replaceItemAt(destination, withItemAt: staged)
+        } else {
+            try files.moveItem(at: staged, to: destination)
         }
     }
 
@@ -224,6 +325,9 @@ extension TabManager {
         case .pdf(let content):
             let manager = content.pdfManager
             identity = (manager.documentURL, manager.documentTitle, manager.usesSecurityScopedAccess)
+        case .epub(let content):
+            identity = (content.documentURL, content.tabTitle(current: tab.title, previousURL: tab.documentURL),
+                        content.usesSecurityScopedAccess)
         }
         guard let url = identity.url,
               tab.documentURL != url || tab.title != identity.title ||

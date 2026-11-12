@@ -104,7 +104,7 @@ public enum MarkdownPrintRenderer {
 
         // Full-document layout so pagination sees every page's height (TextKit 2
         // is viewport-lazy otherwise), then grow the frame to the laid-out height.
-        textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+        textLayoutManager.ensureLayout(for: textLayoutManager.documentRange) // whole-note-layout: printing needs every page
         printView.sizeToFit()
         return printView
     }

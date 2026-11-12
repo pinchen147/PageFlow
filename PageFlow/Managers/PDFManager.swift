@@ -20,7 +20,7 @@ enum InteractionMode {
 /// and consumed by the projector once applied. Transient — this is *not* the
 /// durable Auto-Scale mode (which hands sizing to PDFKit's `autoScales`).
 struct FitRequest: Equatable {
-    /// Scroll to the top of the page after fitting (used on document load).
+    /// Scroll to the top of the page after fitting.
     var scrollToTop: Bool
 }
 
@@ -57,10 +57,12 @@ final class PDFManager {
         fileWriter: @escaping FileWriter = { data, url in try data.write(to: url, options: .atomic) },
         scheduleWrite: @escaping WriteScheduler = { work in
             DispatchQueue.global(qos: .userInitiated).async(execute: work)
-        }
+        },
+        pageClipboard: PDFPageClipboard = .shared
     ) {
         self.fileSession = PDFFileSession(writer: fileWriter)
         self.scheduleWrite = scheduleWrite
+        self.pageClipboard = pageClipboard
     }
 
     // Deferred native work belongs to the intent that admitted it. Increment
@@ -70,11 +72,19 @@ final class PDFManager {
     var document: PDFDocument? {
         didSet {
             viewIntentRevision &+= 1
-            if oldValue !== document { suppressesNavigationRail = false }
+            if oldValue !== document {
+                suppressesNavigationRail = false
+                navigationRailFitsViewport = false
+                navigationRailPageRects = []
+            }
         }
     }
     /// In-session reading intent, independent of the consumed fit request and scale.
     private(set) var suppressesNavigationRail = false
+    /// Native fit and visible-paper clearance, independently of fitted intent.
+    var navigationRailFitsViewport = false
+    /// Current visible paper in window coordinates, measured by the native owner.
+    var navigationRailPageRects: [NSRect] = []
     var currentPage: PDFPage? { didSet { if !isIngestingPageChange { viewIntentRevision &+= 1 } } }
     var currentPageIndex: Int = 0 { didSet { if !isIngestingPageChange { viewIntentRevision &+= 1 } } }
     var scaleFactor: CGFloat = 1.0 { didSet { viewIntentRevision &+= 1 } }
@@ -95,6 +105,15 @@ final class PDFManager {
     /// Identity of the coordinator that installed `liveDestinationProvider`, so a
     /// lazily-run dismantle of an old view can't clear a successor's provider.
     @ObservationIgnored var liveDestinationProviderOwner: ObjectIdentifier?
+    /// The tab left its window, and its view there no longer speaks for it. Cleared by
+    /// the view made in the next one.
+    @ObservationIgnored private(set) var awaitsNewView = false
+    @ObservationIgnored private var releasedView: (destination: (() -> PDFDestination?)?, owner: ObjectIdentifier?, selection: (() -> PDFSelection?)?)?
+    /// Reads the live `PDFView`'s text selection. Set alongside `liveDestinationProvider`.
+    @ObservationIgnored var liveSelectionProvider: (() -> PDFSelection?)?
+    /// The text selected in a view torn down, selected again by the view that
+    /// replaces it; nil when none pending. Transient.
+    @ObservationIgnored var pendingSelectionRestore: PDFSelection?
     /// Source of restored reading positions. Defaults to the app-wide store;
     /// overridable in tests.
     @ObservationIgnored var documentStateStore: DocumentStateStore = .shared
@@ -121,13 +140,14 @@ final class PDFManager {
 
     /// Increments whenever pages are added/removed/reordered - triggers UI refresh
     var pageVersion: Int = 0
-    private var thumbnailStructureVersion: Int = 0
+    private(set) var pageStructureVersion: Int = 0
     private var thumbnailPageVersions: [Int: Int] = [:]
     @ObservationIgnored private var cachedOutlineRoot: PDFOutline?
     @ObservationIgnored private var cachedOutlineItems: [OutlineItem]?
 
-    /// Copied page for paste operation (same-document only)
-    private(set) var copiedPage: PDFPage?
+    /// Copy/Cut/Paste Page go through the app-wide clipboard, so a page
+    /// copied in one PDF pastes into another.
+    let pageClipboard: PDFPageClipboard
 
     /// What the open document's security handler permits (see `PDFPermissions`).
     var permissions: PDFPermissions { PDFPermissions(document) }
@@ -158,7 +178,7 @@ final class PDFManager {
         #endif
     }
 
-    private func getUndoManager(for action: String) -> UndoManager? {
+    func getUndoManager(for action: String) -> UndoManager? {
         guard let undoManager = undoManagerProvider?() else {
             logger.error("UndoManager unavailable for action: \(action)")
             return nil
@@ -196,7 +216,7 @@ final class PDFManager {
 
     func thumbnailRevision(for pageIndex: Int) -> PageThumbnailRevision {
         PageThumbnailRevision(
-            structureVersion: thumbnailStructureVersion,
+            structureVersion: pageStructureVersion,
             pageVersion: thumbnailPageVersions[pageIndex, default: 0]
         )
     }
@@ -224,8 +244,8 @@ final class PDFManager {
         if let page { markThumbnailDirty(for: page) }
     }
 
-    private func markThumbnailStructureDirty() {
-        thumbnailStructureVersion += 1
+    func markThumbnailStructureDirty() {
+        pageStructureVersion += 1
         thumbnailPageVersions.removeAll()
         invalidateOutlineCache()
     }
@@ -389,7 +409,6 @@ final class PDFManager {
         fileSession.reset(access: access)
         applyInitialViewState(for: pdfDocument, url: url)
         isDirty = false
-        copiedPage = nil
         markThumbnailStructureDirty()
     }
 
@@ -411,8 +430,8 @@ final class PDFManager {
         currentPageIndex = 0
         scaleFactor = 1.0
         isDirty = false
-        copiedPage = nil
         pendingScrollRestore = nil
+        pendingSelectionRestore = nil
         pendingNavigation = nil
         markThumbnailStructureDirty()
     }
@@ -420,27 +439,33 @@ final class PDFManager {
     // MARK: - Reading-Position Persistence
 
     /// Restores the saved reading state for `url` if present and still valid,
-    /// otherwise falls back to first-page, fit-to-width defaults. The single
+    /// otherwise falls back to the first page, fitted with Auto-Scale. The single
     /// place document-load view state is initialized.
     private func applyInitialViewState(for document: PDFDocument, url: URL) {
-        if let saved = documentStateStore.state(for: url),
+        let saved = documentStateStore.state(for: url)
+        // The display mode is the document's, like an EPUB's layout; a document
+        // without one opens in the default mode rather than the previous one's.
+        displayMode = saved?.pdfDisplayMode.flatMap(PDFDisplayMode.init(rawValue:)) ?? .singlePageContinuous
+        if let saved,
            saved.pageIndex >= 0, saved.pageIndex < document.pageCount,
            let page = document.page(at: saved.pageIndex) {
             currentPageIndex = saved.pageIndex
             currentPage = page
             isAutoScaling = saved.isAutoScaling
             suppressesNavigationRail = saved.isAutoScaling
-            scaleFactor = min(max(saved.scaleFactor, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
+            scaleFactor = ZoomRange.pages.clamp(saved.scaleFactor)
             pendingFit = nil
             pendingScrollRestore = saved.scrollPoint.map { PDFDestination(page: page, at: $0) }
         } else {
+            // A document without a usable saved state opens as Zoom to Fit
+            // leaves it: Auto-Scale stays on through window resizes until the
+            // reader zooms. PDFKit owns the scale; this value is the 100%
+            // baseline until its first scale notification.
             currentPageIndex = 0
             currentPage = document.page(at: 0)
-            isAutoScaling = false
             scaleFactor = DesignTokens.pdfDefaultScale
-            pendingFit = FitRequest(scrollToTop: true)
-            suppressesNavigationRail = true
             pendingScrollRestore = nil
+            setAutoScaling(true)
         }
     }
 
@@ -450,7 +475,8 @@ final class PDFManager {
     func captureViewState() -> DocumentViewState? {
         guard let document, documentURL != nil else { return nil }
 
-        let destination = liveDestinationProvider?()
+        // A restore still waiting is where the reader is: the view hasn't got there.
+        let destination = pendingScrollRestore ?? liveDestinationProvider?()
         if destination != nil { pendingScrollRestore = destination }
 
         let pageIndex: Int
@@ -465,8 +491,53 @@ final class PDFManager {
             pageIndex: pageIndex,
             scaleFactor: scaleFactor,
             isAutoScaling: isAutoScaling,
-            scrollPoint: destination?.point
+            scrollPoint: destination?.point,
+            pdfDisplayMode: displayMode.rawValue
         )
+    }
+
+    /// Readies the live view to be torn down: its replacement lands at the
+    /// same place with the same text selected.
+    func prepareViewEviction() {
+        _ = captureViewState()
+        if let liveSelectionProvider { pendingSelectionRestore = liveSelectionProvider() }
+    }
+
+    /// The tab is leaving its window, its place already captured. Its view there still
+    /// lives a while, and goes on reporting: a restore it took isn't left for the view
+    /// that replaces it, and the page PDFKit names as it comes down would become the
+    /// reader's.
+    func releaseViewForTransfer() {
+        navigationRailFitsViewport = false
+        navigationRailPageRects = []
+        if let liveSelectionProvider { pendingSelectionRestore = liveSelectionProvider() }
+        // A move straight back finds this already released, and has nothing newer to keep.
+        if liveDestinationProviderOwner != nil {
+            releasedView = (liveDestinationProvider, liveDestinationProviderOwner, liveSelectionProvider)
+        }
+        liveDestinationProvider = nil
+        liveDestinationProviderOwner = nil
+        liveSelectionProvider = nil
+        awaitsNewView = true
+    }
+
+    /// The move didn't happen: its window couldn't be made and the tab came straight
+    /// back, within the turn, so SwiftUI keeps the view it had. No new one will come to
+    /// clear the release, and the old view would stay frozen, deaf to the reader.
+    func reclaimReleasedView() {
+        guard awaitsNewView, let releasedView else { return }
+        liveDestinationProvider = releasedView.destination
+        liveDestinationProviderOwner = releasedView.owner
+        liveSelectionProvider = releasedView.selection
+        self.releasedView = nil
+        pendingSelectionRestore = nil
+        awaitsNewView = false
+    }
+
+    /// A new view took over the document.
+    func noteNewView() {
+        awaitsNewView = false
+        releasedView = nil
     }
 
     // MARK: - Navigation
@@ -480,6 +551,8 @@ final class PDFManager {
 
         let page = document.page(at: index)
         guard currentPageIndex != index || currentPage !== page else { return }
+        // The reader moved: a restore still waiting would only pull them back.
+        pendingScrollRestore = nil
         currentPageIndex = index
         currentPage = page
     }
@@ -496,13 +569,30 @@ final class PDFManager {
         goToPage(previousIndex)
     }
 
+    /// Records leaving the page in view for `target`, by `BackRule`.
+    func recordJump(toPage target: Int) {
+        if BackRule.records(from: currentPageIndex, to: target) { pushNavigationState() }
+    }
+
+    func recordJump(to page: PDFPage) {
+        guard let index = document?.index(for: page), index != NSNotFound else { return }
+        recordJump(toPage: index)
+    }
+
+    /// A jump Back returns from.
+    func jump(toPage index: Int) {
+        guard let document, index >= 0, index < document.pageCount else { return }
+        recordJump(toPage: index)
+        goToPage(index)
+    }
+
     func goToFirstPage() {
-        goToPage(0)
+        jump(toPage: 0)
     }
 
     func goToLastPage() {
         guard pageCount > 0 else { return }
-        goToPage(pageCount - 1)
+        jump(toPage: pageCount - 1)
     }
 
     /// A linked page belongs to this exact document, including a pending unlock.
@@ -530,10 +620,8 @@ final class PDFManager {
         guard let document, let page = destination.page else { return }
         let index = document.index(for: page)
         guard index != NSNotFound else { return }
-        if currentPageIndex != index || currentPage !== page {
-            pushNavigationState()
-            goToPageWithoutHistory(index)
-        }
+        recordJump(toPage: index)
+        goToPageWithoutHistory(index)
         // An explicit jump supersedes any still-pending reading-position
         // restore — otherwise the restore's settle retry can land after this
         // navigation and yank the view away from the target.
@@ -543,14 +631,24 @@ final class PDFManager {
 
     // MARK: - Zoom
 
+    // Multiplicative steps, as Markdown zooms: each press changes the size by
+    // the same proportion at any scale.
     func zoomIn() {
         beginManualZoom()
-        scaleFactor = min(scaleFactor + DesignTokens.pdfZoomStep, DesignTokens.pdfMaxScale)
+        scaleFactor = ZoomRange.pages.steppedIn(from: scaleFactor)
     }
 
     func zoomOut() {
         beginManualZoom()
-        scaleFactor = max(scaleFactor - DesignTokens.pdfZoomStep, DesignTokens.pdfMinScale)
+        scaleFactor = ZoomRange.pages.steppedOut(from: scaleFactor)
+    }
+
+    /// The zoom commands disable at the limits, so a press always does something.
+    var canZoomIn: Bool { hasDocument && ZoomRange.pages.canStepIn(from: scaleFactor) }
+    var canZoomOut: Bool { hasDocument && ZoomRange.pages.canStepOut(from: scaleFactor) }
+    /// Already at 100% and not fitted, Actual Size has nothing to do.
+    var canResetZoom: Bool {
+        hasDocument && (isAutoScaling || !ZoomRange.pages.isActualSize(scaleFactor))
     }
 
     func resetZoom() {
@@ -565,7 +663,7 @@ final class PDFManager {
 
     /// A restored scale is projection state, not a new manual-zoom command.
     func restoreZoom(_ scale: CGFloat) {
-        scaleFactor = max(DesignTokens.pdfMinScale, min(scale, DesignTokens.pdfMaxScale))
+        scaleFactor = ZoomRange.pages.clamp(scale)
     }
 
     /// Begins a manual command, including native input accepted by the view.
@@ -581,8 +679,10 @@ final class PDFManager {
         pendingFit = nil
     }
 
-    func toggleAutoScale() {
-        setAutoScaling(!isAutoScaling)
+    /// Zoom to Fit: hands sizing to Auto-Scale, so the page stays fitted as
+    /// the window resizes until the reader zooms (the EPUB fit model).
+    func zoomToFit() {
+        setAutoScaling(true)
     }
 
     func requestFitOnce() {
@@ -656,62 +756,31 @@ final class PDFManager {
 
     // MARK: - Page Operations
 
-    /// Whether a page is available to paste
-    var canPaste: Bool { copiedPage != nil }
+    /// Whether a page is available to paste, from this or another PDF
+    var canPaste: Bool { pageClipboard.hasPage }
 
-    /// Copies the page at the given index for later paste
-    func copyPage(at index: Int) {
-        guard permissions.copy, let page = document?.page(at: index),
-              let pageCopy = page.copy() as? PDFPage else { return }
-        copiedPage = pageCopy
+    /// Copies the page at the given index for later paste. Returns false when
+    /// nothing was copied (no permission, no such page, or it couldn't be written).
+    @discardableResult
+    func copyPage(at index: Int) -> Bool {
+        guard permissions.copy, let page = document?.page(at: index) else { return false }
+        return pageClipboard.copy(page)
     }
 
     /// Cuts the page at the given index (copy + delete)
     func cutPage(at index: Int) {
-        // Cut is copy then delete: a page that cannot be copied is not removed either.
-        guard permissions.editPages, permissions.copy, let document = document, document.pageCount > 1 else { return }
-        copyPage(at: index)
+        // Cut is copy then delete: a page that was not copied is not removed either.
+        guard permissions.editPages, permissions.copy, let document = document, document.pageCount > 1,
+              copyPage(at: index) else { return }
         deletePage(at: index)
     }
 
     /// Pastes the copied page after the given index
     /// Returns true if paste succeeded
     func pastePage(after index: Int) -> Bool {
-        guard permissions.editPages, let page = copiedPage,
-              let document = document,
-              index >= 0, index < document.pageCount else { return false }
-
-        let insertIndex = index + 1
-        let pageCountBefore = document.pageCount
-
-        document.insert(page, at: insertIndex)
-
-        // Validate insert succeeded (PDFKit doesn't report failures)
-        guard document.pageCount == pageCountBefore + 1 else { return false }
-
-        // Create new copy for future pastes (page can only be in doc once)
-        guard let newCopy = page.copy() as? PDFPage else {
-            // Rollback: remove the inserted page if copy fails
-            document.removePage(at: insertIndex)
-            return false
-        }
-        copiedPage = newCopy
-
-        isDirty = true
-        currentPageIndex = insertIndex
-        currentPage = document.page(at: insertIndex)
-        pageVersion += 1
-        markThumbnailStructureDirty()
-        pageMutationHandler?(.inserted(at: insertIndex))
-
-        if let undoManager = getUndoManager(for: "Paste Page") {
-            undoManager.registerUndo(withTarget: self) { target in
-                target.deletePage(at: insertIndex)
-            }
-            undoManager.setActionName("Paste Page")
-        }
-
-        return true
+        guard permissions.editPages, page(at: index) != nil,
+              let page = pageClipboard.makePage() else { return false }
+        return insertPages([page], at: index + 1, actionName: "Paste Page")
     }
 
     func deletePage(at index: Int) {
@@ -841,6 +910,16 @@ final class PDFManager {
         cachedOutlineRoot = root
         cachedOutlineItems = items
         return items
+    }
+
+    /// The page of the first outline entry a link's `#heading` names, matched as
+    /// a note's headings are.
+    func pageIndex(ofHeading fragment: String) -> Int? {
+        func flattened(_ items: [OutlineItem]) -> [OutlineItem] {
+            items.flatMap { [$0] + flattened($0.children ?? []) }
+        }
+        let entries = flattened(outlineItems()).filter { $0.pageIndex != nil }
+        return HeadingSlug.firstIndex(of: fragment, in: entries.map(\.title)).flatMap { entries[$0].pageIndex }
     }
 
     // MARK: - Save

@@ -17,6 +17,8 @@ import SwiftUI
 struct TransientToast: Equatable {
     let id: UUID
     let message: String
+    /// How long it shows, in seconds.
+    var duration: TimeInterval = 2
 }
 
 struct TransientToastOverlay: View {
@@ -33,23 +35,30 @@ struct TransientToastOverlay: View {
                     .padding(.horizontal, DesignTokens.spacingMD)
                     .padding(.vertical, DesignTokens.spacingXS)
                     .pageFlowLiquidGlassPanel(.glassPanel)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, DesignTokens.spacingMD)
+                    .pageFlowPanelTransition(edge: .bottom)
+                    // Above the bottom strip, clear of the status chip and Find.
+                    .padding(.bottom, TopChromeView.height(toolbarScale: SettingsManager.shared.toolbarScale)
+                        + DesignTokens.spacingXS)
             }
         }
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: message)
         .allowsHitTesting(false)
         .onChange(of: tabManager.transientToast) { _, toast in
-            guard let toast, !toast.message.isEmpty else { return }
-            show(toast.message)
+            guard let toast else {
+                dismissWorkItem?.cancel()
+                message = nil
+                return
+            }
+            guard !toast.message.isEmpty else { return }
+            show(toast.message, for: toast.duration)
         }
     }
 
-    private func show(_ text: String) {
+    private func show(_ text: String, for duration: TimeInterval) {
         dismissWorkItem?.cancel()
         message = text
         let workItem = DispatchWorkItem { message = nil }
         dismissWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: workItem)
     }
 }

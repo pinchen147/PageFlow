@@ -55,6 +55,13 @@ extension NSAttributedString.Key {
     /// Int — `NSTextAlignment` raw value of an image the fragment places
     /// itself: below its revealed source, or wider than the column.
     static let blockImageAlignment = NSAttributedString.Key("BlockImageAlignment")
+    /// Bool — a blank line directly after a rendered image's line: it stays in
+    /// the source and is drawn with no height (owner decision Q24A), and no
+    /// caret rests on it. The image's own bottom gap stands in for it.
+    static let collapsedImageSeparator = NSAttributedString.Key("CollapsedImageSeparator")
+    /// Bool — on the last character of a note that ends in an image: the empty
+    /// line TextKit adds after that character is drawn with no height (Q24A).
+    static let collapsesTrailingLine = NSAttributedString.Key("CollapsesTrailingLine")
 }
 
 /// What a collapsed standalone block draws, for the commands that act on blocks.
@@ -106,8 +113,25 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     // MARK: - FB15131180
 
     /// Maps to TextKit-2's private `extraLineFragmentAttributes` selector so we can pin the trailing extra-line metrics to body font; otherwise a trailing heading paragraph inflates `usageBoundsForTextContainer` by ~30pt when the caret enters it. Pattern from STTextView.
+    /// A note that ends in an image collapses that trailing line (Q24A). Read
+    /// at layout, not creation: TextKit keeps the fragment when the styler
+    /// marks the paragraph after it was made.
     @objc(extraLineFragmentAttributes)
-    dynamic var stExtraLineFragmentAttributes: NSDictionary?
+    dynamic var stExtraLineFragmentAttributes: NSDictionary? {
+        get { collapsesTrailingLine ? Self.collapsedExtraLineAttributes : baseExtraLineFragmentAttributes }
+        set { baseExtraLineFragmentAttributes = newValue }
+    }
+    private var baseExtraLineFragmentAttributes: NSDictionary?
+
+    private var collapsesTrailingLine: Bool {
+        guard let paragraph = (textElement as? NSTextParagraph)?.attributedString, paragraph.length > 0 else { return false }
+        return paragraph.attribute(.collapsesTrailingLine, at: paragraph.length - 1, effectiveRange: nil) as? Bool == true
+    }
+
+    private static let collapsedExtraLineAttributes = NSDictionary(dictionary: [
+        NSAttributedString.Key.font: NSFont.systemFont(ofSize: MarkdownStyler.collapsedSeparatorFontSize),
+        NSAttributedString.Key.paragraphStyle: MarkdownStyler.collapsedSeparatorStyle
+    ])
 
     // MARK: - Rendering surface
 
@@ -157,7 +181,10 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         drawLatexImages(at: point, in: context)
 
         // 3. Normal text
+        context.saveGState()
+        clipBulletSourceGlyphs(at: point, in: context)
         super.draw(at: point, in: context)
+        context.restoreGState()
 
         // 3b. Language label in a hidden-fence code block's top-right corner
         drawCodeLanguageLabel(at: point, in: context)
@@ -625,8 +652,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
             }
             if let value = ts.attribute(.markdownTableSourceRange, at: attrRange.location, effectiveRange: nil) as? NSValue,
                let textView = self.textLayoutManager?.textContainer?.textView as? NativeTextView,
-               let painted = textView.selectionPaintedTable(
-                   image, tableRange: AnchorRelativeRange.decode(value, anchorLocation: attrRange.location)
+               let table = MarkdownTableLayout.layout(ofRaster: image),
+               let paint = textView.selectionPaint(
+                   forTableAt: AnchorRelativeRange.decode(value, anchorLocation: attrRange.location)
                ) {
                 // The selection band TextKit draws under the hidden source would tint
                 // the whole table: the page colour hides it, then the covered cells
@@ -635,7 +663,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                     NSColor.textBackgroundColor.setFill()
                     drawRect.fill()
                 }
-                painted.draw(in: drawRect)
+                table.draw(in: drawRect, selection: paint)
             } else {
                 let crop = (ts.attribute(.blockImageCrop, at: attrRange.location, effectiveRange: nil) as? NSValue)?.rectValue
                 let radius = ts.attribute(.blockImageCornerRadius, at: attrRange.location, effectiveRange: nil) as? CGFloat ?? 0
@@ -660,7 +688,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     /// (doc 26 I4). The image itself is never changed.
     static func drawBlockImage(_ image: NSImage, in rect: CGRect, crop: CGRect?, cornerRadius: CGFloat) {
         guard crop != nil || cornerRadius > 0 else {
-            image.draw(in: rect)
+            // A table draws from its layout, never through a whole-table bitmap.
+            if let table = MarkdownTableLayout.layout(ofRaster: image) { table.draw(in: rect) } else { image.draw(in: rect) }
             return
         }
         NSGraphicsContext.saveGraphicsState()
@@ -784,6 +813,28 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
     // MARK: - Bullet Markers
 
+    /// Native selection can override a clear foreground color. Exclude only
+    /// the admitted source-marker advance from the native glyph pass; its
+    /// replacement bullet is drawn afterwards. Layout and the selection band
+    /// remain native, and no assumed background color is painted over them.
+    private func clipBulletSourceGlyphs(at point: CGPoint, in context: CGContext) {
+        guard let storage = textStorage, let range = fragmentNSRange else { return }
+        var holes: [CGRect] = []
+        storage.enumerateAttribute(.bulletMarker, in: range) { value, marker, _ in
+            guard value as? Bool == true,
+                  let position = self.drawPosition(forDocumentCharAt: marker.location, point: point),
+                  let font = storage.attribute(.font, at: marker.location, effectiveRange: nil) as? NSFont else { return }
+            let width = (storage.mutableString.substring(with: marker) as NSString).size(withAttributes: [.font: font]).width
+            holes.append(CGRect(x: position.x, y: position.baselineY - font.ascender,
+                                width: width, height: font.ascender - font.descender))
+        }
+        guard !holes.isEmpty else { return }
+        context.beginPath()
+        context.addRect(context.boundingBoxOfClipPath)
+        holes.forEach { context.addRect($0) }
+        context.clip(using: .evenOdd)
+    }
+
     /// Paint a `•` over every hidden bullet marker (`.bulletMarker`). The
     /// glyph is drawn in the same font as the source so its baseline matches
     /// the surrounding text, and centered within the original marker char's
@@ -792,18 +843,13 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return }
 
         // Presence check first: most fragments (plain prose, code) have no bullet
-        // marker, so skip the selection scan, graphics-context save/restore, and the
+        // marker, so skip the graphics-context save/restore and the
         // per-marker work entirely for them (this fires per fragment on every redraw).
         var hasBulletMarker = false
         ts.enumerateAttribute(.bulletMarker, in: range, options: []) { value, _, stop in
             if (value as? Bool) == true { hasBulletMarker = true; stop.pointee = true }
         }
         guard hasBulletMarker else { return }
-
-        let selectionRanges: [NSRange] = {
-            guard let tv = textLayoutManager?.textContainer?.textView else { return [] }
-            return tv.selectedRanges.map { $0.rangeValue }.filter { $0.length > 0 }
-        }()
 
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
@@ -815,8 +861,6 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
         ts.enumerateAttribute(.bulletMarker, in: range, options: []) { [weak self] value, attrRange, _ in
             guard let self, (value as? Bool) == true else { return }
-            // Leave a selected marker alone so the highlighted raw char shows.
-            if selectionRanges.contains(where: { NSIntersectionRange($0, attrRange).length > 0 }) { return }
             guard let pos = self.drawPosition(forDocumentCharAt: attrRange.location, point: point) else { return }
 
             let font = (ts.attribute(.font, at: attrRange.location, effectiveRange: nil) as? NSFont)

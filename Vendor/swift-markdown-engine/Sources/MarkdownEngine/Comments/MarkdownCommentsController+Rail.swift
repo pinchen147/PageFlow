@@ -14,7 +14,7 @@ extension MarkdownCommentsController {
             return false
         }
         // Full-width text measures against the reference editor's 672 pt column.
-        let need = (main.configuration.readingWidth ?? 672) + 368
+        let need = ((main as? NativeTextView)?.configuration.readingWidth ?? 672) + 368
         let width = scrollView.contentView.bounds.width
         let wide: Bool
         switch isWide {
@@ -47,15 +47,15 @@ extension MarkdownCommentsController {
         let seated = railSeated
         // The list docks in the same lane as the rail; a narrow page keeps the icon lane.
         let iconsSeated = iconLaneSeated
-        main.commentLaneReserve = store.mode == .list && isWide == true ? listWidth + 20
+        main.comments_commentLaneReserve = store.mode == .list && isWide == true ? listWidth + 20
             : seated ? CommentRailView.keepout : (iconsSeated ? CommentIconLaneView.keepout : 0)
         // Wide tables stop short of the lane (the reference editor's 308 keepout beside the rail).
-        main.commentTableKeepout = store.mode == .list && isWide == true ? listWidth
+        main.comments_commentTableKeepout = store.mode == .list && isWide == true ? listWidth
             : seated ? CommentRailView.tableKeepout : (iconsSeated ? CommentIconLaneView.keepout : 0)
         refreshIconLane(paints: paints, seated: iconsSeated)
         guard seated else {
-            main.tablesFreedIntoCommentLane = []
-            main.commentOverhang = 0
+            main.comments_tablesFreedIntoCommentLane = []
+            main.comments_commentOverhang = 0
             rail.keepCards([])
             rail.removeFromSuperview()
             if composer != nil, !composerFloats { floatComposer() }
@@ -87,7 +87,7 @@ extension MarkdownCommentsController {
         }
         let pivot = (composer != nil && !composerFloats) ? Self.draftID : store.focusID
         // The document's own end, without the padding an earlier overhang added.
-        let bottom = main.frame.height - main.commentOverhang
+        let bottom = main.frame.height - main.comments_commentOverhang
         var result = CommentRailLayout.solve(slots, pivot: pivot, bottom: bottom)
         // A stack that would hang 400 past the end goes compact.
         let compact = result.overhang > CommentRailLayout.maximumFloat
@@ -101,7 +101,7 @@ extension MarkdownCommentsController {
         } else {
             cards.values.forEach { $0.isCompact = false }
         }
-        main.commentOverhang = result.overhang
+        main.comments_commentOverhang = result.overhang
         let slides = pivot != lastPivot
         lastPivot = pivot
         var spans: [ClosedRange<CGFloat>] = []
@@ -184,10 +184,10 @@ extension MarkdownCommentsController {
     /// the reference editor's table/rail rule (doc 25 §0): a wide table that overflows
     /// the keepout runs into the rail's lane while every card is at least 8
     /// clear of it, and stops short again once a card overlaps it by more than 24.
-    private func freeWideTables(clearOf spans: [ClosedRange<CGFloat>], in main: NativeTextView) {
-        var freed = main.tablesFreedIntoCommentLane
-        let blockedEdge = (main.superview?.bounds.width ?? 0) - main.commentTableKeepout
-        for (sourceID, overlay) in main.wideTableOverlays where !overlay.isHidden {
+    private func freeWideTables(clearOf spans: [ClosedRange<CGFloat>], in main: NSTextView) {
+        var freed = main.comments_tablesFreedIntoCommentLane
+        let blockedEdge = (main.superview?.bounds.width ?? 0) - main.comments_commentTableKeepout
+        for (sourceID, overlay) in main.comments_wideTableOverlays where !overlay.isHidden {
             guard let superview = overlay.superview, let document = overlay.documentView else { continue }
             let frame = superview.convert(overlay.frame, to: main)
             func overlap(_ span: ClosedRange<CGFloat>) -> CGFloat { min(span.upperBound, frame.maxY) - max(span.lowerBound, frame.minY) }
@@ -198,8 +198,8 @@ extension MarkdownCommentsController {
                 if overflows, spans.allSatisfy({ overlap($0) <= -8 }) { freed.insert(sourceID) }
             }
         }
-        freed.formIntersection(main.wideTableOverlays.keys)
-        if freed != main.tablesFreedIntoCommentLane { main.tablesFreedIntoCommentLane = freed }
+        freed.formIntersection(main.comments_wideTableOverlays.keys)
+        if freed != main.comments_tablesFreedIntoCommentLane { main.comments_tablesFreedIntoCommentLane = freed }
     }
 
     /// A card's state from the store.

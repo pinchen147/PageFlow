@@ -63,6 +63,56 @@ extension NativeTextViewCoordinator {
         return (line.location, first, contentEnd)
     }
 
+    // MARK: - The collapsed separator after an image (owner decision Q24A)
+
+    /// The collapsed blank line after an image that holds `location`: the
+    /// styler marks it, so this is exactly the line drawn with no height.
+    static func collapsedSeparator(holding location: Int, in storage: NSTextStorage) -> NSRange? {
+        let text = storage.mutableString
+        guard location != NSNotFound, location <= text.length else { return nil }
+        let line = text.paragraphRange(for: NSRange(location: location, length: 0))
+        guard line.length > 0,
+              storage.attribute(.collapsedImageSeparator, at: line.location, effectiveRange: nil) as? Bool == true else { return nil }
+        return line
+    }
+
+    /// Where the caret goes instead of a collapsed separator: a caret moving
+    /// back onto it selects the image above (the net); one moving forward, a
+    /// click or any other path lands where the next paragraph starts, or at the
+    /// end of the note, which a note ending in an image draws after the image.
+    /// Nil leaves `new` alone. Undo and Redo keep the caret they restore.
+    func selectionOffCollapsedSeparator(from old: NSRange, to new: NSRange, in tv: NSTextView) -> NSRange? {
+        guard tv === textView, tv.isEditable, new.length == 0, let storage = tv.textStorage,
+              tv.undoManager?.isUndoing != true, tv.undoManager?.isRedoing != true,
+              let separator = Self.collapsedSeparator(holding: new.location, in: storage) else { return nil }
+        let mouse: Set<NSEvent.EventType> = [.leftMouseDown, .leftMouseUp, .rightMouseDown, .otherMouseDown]
+        let fromBelow = old.location > new.location && !mouse.contains(NSApp.currentEvent?.type ?? .applicationDefined)
+        if fromBelow, separator.location > 0 {
+            if let image = Self.renderedImage(around: NSRange(location: separator.location - 1, length: 0), in: storage) {
+                return image.token
+            }
+            return NSRange(location: separator.location - 1, length: 0)
+        }
+        let after = NSMaxRange(separator)
+        return after == new.location ? nil : NSRange(location: after, length: 0)
+    }
+
+    /// The caret position a click in the gap under the image whose line ends at
+    /// `lineEnd` lands on: past the image's collapsed separator, or the end of
+    /// the note when the image ends it. Nil when nothing after it is collapsed.
+    static func caretAfterCollapsedGap(belowLineEndingAt lineEnd: Int, in storage: NSTextStorage) -> Int? {
+        let text = storage.mutableString
+        guard lineEnd > 0, lineEnd <= text.length else { return nil }
+        if lineEnd < text.length, let separator = collapsedSeparator(holding: lineEnd, in: storage), separator.location == lineEnd {
+            return NSMaxRange(separator)
+        }
+        if lineEnd == text.length,
+           storage.attribute(.collapsesTrailingLine, at: lineEnd - 1, effectiveRange: nil) as? Bool == true {
+            return lineEnd
+        }
+        return nil
+    }
+
     // MARK: - Selecting
 
     /// Selects `image` as a whole: its token becomes the text view's selection.
@@ -205,7 +255,8 @@ extension NativeTextViewCoordinator {
 
     /// ↓ / → put the caret at the start of the line after the image's line, ↑ / ←
     /// at the end of the line before; a rendered image there is selected
-    /// instead (the net). Past either end of the note nothing moves.
+    /// instead (the net), and a collapsed separator is stepped over
+    /// (`selectionOffCollapsedSeparator`). Past either end of the note nothing moves.
     private func moveCaret(outOf object: ObjectSelection, forward: Bool, in tv: NSTextView) {
         let text = tv.string as NSString
         guard NSMaxRange(object.token) <= text.length else { return }

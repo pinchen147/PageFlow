@@ -248,8 +248,8 @@ struct TabBarView: View {
             // The landing slot: an empty card, so the cards under it don't
             // show through while the floating preview carries the tab.
             shape
-                .fill(DesignTokens.contentCardSurface.opacity(0.5))
-                .overlay(shape.strokeBorder(.black.opacity(0.08)))
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+                .overlay(shape.strokeBorder(Color.primary.opacity(0.08)))
                 .frame(width: DesignTokens.tabMaxWidth, height: DesignTokens.tabHeight)
                 .offset(x: card.minX)
                 .zIndex(card.zIndex)

@@ -24,6 +24,20 @@ final class ClosedTabStore {
         let url: URL
         let title: String
         let isSecurityScoped: Bool
+
+        /// The file is no longer there. Only a real "no such file" counts: a
+        /// sandbox refusal goes on to the open, which reports it as it does any
+        /// other file it can't read.
+        var fileIsGone: Bool {
+            let isAccessing = isSecurityScoped && url.startAccessingSecurityScopedResource()
+            defer { if isAccessing { url.stopAccessingSecurityScopedResource() } }
+            do {
+                return try !url.checkResourceIsReachable()
+            } catch let error as NSError {
+                return error.domain == NSCocoaErrorDomain
+                    && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError)
+            }
+        }
     }
 
     /// Most-recently-closed first, capped at `maxRecords`.
@@ -38,11 +52,17 @@ final class ClosedTabStore {
     /// duplicating it.
     func record(_ tab: TabModel) {
         guard let url = tab.documentURL else { return }
+        record(url: url, title: tab.displayTitle, isSecurityScoped: tab.isSecurityScoped)
+    }
+
+    /// The same for a tab closed before its document arrived: a note still
+    /// reading, or a PDF at its password prompt, has only the URL it was opening.
+    func record(url: URL, title: String, isSecurityScoped: Bool) {
         let canonical = url.pageFlowCanonicalDocumentURL
 
         records.removeAll { $0.url.pageFlowCanonicalDocumentURL == canonical }
         records.insert(
-            Record(url: url, title: tab.displayTitle, isSecurityScoped: tab.isSecurityScoped),
+            Record(url: url, title: title, isSecurityScoped: isSecurityScoped),
             at: 0
         )
         if records.count > maxRecords {
@@ -50,8 +70,15 @@ final class ClosedTabStore {
         }
     }
 
-    /// Drops a record once it has been reopened.
+    /// Drops a record that has nothing left to come back to.
     func remove(_ record: Record) {
         records.removeAll { $0.id == record.id }
+    }
+
+    /// `url` has settled: it opened, by whatever route, or it can't open. Until
+    /// then an open can still be abandoned, so its record stays on the stack.
+    func documentSettled(_ url: URL) {
+        let canonical = url.pageFlowCanonicalDocumentURL
+        records.removeAll { $0.url.pageFlowCanonicalDocumentURL == canonical }
     }
 }

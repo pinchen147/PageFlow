@@ -3,7 +3,8 @@
 //  PageFlow
 //
 //  The ONE Liquid Glass toolbar kit shared by every content type's toolbar in
-//  the top-chrome slot (PDF `FloatingToolbar`, Markdown `MarkdownFormatToolbar`).
+//  the top-chrome slot (PDF `FloatingToolbar`, Markdown `MarkdownFormatToolbar`,
+//  EPUB `EPUBToolbar`), including the zoom and sidebar/Find groups they share.
 //  The shell owns everything that makes the toolbars look identical — metrics
 //  padding, the proximity-magnification field, the glass panel, the container
 //  height — so an item set CANNOT drift visually from its sibling; only the
@@ -97,9 +98,6 @@ private struct ToolbarFoldEffect: ViewModifier {
                 }
             }
         }
-        // The items sit on a light surface in either mode (porcelain in dark,
-        // GlassStyle.toolbar), so their dividers draw for light.
-        .environment(\.colorScheme, .light)
         .padding(.horizontal, metrics.horizontalPadding)
         .padding(.vertical, metrics.verticalPadding)
         .fixedSize()
@@ -121,7 +119,6 @@ private struct ToolbarFoldEffect: ViewModifier {
         .overlay(alignment: .trailing) {
             if let fold {
                 sphere(diameter: height, isOpen: isOpen, open: fold.onPin)
-                    .environment(\.colorScheme, .light)
             }
         }
         .frame(height: height)
@@ -167,7 +164,7 @@ struct GlassToolbarLabel: View {
             .frame(width: metrics.buttonSize, height: metrics.buttonSize)
             .contentShape(RoundedRectangle(cornerRadius: DesignTokens.spacingSM))
             .foregroundStyle(.primary)
-            .opacity(interactive ? 1 : 0.52)
+            .opacity(interactive ? 1 : DesignTokens.disabledControlOpacity)
             .proximityMagnified()
     }
 }
@@ -181,6 +178,10 @@ struct GlassToolbarButton: View {
     let help: String
     let action: () -> Void
     var disabled: Bool = false
+    /// What VoiceOver calls the button; without it, the help text.
+    var label: String?
+    /// For a toggle, whether it is on (announced as selected).
+    var isOn: Bool?
 
     @State private var settingsManager = SettingsManager.shared
 
@@ -191,8 +192,10 @@ struct GlassToolbarButton: View {
         .buttonStyle(.plain)
         .pageFlowClickCursor()
         .disabled(disabled)
-        .opacity(disabled ? 0.3 : 1.0)
         .toolbarTooltip(help, enabled: settingsManager.showTooltips)
+        // The symbol's own name ("1 magnifying glass") is no label.
+        .accessibilityLabel(label ?? help)
+        .accessibilityAddTraits(isOn == true ? .isSelected : [])
     }
 }
 
@@ -209,6 +212,134 @@ extension View {
             help(text)
         } else {
             accessibilityHint(text)
+        }
+    }
+}
+
+/// The zoom cluster every content toolbar shares, in one order: Zoom Out,
+/// the "1" button, Zoom In and, where the content fits to the window, Zoom
+/// to Fit. Only the "1" button's meaning differs by content type (PDF and
+/// Markdown: actual size; EPUB: reflow to fit), so the caller names it.
+@MainActor
+struct ZoomToolbarGroup: View {
+    /// The "1" button.
+    struct Reset {
+        var label = "Actual Size"
+        var help: String
+        /// For a mode the reader can be in (EPUB's reflow), whether it is.
+        var isOn = false
+        var disabled: Bool
+        var action: () -> Void
+    }
+
+    /// Fit stays selected while following the window. Content can allow repeated refitting.
+    struct Fit {
+        var isFitted: Bool
+        /// False without a document.
+        var isAvailable: Bool
+        var label = "Zoom to Fit"
+        var help = "Zoom to fit: scale the pages to fit the window"
+        var allowsRefitting = false
+        var action: () -> Void
+    }
+
+    var canZoomOut: Bool
+    var canZoomIn: Bool
+    var onZoomOut: () -> Void
+    var onZoomIn: () -> Void
+    var reset: Reset
+    var fit: Fit?
+
+    var body: some View {
+        GlassToolbarButton(icon: "minus.magnifyingglass", help: "Zoom out", action: onZoomOut,
+                           disabled: !canZoomOut, label: "Zoom Out")
+        GlassToolbarButton(icon: "1.magnifyingglass", help: reset.help, action: reset.action,
+                           disabled: reset.disabled, label: reset.label, isOn: reset.isOn)
+        GlassToolbarButton(icon: "plus.magnifyingglass", help: "Zoom in", action: onZoomIn,
+                           disabled: !canZoomIn, label: "Zoom In")
+        if let fit {
+            GlassToolbarButton(
+                icon: fit.isFitted
+                    ? "arrow.down.forward.and.arrow.up.backward.circle.fill"
+                    : "arrow.down.forward.and.arrow.up.backward.circle",
+                help: fit.help,
+                action: fit.action,
+                disabled: !fit.isAvailable || (fit.isFitted && !fit.allowsRefitting),
+                label: fit.label,
+                isOn: fit.isFitted
+            )
+        }
+    }
+}
+
+/// The sidebar toggle and Find, which every content toolbar puts together
+/// after the zoom cluster.
+@MainActor
+struct SidebarFindToolbarGroup: View {
+    @Binding var showingSidebar: Bool
+    var canToggleSidebar = true
+    var canFind: Bool
+    var onFind: () -> Void
+
+    var body: some View {
+        GlassToolbarButton(
+            icon: "sidebar.leading",
+            help: "Show or hide the sidebar",
+            action: {
+                withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
+                    showingSidebar.toggle()
+                }
+            },
+            disabled: !canToggleSidebar,
+            label: "Sidebar",
+            isOn: showingSidebar
+        )
+        GlassToolbarButton(icon: "magnifyingglass", help: "Find", action: onFind, disabled: !canFind, label: "Find")
+    }
+}
+
+/// The colours new underlines and highlights take, for a PDF or a book.
+struct AnnotationColorMenu: View {
+    let isUnderlineColor: (SettingsManager.ColorPreset) -> Bool
+    let isHighlightColor: (SettingsManager.ColorPreset) -> Bool
+    let chooseUnderline: (SettingsManager.ColorPreset) -> Void
+    let chooseHighlight: (SettingsManager.ColorPreset) -> Void
+    let isAvailable: Bool
+
+    @State private var settingsManager = SettingsManager.shared
+
+    var body: some View {
+        Menu {
+            Text("Underline").font(.caption)
+            presets(settingsManager.underlinePresets, isChosen: isUnderlineColor, choose: chooseUnderline)
+            Divider()
+            Text("Highlight").font(.caption)
+            presets(settingsManager.highlightPresets, isChosen: isHighlightColor, choose: chooseHighlight)
+        } label: {
+            GlassToolbarLabel(icon: "paintpalette", interactive: isAvailable)
+        }
+        .buttonStyle(.plain)
+        .pageFlowClickCursor()
+        .disabled(!isAvailable)
+        .toolbarTooltip("Choose underline and highlight colors", enabled: settingsManager.showTooltips)
+        .accessibilityLabel("Annotation Colors")
+    }
+
+    private func presets(_ presets: [SettingsManager.ColorPreset], isChosen: @escaping (SettingsManager.ColorPreset) -> Bool,
+                         choose: @escaping (SettingsManager.ColorPreset) -> Void) -> some View {
+        ForEach(presets) { preset in
+            Button {
+                choose(preset)
+            } label: {
+                HStack {
+                    Circle().fill(Color(nsColor: preset.color)).frame(width: 12, height: 12)
+                    Text(preset.name)
+                    if isChosen(preset) {
+                        Spacer()
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
         }
     }
 }

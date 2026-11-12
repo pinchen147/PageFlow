@@ -38,23 +38,10 @@ struct TabItemView: View {
     var style: Style = .glass
 
     var body: some View {
-        Group {
-            switch style {
-            case .glass:
-                content
-                    .pageFlowLiquidGlassSurface(.tab(active: isActive))
-            case .card, .sliver:
-                content
-                    .background(
-                        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
-                            .fill(DesignTokens.contentCardSurface.opacity(isActive ? 1.0 : 0.88))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
-                            .strokeBorder(.white.opacity(isActive ? 0.3 : 0.18))
-                    )
-            }
-        }
+        // Strip pills and the Deck's cards share the sidebar's legible glass,
+        // so a tab's adaptive label reads the same however the strip is laid out.
+        content
+            .pageFlowLiquidGlassSurface(.tab(active: isActive))
         .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: isActive ? 8 : 4, y: isActive ? -3 : -2)
         .contentShape(Rectangle())
         // Gesture handling moved to TabBarView for unified tap/drag detection
@@ -80,7 +67,7 @@ struct TabItemView: View {
                 icon
                 Text(tab.displayTitle)
                     .font(.system(size: 11, weight: isActive ? .medium : .regular))
-                    .foregroundStyle(DesignTokens.glassTextPrimary.opacity(isActive ? 0.92 : 0.74))
+                    .foregroundStyle(Color.primary.opacity(isActive ? 0.92 : 0.74))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: DesignTokens.tabMaxWidth - DesignTokens.tabCloseButtonSize - DesignTokens.spacingSM, alignment: .leading)
@@ -93,7 +80,7 @@ struct TabItemView: View {
 
             Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(DesignTokens.glassTextSecondary.opacity(0.62))
+                .foregroundStyle(Color.secondary.opacity(0.62))
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
                 .opacity(isCloseVisible ? 1 : 0)
         }
@@ -125,12 +112,12 @@ struct TabItemView: View {
     private var icon: some View {
         Image(systemName: (contentKind ?? .pdf).tabIconSystemName)
             .font(.system(size: 9, weight: .medium))
-            .foregroundStyle(DesignTokens.glassTextSecondary.opacity(isActive ? 0.82 : 0.6))
+            .foregroundStyle(Color.secondary.opacity(isActive ? 0.82 : 0.6))
     }
 
     private func dirtyDot(size: CGFloat) -> some View {
         Circle()
-            .fill(DesignTokens.glassTextPrimary.opacity(0.82))
+            .fill(Color.primary.opacity(0.82))
             .frame(width: size, height: size)
     }
 }

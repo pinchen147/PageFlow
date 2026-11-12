@@ -61,6 +61,53 @@ final class NativeTextViewContainer: NSView {
         }
     }
 
+    private var isCenteringReadingColumn = false
+
+    /// Keep the column and the document's legal scroll range coherent. Shrinking
+    /// the document before moving its column lets AppKit clamp against stale X.
+    func centerReadingColumn(forClipWidth clipWidth: CGFloat, preservingViewport: Bool) {
+        guard !isCenteringReadingColumn, clipWidth.isFinite, clipWidth > 0,
+              let textView else { return }
+        isCenteringReadingColumn = true
+        defer { isCenteringReadingColumn = false }
+        let clip = enclosingScrollView?.contentView
+        let before = clip?.bounds.origin
+        let oldOrigin = textView.frame.origin
+        let column = textView.readingColumnWidth
+        var x = floor(max(0, (clipWidth - column) / 2))
+        if textView.commentLaneReserve > 0 {
+            let limit = clipWidth - textView.commentLaneReserve
+                - (column - textView.configuration.horizontalLayoutInset)
+            x = floor(max(0, min(x, limit)))
+        }
+        let extent = x + max(column, column - textView.configuration.horizontalLayoutInset + textView.commentLaneReserve)
+        let width = max(clipWidth, extent)
+        let deltaX = x - oldOrigin.x
+        let columnMoved = abs(deltaX) > 0.5
+        let widthChanged = abs(frame.width - width) > 0.5
+        if columnMoved {
+            textView.setFrameOrigin(NSPoint(x: x, y: oldOrigin.y))
+        }
+        if widthChanged {
+            // Bypass the autoresize entry point: this transaction already placed
+            // the column and must not reenter restack with an intermediate width.
+            super.setFrameSize(NSSize(width: width, height: frame.height))
+        }
+        if columnMoved || widthChanged {
+            // Overlay width and strip fit read the parent's final bounds.
+            textView.repositionWideTableOverlaysForWidthChange(insetDelta: textView.frame.minX - oldOrigin.x)
+        }
+        if preservingViewport, let clip, let before {
+            let desired = NSRect(origin: NSPoint(
+                x: before.x + textView.frame.minX - oldOrigin.x,
+                y: before.y + textView.frame.minY - oldOrigin.y), size: clip.bounds.size)
+            // Interior points retain their native affine position. A sheet
+            // narrower/shorter than the viewport still follows AppKit's bounds.
+            clip.scroll(to: clip.constrainBoundsRect(desired).origin)
+            enclosingScrollView?.reflectScrolledClipView(clip)
+        }
+    }
+
     private var isRestacking = false
     /// A restack requested WHILE one is already running (re-entrancy). Dropping it
     /// used to leave the container height stale versus the content — e.g. a block
@@ -133,6 +180,7 @@ final class NativeTextViewContainer: NSView {
                 // Reading column: the column keeps its fixed width; re-center its X
                 // (and shift the wide-table overlay insets) instead of resizing.
                 textView.centerReadingColumn(forClipWidth: w)
+                w = bounds.width
             } else {
                 // Pin/release must never let the container track a TRANSIENT
                 // view width (each tracked change is a full-document rewrap):
@@ -157,6 +205,10 @@ final class NativeTextViewContainer: NSView {
             // Breakout wide-table overlays are siblings whose frames bake in the
             // text view's offset — keep them glued to their anchor paragraphs.
             textView.shiftWideTableOverlays(byY: deltaY)
+        }
+        if textView.configuration.readingWidth != nil {
+            w = max(w, textView.frame.maxX,
+                    textView.frame.maxX - textView.configuration.horizontalLayoutInset + textView.commentLaneReserve)
         }
         let viewportH = enclosingScrollView?.contentView.bounds.height ?? 0
         let totalH = max(headerHeight + textView.frame.height, viewportH)
@@ -222,6 +274,11 @@ extension NSScrollView {
     /// The view that should hold the keyboard for this editor: the focused table
     /// cell while one is being edited, otherwise the text view.
     public var markdownEditorKeyView: NSView? {
+        if let semantic = documentView as? NativeSemanticTextView {
+            if let preferred = semantic.semanticCoordinator?.preferredInputView,
+               preferred === semantic || preferred.isDescendant(of: semantic) { return preferred }
+            return semantic
+        }
         guard let textView = nativeTextView else { return nil }
         return (textView.delegate as? NativeTextViewCoordinator)?.tableEditingSession.preferredResponder ?? textView
     }

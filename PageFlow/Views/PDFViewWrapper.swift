@@ -30,6 +30,8 @@ struct PDFViewWrapper: NSViewRepresentable {
     var tabUndoManager: UndoManager
     var isActive: Bool
     var isDisplayed: Bool
+    /// Whether this view holds the keyboard (`FindOverlay.documentTakesKeyboard`).
+    var takesKeyboard: Bool
     var onRequestFocus: () -> Void = {}
 
     func makeNSView(context: Context) -> PDFViewHost {
@@ -116,6 +118,9 @@ struct PDFViewWrapper: NSViewRepresentable {
 
     private func configureZoomCallbacks(_ pdfView: StablePDFView, context: Context) {
         pdfView.onRequestFocus = onRequestFocus
+        pdfView.onReaderScroll = { [weak pdfView, weak coordinator = context.coordinator] in
+            if let pdfView { coordinator?.readerScrolled(in: pdfView) }
+        }
         context.coordinator.configureUserZoom(on: pdfView)
 
         pdfView.onControlScroll = { [weak pdfView, weak coordinator = context.coordinator] event in
@@ -124,8 +129,8 @@ struct PDFViewWrapper: NSViewRepresentable {
             return coordinator.processControlScroll(event: event, pdfView: pdfView)
         }
 
-        pdfView.onLinkNavigation = { [weak pdfManager] in
-            pdfManager?.pushNavigationState()
+        pdfView.onLinkNavigation = { [weak pdfManager] target in
+            pdfManager?.recordJump(to: target)
         }
     }
 
@@ -154,9 +159,13 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         pdfManager.undoManagerProvider = undoManagerProvider
 
+        pdfManager.noteNewView()
         // Lets persistence read the live scroll position (page + point) on demand.
-        pdfManager.liveDestinationProvider = { [weak pdfView] in pdfView?.currentDestination }
+        pdfManager.liveDestinationProvider = { [weak pdfView, weak pdfManager] in
+            pdfView?.readerDestination(namedBy: pdfManager?.currentPage)
+        }
         pdfManager.liveDestinationProviderOwner = ObjectIdentifier(context.coordinator)
+        pdfManager.liveSelectionProvider = { [weak pdfView] in pdfView?.currentSelection }
 
         annotationManager.configure(
             pdfManager: pdfManager,
@@ -208,6 +217,12 @@ struct PDFViewWrapper: NSViewRepresentable {
             name: .PDFViewDisplayModeChanged,
             object: pdfView
         )
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.selectionChanged(_:)),
+            name: .PDFViewSelectionChanged,
+            object: pdfView
+        )
 
         // The window-wide scroll-zoom and right-click monitors are installed by
         // `setActive` in updateNSView, so kept-warm inactive tabs hold none — only
@@ -220,18 +235,20 @@ struct PDFViewWrapper: NSViewRepresentable {
         // finishes, so key-view traversal cannot re-enter SwiftUI focus layout.
         hostView.setContentActive(isDisplayed)
 
+        // The tab went to another window: this mount has no say over its state.
+        guard !pdfManager.awaitsNewView else { return }
         let pdfView = hostView.pdfView
         pdfView.onRequestFocus = onRequestFocus
         let coordinator = context.coordinator
-        coordinator.setActive(isFocused: isActive, isDisplayed: isDisplayed, pdfView: pdfView)
+        coordinator.setActive(isFocused: isActive, isDisplayed: isDisplayed, takesKeyboard: takesKeyboard, pdfView: pdfView)
 
         // Structural: load/replace the document and its markup.
         let documentDidChange = pdfView.document !== pdfManager.document
         if documentDidChange {
             pdfView.document = pdfManager.document
-            annotationManager.resetSelection()
+            annotationManager.resetSelection(unlessIn: pdfManager.document)
             if let document = pdfManager.document {
-                commentManager.loadComments(from: document)
+                commentManager.loadCommentsIfNeeded(from: document)
             } else {
                 commentManager.clearComments()
             }
@@ -264,6 +281,8 @@ struct PDFViewWrapper: NSViewRepresentable {
                 coord.lastNavigatedSearchIndex = resultIndex
                 coord.lastSearchResultCount = resultCount
                 coord.invalidateDeferredProjection()
+                // The reader chose the match: a restore still waiting can't land after it.
+                pdfManager.pendingScrollRestore = nil
                 pdfView.go(to: currentSelection)
                 pdfView.setCurrentSelection(currentSelection, animate: true)
             }
@@ -281,12 +300,19 @@ struct PDFViewWrapper: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
+        let coordinator = Coordinator(
             pdfManager: pdfManager,
             annotationManager: annotationManager,
             commentManager: commentManager,
             isActive: isActive
         )
+        // A view rebuilt while Find holds results isn't a new navigation: the
+        // current match stays highlighted and the reader's place is restored.
+        if searchManager.hasResults {
+            coordinator.lastNavigatedSearchIndex = searchManager.currentResultIndex
+            coordinator.lastSearchResultCount = searchManager.searchResults.count
+        }
+        return coordinator
     }
 
     static func dismantleNSView(_ hostView: PDFViewHost, coordinator: Coordinator) {
@@ -307,6 +333,11 @@ struct PDFViewWrapper: NSViewRepresentable {
             name: .PDFViewDisplayModeChanged,
             object: pdfView
         )
+        NotificationCenter.default.removeObserver(
+            coordinator,
+            name: .PDFViewSelectionChanged,
+            object: pdfView
+        )
         coordinator.removeScrollMonitor()
         pdfView.removeRightClickMonitor()
 
@@ -323,6 +354,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         pdfView.onCopyDocumentAsMarkdown = nil
         pdfView.onToggleBookmark = nil
         pdfView.onRequestFocus = nil
+        pdfView.onReaderScroll = nil
+        pdfView.onLayoutGeometryChange = nil
 
         // The live view is gone; persistence must fall back to manager state.
         // Guarded by owner: after a cross-window tab move the destination's
@@ -332,6 +365,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         if coordinator.pdfManager.liveDestinationProviderOwner == ObjectIdentifier(coordinator) {
             coordinator.pdfManager.liveDestinationProvider = nil
             coordinator.pdfManager.liveDestinationProviderOwner = nil
+            coordinator.pdfManager.liveSelectionProvider = nil
         }
     }
 
@@ -374,6 +408,7 @@ struct PDFViewWrapper: NSViewRepresentable {
         /// so a PDFKit notification posted synchronously by our own write defers its
         /// ingest instead of mutating @Observable state during a SwiftUI view update.
         private var isProjecting = false
+        private var railFitRefreshScheduled = false
         /// Bumped each time `scrollTo` applies a destination, so a superseding scroll
         /// invalidates an earlier one's pending settle-reapply (prevents a stale
         /// delayed go(to:) from yanking the user back after they navigate away).
@@ -412,8 +447,18 @@ struct PDFViewWrapper: NSViewRepresentable {
                 && work.intentRevision == pdfManager.viewIntentRevision
                 && work.documentID == pdfView.document.map(ObjectIdentifier.init)
                 && pdfView.document === pdfManager.document
-                && (pdfManager.liveDestinationProviderOwner == nil
-                    || pdfManager.liveDestinationProviderOwner == ObjectIdentifier(self))
+                && ownsManager
+        }
+
+        /// No view of a tab that left its window is the owner until one is made there.
+        private var ownsManager: Bool {
+            !pdfManager.awaitsNewView && (pdfManager.liveDestinationProviderOwner == nil
+                || pdfManager.liveDestinationProviderOwner == ObjectIdentifier(self))
+        }
+
+        /// This view shows the manager's document, whatever has been asked of it since.
+        private func isLiveView(_ pdfView: PDFView) -> Bool {
+            !isDismantled && lastDisplayed != false && pdfView.document === pdfManager.document && ownsManager
         }
 
         init(pdfManager: PDFManager, annotationManager: AnnotationManager, commentManager: CommentManager, isActive: Bool) {
@@ -448,7 +493,8 @@ struct PDFViewWrapper: NSViewRepresentable {
         private var lastDisplayed: Bool?
         private var lastFocused: Bool?
 
-        func setActive(isFocused: Bool, isDisplayed: Bool, pdfView: StablePDFView) {
+        func setActive(isFocused: Bool, isDisplayed: Bool, takesKeyboard: Bool? = nil, pdfView: StablePDFView) {
+            pdfView.annotationOwner = commentManager
             isActive = isFocused
 
             if lastDisplayed != isDisplayed {
@@ -470,16 +516,10 @@ struct PDFViewWrapper: NSViewRepresentable {
                 }
             }
 
-            if lastFocused != isFocused {
-                lastFocused = isFocused
-                // Deferred a turn — responder changes inside a SwiftUI update re-enter AppKit.
-                if isFocused, isDisplayed {
-                    DispatchQueue.main.async { [weak pdfView] in
-                        guard let pdfView, let window = pdfView.window,
-                              !pdfView.isHiddenOrHasHiddenAncestor else { return }
-                        window.makeFirstResponder(pdfView)
-                    }
-                }
+            let takesKeyboard = takesKeyboard ?? isFocused
+            if lastFocused != takesKeyboard {
+                lastFocused = takesKeyboard
+                pdfView.wantsKeyboard = takesKeyboard && isDisplayed
             }
         }
 
@@ -503,10 +543,23 @@ struct PDFViewWrapper: NSViewRepresentable {
                 return event
             }
             let handled = processControlScroll(event: event, pdfView: pdfView)
+            if !handled, event.scrollingDeltaY != 0 || event.scrollingDeltaX != 0, pdfView.frontmostEventPoint(event) != nil {
+                readerScrolled(in: pdfView)
+            }
             return handled ? nil : event
         }
 
+        /// The reader moved the view themselves: a restore still waiting, or its re-apply
+        /// after the layout settles, would only pull them back.
+        func readerScrolled(in pdfView: PDFView) {
+            guard ownsUserInput(in: pdfView) else { return }
+            if pdfManager.pendingScrollRestore != nil { pdfManager.pendingScrollRestore = nil }
+            scrollApplyToken &+= 1
+        }
+
         // MARK: Projection (manager -> live view; the only writer)
+
+        private var projectedPageStructure: Int?
 
         /// Reconciles the live `PDFView` to the manager's desired state. This is the
         /// only place that writes page / scale / display mode / autoScales. Order
@@ -514,9 +567,22 @@ struct PDFViewWrapper: NSViewRepresentable {
         /// single sizing owner — Auto-Scale *or* an explicit scale/fit, never both.
         func project(_ pdfView: StablePDFView, documentDidChange: Bool) {
             isProjecting = true
-            defer { isProjecting = false }
+            defer { isProjecting = false; scheduleRailFitRefresh(pdfView) }
+            pdfView.onLayoutGeometryChange = { [weak self, weak pdfView] in
+                guard let pdfView else { return }
+                self?.scheduleRailFitRefresh(pdfView)
+            }
 
-            applyDisplayMode(pdfManager.displayMode, to: pdfView)
+            // Setting a document lays out PDFKit's page views. Changing its pages in place does not.
+            let structure = pdfManager.pageStructureVersion
+            if !documentDidChange, projectedPageStructure != structure {
+                pdfView.layoutDocumentView()
+            }
+            projectedPageStructure = structure
+
+            // A newly loaded document's restored mode is not a reader's mode
+            // change: its own restore or load fit owns the sizing.
+            applyDisplayMode(pdfManager.displayMode, to: pdfView, refits: !documentDidChange)
 
             if pdfView.interactionMode != pdfManager.interactionMode {
                 pdfView.interactionMode = pdfManager.interactionMode
@@ -531,9 +597,27 @@ struct PDFViewWrapper: NSViewRepresentable {
                 pdfView.go(to: page)
             }
 
+            // A jump goes where the reader asked, so nothing is left to restore. Queued
+            // together, clearing the restore would reject the jump and leave it armed
+            // for whichever update comes next, yanking a reader who has scrolled away.
+            if pdfManager.pendingNavigation != nil, pdfManager.pendingScrollRestore != nil {
+                pdfManager.pendingScrollRestore = nil
+            }
+
             if pdfManager.isAutoScaling {
                 // Auto-Scale mode: PDFKit owns sizing; never write scaleFactor.
                 if !pdfView.autoScales { pdfView.autoScales = true }
+                // PDFKit first fits a new view at no size, at the smallest scale, and
+                // keeps that scroll origin as the scale grows: a fresh document would
+                // open pages in. Land on the page's top once the view has a size.
+                if documentDidChange, pdfManager.pendingScrollRestore == nil, pdfManager.pendingNavigation == nil,
+                   let page = pdfManager.currentPage {
+                    let bounds = page.bounds(for: .mediaBox)
+                    // The first page's top is the document's: its margin shows too, and
+                    // a landing stops there however far above the page it was asked for.
+                    let isFirst = pdfView.document?.index(for: page) == 0
+                    pdfManager.pendingScrollRestore = PDFDestination(page: page, at: CGPoint(x: bounds.minX, y: bounds.maxY + (isFirst ? bounds.height : 0)))
+                }
                 if let destination = pdfManager.pendingScrollRestore {
                     restoreScrollPosition(destination, on: pdfView, retryCount: 0)
                 }
@@ -558,6 +642,59 @@ struct PDFViewWrapper: NSViewRepresentable {
             if let destination = pdfManager.pendingNavigation {
                 scrollTo(destination, on: pdfView, retryCount: 0, oneShot: \.pendingNavigation)
             }
+
+            // A rebuilt view selects again what its predecessor had selected.
+            if documentDidChange, let selection = pdfManager.pendingSelectionRestore {
+                pdfManager.pendingSelectionRestore = nil
+                if selection.pages.first?.document === pdfView.document {
+                    pdfView.setCurrentSelection(selection, animate: false)
+                }
+            }
+        }
+
+        /// Native Auto-Scale owns Zoom to Fit. Its raw geometric fit is range
+        /// clamped just as PDFKit clamps the command; the one-shot custom fit
+        /// remains a separate fitted intent. Re-read current geometry after
+        /// layout/projection instead of publishing a captured, possibly stale scale.
+        private func scheduleRailFitRefresh(_ pdfView: PDFView) {
+            guard !railFitRefreshScheduled else { return }
+            railFitRefreshScheduled = true
+            DispatchQueue.main.async { [weak self, weak pdfView] in
+                guard let self else { return }
+                self.railFitRefreshScheduled = false
+                guard let pdfView, self.isLiveView(pdfView) else { return }
+                let page = pdfView.currentPage
+                let pageSize = page?.bounds(for: pdfView.displayBox).size ?? .zero
+                let scale = pdfView.scaleFactor
+                let rawFit = pdfView.scaleFactorForSizeToFit
+                let valid = page?.document === pdfView.document
+                    && [pdfView.bounds.width, pdfView.bounds.height, pageSize.width, pageSize.height,
+                        scale, rawFit, pdfView.minScaleFactor, pdfView.maxScaleFactor]
+                        .allSatisfy { $0.isFinite && $0 > 0 }
+                let fit = min(max(rawFit, pdfView.minScaleFactor), pdfView.maxScaleFactor)
+                let host = pdfView.superview ?? pdfView
+                let viewport = host.convert(host.visibleRect, to: nil)
+                    .intersection(pdfView.convert(pdfView.visibleRect, to: nil))
+                let pageRects = pdfView.visiblePages.map {
+                    pdfView.convert(pdfView.convert($0.bounds(for: pdfView.displayBox), from: $0), to: nil)
+                        .intersection(viewport)
+                }.filter { !$0.isEmpty && [$0.minX, $0.minY, $0.width, $0.height].allSatisfy(\.isFinite) }
+                // Window coordinates are bottom-up; the rail starts below top chrome.
+                let topInset = TopChromeView.height(toolbarScale: SettingsManager.shared.toolbarScale)
+                let hostBounds = host.convert(host.bounds, to: nil)
+                let lane = NSRect(x: hostBounds.minX, y: hostBounds.minY,
+                                  width: min(NavigationRailView.laneWidth, hostBounds.width),
+                                  height: max(0, hostBounds.height - topInset)).intersection(viewport)
+                let fits = valid && !viewport.isEmpty && !pageRects.isEmpty
+                    && scale <= fit
+                    && !pageRects.contains { $0.intersects(lane) }
+                if self.pdfManager.navigationRailPageRects != pageRects {
+                    self.pdfManager.navigationRailPageRects = pageRects
+                }
+                if self.pdfManager.navigationRailFitsViewport != fits {
+                    self.pdfManager.navigationRailFitsViewport = fits
+                }
+            }
         }
 
         /// Writes `targetScale` to the view only when it meaningfully differs.
@@ -567,10 +704,10 @@ struct PDFViewWrapper: NSViewRepresentable {
         }
 
         /// Applies a display-mode change to the view and re-fits for the new geometry.
-        private func applyDisplayMode(_ mode: PDFDisplayMode, to pdfView: StablePDFView) {
+        private func applyDisplayMode(_ mode: PDFDisplayMode, to pdfView: StablePDFView, refits: Bool) {
             guard pdfView.displayMode != mode else { return }
             pdfView.displayMode = mode
-            scheduleFitForDisplayModeChange(on: pdfView)
+            if refits { scheduleFitForDisplayModeChange(on: pdfView) }
         }
 
         // MARK: Ingest (live view -> manager)
@@ -600,9 +737,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         private func ownsUserInput(in pdfView: PDFView) -> Bool {
             !isDismantled && !isProjecting && lastDisplayed != false
-                && pdfView.document != nil && pdfView.document === pdfManager.document
-                && (pdfManager.liveDestinationProviderOwner == nil
-                    || pdfManager.liveDestinationProviderOwner == ObjectIdentifier(self))
+                && pdfView.document != nil && pdfView.document === pdfManager.document && ownsManager
         }
 
         func processMagnification(event: NSEvent, pdfView: StablePDFView) -> Bool {
@@ -705,15 +840,23 @@ struct PDFViewWrapper: NSViewRepresentable {
             }
         }
 
+        @objc func selectionChanged(_ notification: Notification) {
+            annotationManager.selectionChanged()
+        }
+
         @objc func pageChanged(_ notification: Notification) {
             guard let pdfView = notification.object as? PDFView,
                   let currentPage = pdfView.currentPage,
                   let document = pdfView.document else {
                 return
             }
+            scheduleRailFitRefresh(pdfView)
             let pageIndex = document.index(for: currentPage)
             guard pageIndex != NSNotFound else { return }
             scrollApplyToken &+= 1
+            // Until a waiting restore lands, the view is only passing through pages
+            // (a tab mounted hidden waits to be shown): the reader isn't there.
+            guard pdfManager.pendingScrollRestore == nil else { return }
             ingestOrDefer(from: pdfView) { [weak self, weak pdfView] in
                 guard pdfView?.currentPage === currentPage else { return }
                 self?.pdfManager.ingestPageChange(index: pageIndex, page: currentPage)
@@ -722,6 +865,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         @objc func scaleChanged(_ notification: Notification) {
             guard let pdfView = notification.object as? PDFView else { return }
+            scheduleRailFitRefresh(pdfView)
             let viewScale = pdfView.scaleFactor
             // Ignore the echo of our own projector write.
             guard PDFViewWrapper.scalesDiffer(viewScale, pdfManager.scaleFactor) else { return }
@@ -733,6 +877,7 @@ struct PDFViewWrapper: NSViewRepresentable {
 
         @objc func displayModeChanged(_ notification: Notification) {
             guard let pdfView = notification.object as? StablePDFView else { return }
+            scheduleRailFitRefresh(pdfView)
             let viewMode = pdfView.displayMode
             // Ignore the echo of our own projector write (view already matches intent).
             guard viewMode != pdfManager.displayMode else { return }
@@ -778,6 +923,7 @@ struct PDFViewWrapper: NSViewRepresentable {
                 }
 
                 self.pdfManager.pendingFit = nil
+                self.scheduleRailFitRefresh(pdfView)
                 self.scheduleCenterContent(in: pdfView, scrollToTop: request.scrollToTop)
             }
         }
@@ -800,22 +946,44 @@ struct PDFViewWrapper: NSViewRepresentable {
                               oneShot: ReferenceWritableKeyPath<PDFManager, PDFDestination?>) {
             let state = deferredProjection(for: pdfView)
             DispatchQueue.main.async { [weak self, weak pdfView] in
-                guard let self, let pdfView, self.accepts(state, from: pdfView) else { return }
+                guard let self, let pdfView else { return }
                 // Bail if a newer request superseded this one.
                 guard self.pdfManager[keyPath: oneShot] === destination else { return }
-
-                // Wait for the view to finish initial layout before scrolling, mirroring `performFit`.
-                if (pdfView.bounds.isEmpty || pdfView.document == nil),
-                   retryCount < DesignTokens.maxReadinessRetries {
+                guard self.accepts(state, from: pdfView) else {
+                    // Some other change of intent got in first. The restore still waits, and
+                    // being unobserved, it brings no update to land it: ask again while this
+                    // view is the one to land it, or it never does and the reader stays put.
+                    guard self.isLiveView(pdfView) else { return }
+                    guard retryCount < DesignTokens.maxReadinessRetries else {
+                        // Armed any longer, a later update could yank a reader who has moved on.
+                        self.pdfManager[keyPath: oneShot] = nil
+                        return
+                    }
                     DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) { [weak self, weak pdfView] in
-                        guard let self, let pdfView, self.accepts(state, from: pdfView) else { return }
+                        guard let self, let pdfView else { return }
                         self.scrollTo(destination, on: pdfView, retryCount: retryCount + 1, oneShot: oneShot)
                     }
                     return
                 }
 
-                pdfView.go(to: destination)
+                // Wait for the view to finish initial layout before scrolling, mirroring `performFit`.
+                if (pdfView.bounds.isEmpty || pdfView.document == nil),
+                   retryCount < DesignTokens.maxReadinessRetries {
+                    // As above: another change of intent doesn't give up on the landing.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfViewReadyRetryInterval) { [weak self, weak pdfView] in
+                        guard let self, let pdfView else { return }
+                        self.scrollTo(destination, on: pdfView, retryCount: retryCount + 1, oneShot: oneShot)
+                    }
+                    return
+                }
+
                 self.pdfManager[keyPath: oneShot] = nil
+                // The scale a place is measured at, which a new view can have lost
+                // since it was projected, with no notification to say so.
+                if !self.pdfManager.isAutoScaling { self.applyScale(self.pdfManager.scaleFactor, to: pdfView) }
+                let exact = oneShot == \PDFManager.pendingScrollRestore
+                self.go(to: destination, on: pdfView, exact: exact)
+                self.scheduleRailFitRefresh(pdfView)
                 self.scrollApplyToken &+= 1
                 let token = self.scrollApplyToken
                 let settledState = self.deferredProjection(for: pdfView)
@@ -826,8 +994,19 @@ struct PDFViewWrapper: NSViewRepresentable {
                 DispatchQueue.main.asyncAfter(deadline: .now() + DesignTokens.pdfLayoutSettleDelay) { [weak self, weak pdfView] in
                     guard let self, let pdfView, self.scrollApplyToken == token,
                           self.accepts(settledState, from: pdfView) else { return }
-                    pdfView.go(to: destination)
+                    self.go(to: destination, on: pdfView, exact: exact)
                 }
+            }
+        }
+
+        /// A place the reader left lands exactly. A jump to the first page's top is to
+        /// the document's: its margin shows too.
+        private func go(to destination: PDFDestination, on pdfView: StablePDFView, exact: Bool) {
+            if exact { return pdfView.land(on: destination) }
+            pdfView.go(to: destination)
+            if let page = destination.page, pdfView.document?.index(for: page) == 0,
+               destination.point.y >= page.bounds(for: .mediaBox).maxY {
+                centerContent(in: pdfView, scrollToTop: true)
             }
         }
 
@@ -842,13 +1021,19 @@ struct PDFViewWrapper: NSViewRepresentable {
                     return
                 }
 
-                let baseScale = PDFViewWrapper.calculateFitScale(for: pdfView, page: currentPage)
-                let fitScale = baseScale + DesignTokens.pdfFitZoomBump
-                guard fitScale > 0 else { return }
+                if self.pdfManager.isAutoScaling {
+                    // Fitted: PDFKit refits for the new mode itself. Writing a
+                    // scale here would switch its Auto-Scale off.
+                    if !pdfView.autoScales { pdfView.autoScales = true }
+                } else {
+                    let baseScale = PDFViewWrapper.calculateFitScale(for: pdfView, page: currentPage)
+                    let fitScale = baseScale + DesignTokens.pdfFitZoomBump
+                    guard fitScale > 0 else { return }
 
-                let clamped = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
-                self.pdfManager.ingestFitCompletion(scale: clamped)
-                self.applyScale(clamped, to: pdfView)
+                    let clamped = min(max(fitScale, DesignTokens.pdfMinScale), DesignTokens.pdfMaxScale)
+                    self.pdfManager.ingestFitCompletion(scale: clamped)
+                    self.applyScale(clamped, to: pdfView)
+                }
 
                 let pageBounds = currentPage.bounds(for: .mediaBox)
                 let topLeft = CGPoint(x: pageBounds.minX, y: pageBounds.maxY)

@@ -20,10 +20,35 @@ extension NativeTextView {
     /// The rect a narrow table's image draws in, in view coordinates.
     func tableImageRect(at anchor: Int) -> NSRect? { tableImage(at: anchor)?.rect }
 
-    /// `raster` with the document selection painted on the cells it covers
-    /// (doc 24 §7.5.7), or nil when the selection does not reach into the
-    /// table or a cell editor owns it.
-    func selectionPaintedTable(_ raster: NSImage, tableRange: NSRange) -> NSImage? {
+    /// The narrow table drawn under `point` (view coordinates) in the laid-out
+    /// viewport: its source range, drawn rect and image anchor.
+    func renderedTable(at point: NSPoint) -> (range: NSRange, rect: NSRect, anchor: Int)? {
+        guard let storage = textStorage, let viewport = viewportCharacterRange else { return nil }
+        var hit: (range: NSRange, rect: NSRect, anchor: Int)?
+        storage.enumerateAttribute(.markdownTableSourceRange, in: NSIntersectionRange(viewport, NSRange(location: 0, length: storage.length))) { value, range, stop in
+            guard value != nil, let image = tableImage(at: range.location), image.rect.contains(point) else { return }
+            hit = (image.range, image.rect, range.location)
+            stop.pointee = true
+        }
+        return hit
+    }
+
+    /// The narrow tables drawn in the laid-out viewport, once each.
+    func renderedTables() -> [(range: NSRange, rect: NSRect, anchor: Int)] {
+        guard let storage = textStorage, let viewport = viewportCharacterRange else { return [] }
+        var tables: [(range: NSRange, rect: NSRect, anchor: Int)] = []
+        storage.enumerateAttribute(.markdownTableSourceRange, in: NSIntersectionRange(viewport, NSRange(location: 0, length: storage.length))) { value, range, _ in
+            guard value != nil, let image = tableImage(at: range.location),
+                  !tables.contains(where: { $0.range.location == image.range.location }) else { return }
+            tables.append((image.range, image.rect, range.location))
+        }
+        return tables
+    }
+
+    /// The document selection's paint on the cells it covers in the table at
+    /// `tableRange` (doc 24 §7.5.7), or nil when the selection does not reach
+    /// into the table or a cell editor owns it.
+    func selectionPaint(forTableAt tableRange: NSRange) -> MarkdownTableLayout.SelectionPaint? {
         let selection = selectedRange()
         guard selection.length > 0, NSIntersectionRange(selection, tableRange).length > 0,
               let storage = textStorage, NSMaxRange(tableRange) <= storage.length,
@@ -41,12 +66,12 @@ extension NativeTextView {
                 : .unemphasizedSelectedTextBackgroundColor,
             text: attributes[.foregroundColor] as? NSColor
         )
-        // Resolved once, so the variant cache keys on concrete colours.
+        // Resolved in this view's appearance, whatever the drawing appearance.
         effectiveAppearance.performAsCurrentDrawingAppearance {
             paint.background = paint.background.usingColorSpace(.sRGB) ?? paint.background
             paint.text = paint.text.map { $0.usingColorSpace(.sRGB) ?? $0 }
         }
-        return MarkdownTableLayout.image(painting: paint, of: raster)
+        return paint
     }
 
     /// Wide tables draw outside TextKit: repaint those the selection reached
@@ -112,7 +137,10 @@ extension NativeTextView {
     /// editing. Returns whether a table consumed the click. Shift-click from
     /// prose extends the text selection across tables, which stay rendered.
     func routeMouseDownToTables(_ event: NSEvent) -> Bool {
-        guard let session = (delegate as? NativeTextViewCoordinator)?.tableEditingSession else { return false }
+        guard let coordinator = delegate as? NativeTextViewCoordinator else { return false }
+        // ⌘-click on a cell's link opens it (read-only: any click); a plain click edits.
+        if coordinator.openTableLink(for: event, editable: isEditable) { return true }
+        let session = coordinator.tableEditingSession
         session.finishInput()
         if event.modifierFlags.contains(.shift), !session.isActive { return false }
         if editTableIfHit(event) {
@@ -130,16 +158,9 @@ extension NativeTextView {
 
     /// Begin cell editing when `event` lands on a rendered narrow table.
     private func editTableIfHit(_ event: NSEvent) -> Bool {
-        guard let coordinator = delegate as? NativeTextViewCoordinator,
-              let storage = textStorage, let viewport = viewportCharacterRange else { return false }
+        guard let coordinator = delegate as? NativeTextViewCoordinator else { return false }
         let point = convert(event.locationInWindow, from: nil)
-        var hit: (range: NSRange, rect: NSRect)?
-        storage.enumerateAttribute(.markdownTableSourceRange, in: NSIntersectionRange(viewport, NSRange(location: 0, length: storage.length))) { value, range, stop in
-            guard value != nil, let image = tableImage(at: range.location), image.rect.contains(point) else { return }
-            hit = image
-            stop.pointee = true
-        }
-        guard let hit else { return false }
+        guard let hit = renderedTable(at: point) else { return false }
         return coordinator.tableEditingSession.begin(
             range: hit.range, point: NSPoint(x: point.x - hit.rect.minX, y: point.y - hit.rect.minY),
             in: self, origin: hit.rect.origin

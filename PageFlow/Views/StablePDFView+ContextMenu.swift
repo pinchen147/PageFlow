@@ -12,58 +12,68 @@ extension StablePDFView {
 
     // MARK: - Context Menu Dispatch
 
+    /// In every content type: what is under the pointer and the document's own
+    /// items first, then the system's, with Services among them.
     func buildContextMenu(for event: NSEvent, at viewPoint: NSPoint) -> NSMenu {
+        let menu = NSMenu()
         if let page = page(for: viewPoint, nearest: true) {
             let pagePoint = convert(viewPoint, to: page)
 
             if let annotation = findCommentAnnotation(at: pagePoint, on: page) {
                 pendingCommentAnnotation = annotation
-                return buildCommentContextMenu(for: annotation)
-            }
-
-            if let annotation = findMarkupAnnotation(at: pagePoint, on: page) {
+                appendCommentItems(for: annotation, to: menu)
+            } else if let annotation = findMarkupAnnotation(at: pagePoint, on: page) {
                 pendingRemovalAnnotation = annotation
-                return buildAnnotationContextMenu(for: annotation)
+                appendAnnotationItems(for: annotation, to: menu)
             }
-        }
-
-        return buildFilteredDefaultMenu(for: event)
-    }
-
-    // MARK: - Default Page Menu
-
-    private func buildFilteredDefaultMenu(for event: NSEvent) -> NSMenu {
-        guard let defaultMenu = super.menu(for: event) else {
-            return buildFallbackPageMenu()
-        }
-
-        let filteredItems = defaultMenu.items.filter { item in
-            if item.submenu?.identifier?.rawValue == "NSServicesSubmenu" {
-                return false
-            }
-            if item.title == "Services" {
-                return false
-            }
-            return true
-        }
-
-        let menu = NSMenu()
-        for item in filteredItems {
-            if let copy = item.copy() as? NSMenuItem {
-                menu.addItem(copy)
-            }
-        }
-
-        configureNativeSizingActions(in: menu)
-        applyKeyboardShortcuts(to: menu)
-
-        if !menu.items.isEmpty {
-            menu.addItem(.separator())
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
         }
 
         appendPageMenuItems(to: menu)
+        return composeContextMenu(nativeMenu: super.menu(for: event), appMenu: menu)
+    }
 
-        return menu
+    // MARK: - System Items
+
+    private static let appContextMenuPrefixID = NSUserInterfaceItemIdentifier("PageFlow.contextMenuPrefix")
+
+    /// PDFKit's root owns the context of its native items and custom views.
+    /// Only fresh app items move between menus; native items stay in place.
+    func composeContextMenu(nativeMenu: NSMenu?, appMenu: NSMenu) -> NSMenu {
+        guard let nativeMenu else {
+            alignContextMenuItems(in: appMenu)
+            return appMenu
+        }
+
+        // A caller can compose the same root again. Retire only our previous
+        // contiguous prefix, including its boundary separator.
+        while let first = nativeMenu.items.first, first.identifier == Self.appContextMenuPrefixID {
+            nativeMenu.removeItem(first)
+        }
+        configureNativeSizingActions(in: nativeMenu)
+        applyKeyboardShortcuts(to: nativeMenu)
+
+        if !appMenu.items.isEmpty, let first = nativeMenu.items.first, !first.isSeparatorItem {
+            appMenu.addItem(.separator())
+        }
+        let prefix = appMenu.items
+        for item in prefix { appMenu.removeItem(item) }
+        for item in prefix.reversed() {
+            item.identifier = Self.appContextMenuPrefixID
+            nativeMenu.insertItem(item, at: 0)
+        }
+        alignContextMenuItems(in: nativeMenu)
+        return nativeMenu
+    }
+
+    /// AppKit reserves image space per section; text-only sections otherwise start farther left.
+    private func alignContextMenuItems(in menu: NSMenu) {
+        let size = menu.items.compactMap(\.image).first?.size ?? NSSize(width: 16, height: 16)
+        let space = NSImage(size: size)
+        space.isTemplate = true
+        for item in menu.items where !item.isSeparatorItem && item.view == nil && item.image == nil {
+            item.image = space
+        }
     }
 
     /// Native identifiers come from PDFKit's returned menu metadata. The label
@@ -164,9 +174,8 @@ extension StablePDFView {
 
     // MARK: - Annotation Context Menu
 
-    private func buildAnnotationContextMenu(for annotation: PDFAnnotation) -> NSMenu {
+    private func appendAnnotationItems(for annotation: PDFAnnotation, to menu: NSMenu) {
         let isHighlight = isHighlightAnnotation(annotation)
-        let menu = NSMenu()
 
         let removeTitle = isHighlight ? "Remove Highlight" : "Remove Underline"
         let removeItem = NSMenuItem(title: removeTitle, action: #selector(removeAnnotationAction(_:)), keyEquivalent: "")
@@ -193,7 +202,7 @@ extension StablePDFView {
         colorMenuItem.submenu = colorSubmenu
         menu.addItem(colorMenuItem)
 
-        return annotationMenuRespectingPermissions(menu)
+        disableIfForbidden([removeItem, colorMenuItem])
     }
 
     @objc func removeAnnotationAction(_ sender: NSMenuItem) {
@@ -208,9 +217,7 @@ extension StablePDFView {
 
     // MARK: - Comment Context Menu
 
-    private func buildCommentContextMenu(for annotation: PDFAnnotation) -> NSMenu {
-        let menu = NSMenu()
-
+    private func appendCommentItems(for annotation: PDFAnnotation, to menu: NSMenu) {
         let removeItem = NSMenuItem(title: "Remove Comment", action: #selector(removeCommentAction(_:)), keyEquivalent: "")
         removeItem.target = self
         removeItem.representedObject = annotation
@@ -233,7 +240,7 @@ extension StablePDFView {
         colorMenuItem.submenu = colorSubmenu
         menu.addItem(colorMenuItem)
 
-        return annotationMenuRespectingPermissions(menu)
+        disableIfForbidden([removeItem, colorMenuItem])
     }
 
     @objc func removeCommentAction(_ sender: NSMenuItem) {
@@ -246,12 +253,15 @@ extension StablePDFView {
         onCommentColorChange?(tuple.0, tuple.1)
     }
 
-    /// A document that forbids commenting shows its annotation commands disabled.
-    private func annotationMenuRespectingPermissions(_ menu: NSMenu) -> NSMenu {
-        guard !PDFPermissions(document).annotate else { return menu }
-        menu.autoenablesItems = false
-        menu.items.forEach { $0.isEnabled = false }
-        return menu
+    /// A document that forbids commenting shows its annotation commands disabled:
+    /// with no action a menu's validation can't enable them, its other items still validate.
+    private func disableIfForbidden(_ items: [NSMenuItem]) {
+        guard !PDFPermissions(document).annotate else { return }
+        for item in items {
+            item.action = nil
+            item.target = nil
+            item.submenu?.items.forEach { $0.action = nil; $0.target = nil }
+        }
     }
 
     // MARK: - Page Context Menu Actions
@@ -285,12 +295,6 @@ extension StablePDFView {
                 item.keyEquivalentModifierMask = shortcut.nsModifierFlags
             }
         }
-    }
-
-    private func buildFallbackPageMenu() -> NSMenu {
-        let menu = NSMenu()
-        appendPageMenuItems(to: menu)
-        return menu
     }
 
     private func appendPageMenuItems(to menu: NSMenu) {

@@ -170,8 +170,7 @@ final class TabSwitcherController {
 
     private func reopen(_ record: ClosedTabStore.Record, host: TabManager?) {
         let target = host ?? WindowRegistry.shared.frontmostTabManager()
-        target?.openDocument(url: record.url, isSecurityScoped: record.isSecurityScoped)
-        ClosedTabStore.shared.remove(record)
+        target?.reopen(record)
     }
 
     // MARK: - Geometry

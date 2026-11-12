@@ -35,7 +35,7 @@ struct MarkdownTabView: View {
     @Bindable var content: MarkdownContent
 
     /// Whether this is the active tab. Only the active tab shows the Find bar and
-    /// the bottom hover strip (window-level `showingSearch` is shared across warm tabs).
+    /// the bottom hover strip.
     let isActive: Bool
 
     /// Whether this tab is on-screen (S8 P2): the warm ZStack shows only the active
@@ -52,7 +52,7 @@ struct MarkdownTabView: View {
     /// mounted markdown tab keeps its own scroll offset across switches.
     var retainedScrollDocumentIds: Set<String>? = nil
 
-    /// Window-level Find visibility, shared by every warm tab (peer of `PDFTabView`).
+    /// This tab's Find visibility (peer of `PDFTabView`).
     @Binding var showingSearch: Bool
     let searchFocusRequest: Int
 
@@ -64,10 +64,8 @@ struct MarkdownTabView: View {
     /// Reading-margin + color-scheme settings (Features 1/2). Observed so toggling a
     /// preference (or resizing the toolbar) re-lays the editor live.
     @State private var settingsManager = SettingsManager.shared
-
-    /// Mirrors `PDFTabView.isHoveringPageIndicator`: the bottom strip reveals the
-    /// word-count chip on hover.
-    @State private var isHoveringWordCount = false
+    /// The Find bar's width while it shows; the word count stays clear of it.
+    @State private var findBarWidth: CGFloat = 0
 
     /// The system scheme from above, so forcing `.system` puts back exactly the
     /// inherited value (one stable view tree — no remount on scheme toggles).
@@ -86,12 +84,6 @@ struct MarkdownTabView: View {
     /// room above the H1. Tracks `toolbarScale` live (Feature 1).
     private var topInset: CGFloat {
         TopChromeView.height(toolbarScale: settingsManager.toolbarScale) + DesignTokens.markdownFirstLineGap
-    }
-
-    /// The PDF page indicator's visibility rule, verbatim (`PDFTabView`): the shared
-    /// "always visible" setting, else the bottom hover strip.
-    private var isWordCountVisible: Bool {
-        settingsManager.isPageIndicatorAlwaysVisible || isHoveringWordCount
     }
 
     /// Two-way binding onto the durable text. Built by hand because
@@ -113,74 +105,86 @@ struct MarkdownTabView: View {
             Color(nsColor: .textBackgroundColor)
                 .ignoresSafeArea()
 
-            MarkdownEditorSurface(content: content, tabManager: tabManager, tabID: tabID, editor: MarkdownEditorView(
-                text: textBinding,
-                documentId: content.documentId,
-                editorController: content.editorController,
-                bus: content.bus,
-                fontName: settingsManager.markdownFontFamily,
-                fontSize: settingsManager.markdownFontSize,
-                isDisplayed: isDisplayed,
-                isFocused: isActive && isDisplayed,
-                onRequestFocus: onRequestFocus,
-                readingPositionRequest: content.pendingReadingPosition,
-                imageProvider: content.imageProvider,
-                onPasteImage: { [weak content, weak tabManager] pasteboard in
-                    guard let content else { return nil }
-                    return PastedImageStore.shared.markdownLinks(
-                        for: pasteboard, documentURL: content.documentManager.documentURL,
-                        report: { tabManager?.postTransientToast($0) }
-                    )
-                },
-                // The editor is the deepest drop target over the text and its
-                // gutters, so the tab's own drop target never sees these files
-                // (doc 26 §9.1): documents open as tabs, images are copied
-                // beside the note and land where the drop line showed.
-                onDropDocuments: { [weak tabManager] urls in
-                    guard let tabManager else { return false }
-                    DispatchQueue.main.async { tabManager.openDroppedFiles(urls) }
-                    return true
-                },
-                opensDroppedFile: { $0.pageFlowIsOpenableDocument },
-                onImportImages: { [weak content, weak tabManager] drop, completion in
-                    guard let content else { return completion([]) }
-                    PastedImageStore.shared.importImages(
-                        drop.fileURLs, data: drop.imageData,
-                        documentURL: { [weak content] in content?.documentManager.documentURL }
-                    ) { imported in
-                        if let message = imported.message { tabManager?.postTransientToast(message) }
-                        completion(imported.links)
-                    }
-                },
-                // The window overlay stays for documents; for images the
-                // editor's drop line shows instead, unblurred.
-                onFileDragHover: { [weak tabManager] kind in
-                    tabManager?.editorFileDragShowsOverlay = kind.map { $0 == .documents }
-                },
-                onOpenLocalLink: { [weak tabManager, weak content] link in
-                    guard let tabManager, let content else { return }
-                    tabManager.openLocalLink(link, from: content)
-                },
-                retainedScrollDocumentIds: retainedScrollDocumentIds,
-                topInset: topInset,
-                sideMargin: settingsManager.markdownSideMargin,
-                centersZoomedOut: settingsManager.markdownCentersZoomedOut,
-                pageLook: settingsManager.markdownPageLook,
-                showsHiddenContentRow: settingsManager.markdownShowsHiddenContentRow,
-                forcedAppearanceName: settingsManager.markdownColorScheme.forcedAppearanceName,
-                undoManager: content.undoManager,
-                zoomScale: content.zoomScale,
-                onZoomChanged: { [weak content] in content?.handleMagnificationChanged($0) }
-            ), railEnabled: isActive && isDisplayed && settingsManager.showNavigationRail && !showingOutline,
-                railTopInset: TopChromeView.height(toolbarScale: settingsManager.toolbarScale),
-                onShowSidebar: { showingOutline = true })
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !content.isAwaitingOpen {
+                MarkdownEditorSurface(content: content, tabManager: tabManager, tabID: tabID, editor: MarkdownEditorView(
+                    text: textBinding,
+                    documentId: content.documentId,
+                    editorController: content.editorController,
+                    bus: content.bus,
+                    fontName: settingsManager.markdownFontFamily,
+                    fontSize: settingsManager.markdownFontSize,
+                    isDisplayed: isDisplayed,
+                    isFocused: FindOverlay.documentTakesKeyboard(isShown: isActive && isDisplayed, findIsOpen: showingSearch),
+                    onRequestFocus: onRequestFocus,
+                    readingPositionRequest: content.pendingReadingPosition,
+                    imageProvider: content.imageProvider,
+                    wikiLinkResolver: content.wikiLinkPresence,
+                    wikiLinkRevision: content.wikiLinkRevision,
+                    onPasteImage: { [weak content, weak tabManager] pasteboard in
+                        guard let content else { return nil }
+                        return PastedImageStore.shared.markdownLinks(
+                            for: pasteboard, documentURL: content.documentManager.documentURL,
+                            report: { tabManager?.postTransientToast($0) }
+                        )
+                    },
+                    // The editor is the deepest drop target over the text and its
+                    // gutters, so the tab's own drop target never sees these files
+                    // (doc 26 §9.1): documents open as tabs, images are copied
+                    // beside the note and land where the drop line showed.
+                    onDropDocuments: { [weak tabManager] urls in
+                        guard let tabManager else { return false }
+                        DispatchQueue.main.async { tabManager.openDroppedFiles(urls) }
+                        return true
+                    },
+                    opensDroppedFile: { $0.pageFlowIsOpenableDocument },
+                    onImportImages: { [weak content, weak tabManager] drop, completion in
+                        guard let content else { return completion([]) }
+                        PastedImageStore.shared.importImages(
+                            drop.fileURLs, data: drop.imageData,
+                            documentURL: { [weak content] in content?.documentManager.documentURL }
+                        ) { imported in
+                            if let message = imported.message { tabManager?.postTransientToast(message) }
+                            completion(imported.links)
+                        }
+                    },
+                    // The window overlay stays for documents; for images the
+                    // editor's drop line shows instead, unblurred.
+                    onFileDragHover: { [weak tabManager] kind in
+                        tabManager?.editorFileDragShowsOverlay = kind.map { $0 == .documents }
+                    },
+                    onOpenLocalLink: { [weak tabManager, weak content] link in
+                        guard let tabManager, let content else { return }
+                        tabManager.openLocalLink(link, from: content)
+                    },
+                    onOpenWikiLink: { [weak tabManager, weak content] target in
+                        guard let tabManager, let content else { return }
+                        tabManager.openWikiLink(target, from: content)
+                    },
+                    retainedScrollDocumentIds: retainedScrollDocumentIds,
+                    topInset: topInset,
+                    sideMargin: settingsManager.markdownSideMargin,
+                    centersZoomedOut: settingsManager.markdownCentersZoomedOut,
+                    pageLook: settingsManager.markdownPageLook,
+                    showsHiddenContentRow: settingsManager.markdownShowsHiddenContentRow,
+                    forcedAppearanceName: settingsManager.markdownColorScheme.forcedAppearanceName,
+                    undoManager: content.undoManager,
+                    zoomScale: content.zoomScale,
+                    onZoomChanged: { [weak content] in content?.handleMagnificationChanged($0) },
+                    isWidthFitted: content.isWidthFitted,
+                    zoomRequest: content.zoomRequest,
+                    onFittedZoomChanged: { [weak content] in content?.handleFittedMagnificationChanged($0) }
+                ), railEnabled: isActive && isDisplayed && settingsManager.showNavigationRail && !showingOutline,
+                    railTopInset: TopChromeView.height(toolbarScale: settingsManager.toolbarScale),
+                    onShowSidebar: { showingOutline = true })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
 
             FindOverlay(
                 driver: content.searchManager,
                 isActive: isActive,
                 showingSearch: $showingSearch,
-                focusRequest: searchFocusRequest
+                focusRequest: searchFocusRequest,
+                onBarWidthChange: { findBarWidth = $0 }
             )
         }
         // The outline floats over the editor exactly like the PDF sidebar
@@ -189,7 +193,7 @@ struct MarkdownTabView: View {
             outlineSidebarOverlay
         }
         // the reference editor's comment toasts ("Link copied") show as this window's toast.
-        .onAppear {
+        .onChange(of: content.documentId, initial: true) {
             content.showCommentToasts { [weak tabManager] message in tabManager?.postTransientToast(message) }
         }
         .pageFlowFileDropTarget(tabManager: tabManager, hintsImagesGoInTheNote: true)
@@ -199,7 +203,7 @@ struct MarkdownTabView: View {
         .overlay(alignment: .bottom) {
             // isActive gate: keeps inactive warm tabs' hover tracking out of the
             // window (same gate as PDFTabView's bottomPageBar).
-            if isActive {
+            if isActive, !content.isAwaitingOpen {
                 bottomWordBar
             }
         }
@@ -214,14 +218,19 @@ struct MarkdownTabView: View {
             if isActive, showingOutline {
                 MarkdownOutlineSidebar(
                     items: outline,
+                    currentID: content.currentOutlineItemID,
                     onSelect: { content.scrollToOutlineItem($0) },
                     onClose: { showingOutline = false }
                 )
                 .onExitCommand { showingOutline = false }
+                // Scrolling is followed only while the sidebar shows.
+                .onAppear { content.setTracksCurrentSection(true) }
+                .onDisappear { content.setTracksCurrentSection(false) }
+                .onChange(of: outline) { content.refreshCurrentOutlineItem() }
                 .padding(.top, TopChromeView.height(toolbarScale: settingsManager.toolbarScale) + DesignTokens.spacingXS)
                 .padding(.bottom, DesignTokens.spacingMD)
                 .padding(.leading, DesignTokens.spacingXS)
-                .transition(.move(edge: .leading).combined(with: .opacity))
+                .pageFlowPanelTransition(edge: .leading)
             }
         }
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingOutline)
@@ -256,31 +265,17 @@ struct MarkdownTabView: View {
 
     // MARK: - Word-count chip (the bottom-bar slot, mirroring the PDF page indicator)
 
+    /// The same chip as the PDF page indicator; clicking it opens Go to Line,
+    /// as the page chip opens Go to Page.
     private var bottomWordBar: some View {
-        HStack {
-            Spacer()
-            if isWordCountVisible {
-                wordCountChip
-            }
+        DocumentStatusBar(
+            label: wordCount.label,
+            shorterLabels: [wordCount.wordsLabel],
+            centerReservation: FindOverlay.chipReservation(barWidth: findBarWidth),
+            help: "Go to line",
+            height: TopChromeView.height(toolbarScale: settingsManager.toolbarScale)
+        ) {
+            tabManager.setShowingGoToPage(true, for: tabID)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: TopChromeView.height(toolbarScale: settingsManager.toolbarScale))
-        .overlay(ChromeHoverSensor(isHovered: $isHoveringWordCount))
     }
-
-    /// Same glass surface, shadow, and paddings as `PDFTabView.pageIndicator` —
-    /// but inert: word count has no click target.
-    private var wordCountChip: some View {
-        Text(wordCount.label)
-            .font(.caption)
-            .fontWeight(.medium)
-            .foregroundStyle(.primary)
-            .padding(.horizontal, DesignTokens.spacingSM + 2)
-            .padding(.vertical, DesignTokens.spacingSM)
-            .pageFlowLiquidGlassSurface(.pageIndicator)
-            .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 10, y: -3)
-            .padding(.bottom, DesignTokens.spacingXS)
-            .padding(.trailing, DesignTokens.spacingMD)
-    }
-
 }

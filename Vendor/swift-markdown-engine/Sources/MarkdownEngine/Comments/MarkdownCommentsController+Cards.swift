@@ -5,7 +5,7 @@ import AppKit
 extension MarkdownCommentsController: CommentCardDelegate {
 
     func isCommentChord(_ event: NSEvent) -> Bool {
-        coordinator?.keyBindings[.comment].contains { $0.matches(event) } == true
+        commentKeyBindings[.comment].contains { $0.matches(event) } == true
     }
 
     func cardClicked(_ card: CommentCardView) {
@@ -142,7 +142,7 @@ extension MarkdownCommentsController: CommentCardDelegate {
         guard let scrollView, let thread = store.thread(card.threadID) else { return }
         typealias Item = TableMenuView.Item
         var items: [Item] = []
-        if let base = MainActor.assumeIsolated({ coordinator?.editorController?.commentLinkBase }) {
+        if let base = MainActor.assumeIsolated({ commentEditorController?.commentLinkBase }) {
             items.append(Item("Copy link", symbol: "link") { [weak self] in self?.copyLink(base: base, threadID: card.threadID) })
         }
         if !thread.resolved, !(thread.reactionOnly && commentID == thread.root.id) {
@@ -277,7 +277,7 @@ extension MarkdownCommentsController: CommentCardDelegate {
         guard let link = components?.url?.absoluteString else { return }
         pasteboard.clearContents()
         pasteboard.setString(link, forType: .string)
-        if let toast = coordinator?.editorController?.onCommentsToast { toast("Link copied") } else { announce("Link copied") }
+        if let toast = commentEditorController?.onCommentsToast { toast("Link copied") } else { announce("Link copied") }
     }
 
     func closeMenu() {

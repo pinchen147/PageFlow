@@ -6,6 +6,9 @@ import AppKit
 /// `MarkdownCommentStore`, so they outlive this controller.
 @MainActor
 final class MarkdownCommentsController {
+    weak var semanticOwner: NativeSemanticDocumentCoordinator?
+    weak var semanticEditorController: MarkdownEditorController?
+    var semanticAnchors: NativeSemanticCommentHost?
     weak var coordinator: NativeTextViewCoordinator?
     weak var scrollView: NSScrollView?
     private(set) var store: MarkdownCommentStore
@@ -66,7 +69,16 @@ final class MarkdownCommentsController {
         install()
     }
 
+    /// Comments leave an editor still in use: the text takes back their lane.
     func uninstall() {
+        tearDown()
+        textView?.comments_commentLaneReserve = 0
+    }
+
+    /// The editor is closing. The lane stays as it is: giving it back would
+    /// rewrap the note and lay all of it out for a view about to go.
+    func tearDown() {
+        semanticAnchors?.tearDown()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
@@ -82,7 +94,6 @@ final class MarkdownCommentsController {
         openMenu?.removeFromSuperview()
         tooltip.cancel()
         tooltip.removeFromSuperview()
-        textView?.commentLaneReserve = 0
         store.onDisplayChange = nil
     }
 
@@ -96,7 +107,34 @@ final class MarkdownCommentsController {
         connectStore()
     }
 
-    var textView: NativeTextView? { coordinator?.textView as? NativeTextView }
+    var textView: NSTextView? { semanticOwner?.textView ?? coordinator?.textView }
+
+    init(semanticOwner: NativeSemanticDocumentCoordinator, editorController: MarkdownEditorController,
+         scrollView: NSScrollView, store: MarkdownCommentStore) throws {
+        self.semanticOwner = semanticOwner
+        self.semanticEditorController = editorController
+        self.scrollView = scrollView
+        self.store = store
+        let anchors = NativeSemanticCommentHost(owner: semanticOwner, store: store)
+        self.semanticAnchors = anchors
+        try anchors.load(store.threads)
+        install()
+    }
+
+    var commentKeyBindings: MarkdownKeyBindings { semanticOwner?.keyBindings ?? coordinator?.keyBindings ?? .default }
+    var commentEditorController: MarkdownEditorController? { semanticEditorController ?? coordinator?.editorController }
+
+
+    /// Exact native input identity, scoped to this controller's attached roots.
+    func ownsAnnotationResponder(_ responder: NSResponder?) -> Bool {
+        guard let editor = responder as? CommentTextView, editor.isEditable,
+              let field = editor.field, let window = editor.window,
+              window.firstResponder === editor, textView?.window === window else { return false }
+        let roots: [NSView?] = [composer, rail, listPanel, peek]
+        return roots.compactMap { $0 }.contains {
+            $0.window === window && field.isDescendant(of: $0)
+        }
+    }
 
     private func install() {
         guard let main = textView, let scrollView else { return }
@@ -104,7 +142,7 @@ final class MarkdownCommentsController {
         highlights.autoresizingMask = [.width, .height]
         main.addSubview(highlights, positioned: .below, relativeTo: nil)
         connectStore()
-        observeStorage()
+        if semanticOwner == nil { observeStorage() }
         let center = NotificationCenter.default
         main.postsFrameChangedNotifications = true
         observers.append(center.addObserver(forName: NSView.frameDidChangeNotification, object: main, queue: .main) { [weak self] _ in
@@ -154,10 +192,8 @@ final class MarkdownCommentsController {
             // didProcessEditing expands editedRange while fixing paragraph attributes.
             // Map the character edit before that expansion can swallow an anchor.
             forName: NSTextStorage.willProcessEditingNotification, object: storage, queue: nil
-        ) { [weak self] note in
-            guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
-            let edit = MarkdownTextEdit(editedRange: storage.editedRange, changeInLength: storage.changeInLength)
-            let text = storage.mutableString
+        ) { [weak self, weak storage] note in
+            guard let (edit, text) = Self.characterEdit(in: note, of: storage) else { return }
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.store.textDidChange(edit, text: text)
@@ -165,6 +201,14 @@ final class MarkdownCommentsController {
                 if self.peek != nil, !self.isEditorDirty { self.collapse(announce: false) }
             }
         })
+    }
+
+    /// The characters edited in `observed`, if that's what `note` reports. The
+    /// notification center holds only the observed storage's address, so once it is
+    /// gone, a new storage at that address, on any thread, reaches this observer.
+    nonisolated static func characterEdit(in note: Notification, of observed: NSTextStorage?) -> (MarkdownTextEdit, NSMutableString)? {
+        guard let observed, note.object as AnyObject === observed, observed.editedMask.contains(.editedCharacters) else { return nil }
+        return (MarkdownTextEdit(editedRange: observed.editedRange, changeInLength: observed.changeInLength), observed.mutableString)
     }
 
     // MARK: - Refresh
@@ -229,8 +273,8 @@ final class MarkdownCommentsController {
     /// What each visible thread paints now: the lit one (hovered, else open)
     /// at 45 %, the rest at 20 %, the open one underlined; the draft paints
     /// the selection it will anchor to at rest.
-    func paints(in main: NativeTextView) -> [String: CommentHighlightView.Paint] {
-        guard store.mode != .hidden, let viewport = main.viewportCharacterRange else { return [:] }
+    func paints(in main: NSTextView) -> [String: CommentHighlightView.Paint] {
+        guard store.mode != .hidden, let viewport = main.comments_viewportCharacterRange else { return [:] }
         let lit = store.activeID ?? store.focusID
         let showsResolved = store.mode == .list && (store.filter == .resolved || store.filter == .all)
         var result: [String: CommentHighlightView.Paint] = [:]
@@ -239,6 +283,12 @@ final class MarkdownCommentsController {
                   coordinator?.foldLayout.hiddenRange(containing: range.location) == nil else { continue }
             let visible = NSIntersectionRange(range, viewport)
             guard visible.length > 0 else { continue }
+            if let rects = semanticAnchors?.cellRects(for: thread.id), !rects.isEmpty {
+                let isLit = lit == thread.id || litCluster.contains(thread.id)
+                result[thread.id] = CommentHighlightView.Paint(rects: rects, alpha: isLit ? 0.45 : 0.2,
+                    underlined: store.focusID == thread.id, overTable: true)
+                continue
+            }
             if let rect = imageRect(range, in: main) {
                 let selected = coordinator?.objectSelection?.token == range
                 let isLit = lit == thread.id || litCluster.contains(thread.id)
@@ -331,17 +381,17 @@ final class MarkdownCommentsController {
     }
 
     /// An ordinary thread whose exact range is a rendered image token.
-    func imageRect(_ range: NSRange, in main: NativeTextView) -> NSRect? {
+    func imageRect(_ range: NSRange, in main: NSTextView) -> NSRect? {
         guard let storage = main.textStorage,
               let image = NativeTextViewCoordinator.renderedImage(around: range, in: storage), image.token == range else { return nil }
-        return main.renderedImageRect(at: image.anchor)
+        return main.comments_renderedImageRect(at: image.anchor)
     }
 
     /// A rendered table's rect in the text view, for `range` starting at the table.
-    func tableRect(_ range: NSRange, in main: NativeTextView) -> NSRect? {
-        guard let canvas = main.tableCanvas(forTableAt: range),
+    func tableRect(_ range: NSRange, in main: NSTextView) -> NSRect? {
+        guard let canvas = main.comments_tableCanvas(forTableAt: range),
               let geometry = coordinator?.tableEditingSession.geometry(forTableAt: range) else { return nil }
-        var rect = main.convertTableRect(NSRect(origin: .zero, size: geometry.size), canvas: canvas)
+        var rect = main.comments_convertTableRect(NSRect(origin: .zero, size: geometry.size), canvas: canvas)
         // A wide table shows only its scroller's span.
         if canvas.view !== main, let overlay = canvas.view.enclosingScrollView {
             rect = rect.intersection(overlay.contentView.convert(overlay.contentView.bounds, to: main))
@@ -351,7 +401,7 @@ final class MarkdownCommentsController {
 
     /// The text segments of `range` in the text view, one rect per line run
     /// (touching runs on a line merged so overlaps never seam).
-    func segmentRects(for range: NSRange, in main: NativeTextView) -> [NSRect] {
+    func segmentRects(for range: NSRange, in main: NSTextView) -> [NSRect] {
         guard let tlm = main.textLayoutManager, let content = tlm.textContentManager,
               let start = content.location(content.documentRange.location, offsetBy: range.location),
               let end = content.location(start, offsetBy: range.length),
@@ -476,8 +526,7 @@ final class MarkdownCommentsController {
     /// again. In text it stays a character (Ç); a chord with ⌘ or ⌃ works
     /// there too.
     func handlesHideChord(_ event: NSEvent, inWindow number: Int) -> Bool {
-        guard let chords = coordinator?.keyBindings[.toggleComments],
-              let chord = chords.first(where: { $0.matches(event) }),
+        guard let chord = commentKeyBindings[.toggleComments].first(where: { $0.matches(event) }),
               let window = scrollView?.window, window.windowNumber == number,
               chord.command || chord.control || !(window.firstResponder is NSTextView) else { return false }
         // Only the editor this window shows (a hidden warm tab keeps its own mode).

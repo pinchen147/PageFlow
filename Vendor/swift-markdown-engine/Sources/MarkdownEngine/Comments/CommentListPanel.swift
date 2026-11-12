@@ -193,6 +193,60 @@ final class CommentListPanel: NSView {
     private final class FlippedView: NSView {
         override var isFlipped: Bool { true }
     }
+
+    // MARK: - Coming and going (slides from the trailing edge; Reduce Motion fades)
+
+    private static let transitionDuration: CFTimeInterval = 0.15
+    private var isDismissing = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isDismissing ? nil : super.hitTest(point)
+    }
+
+    /// Slides in from the editor's trailing edge as it fades in, like the
+    /// app's sidebars; with Reduce Motion it only fades.
+    func presentFromTrailingEdge() {
+        guard !CommentPalette.skipsMotion, window != nil, let layer else { return }
+        layer.add(transitionAnimation(appearing: true), forKey: "listTransition")
+    }
+
+    /// Slides back out (or fades, with Reduce Motion), then leaves its superview.
+    func dismiss() {
+        guard !CommentPalette.skipsMotion, window != nil, let layer, !isDismissing else {
+            removeFromSuperview()
+            return
+        }
+        isDismissing = true
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated { self?.removeFromSuperview() }
+        }
+        let animation = transitionAnimation(appearing: false)
+        animation.fillMode = .forwards
+        animation.isRemovedOnCompletion = false
+        layer.add(animation, forKey: "listTransition")
+        CATransaction.commit()
+    }
+
+    private func transitionAnimation(appearing: Bool) -> CAAnimation {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = appearing ? 0 : 1
+        fade.toValue = appearing ? 1 : 0
+        var animations: [CAAnimation] = [fade]
+        if !CommentPalette.reducesMotion {
+            let away = NSValue(caTransform3D: CATransform3DMakeTranslation(bounds.width + 8, 0, 0))
+            let home = NSValue(caTransform3D: CATransform3DIdentity)
+            let slide = CABasicAnimation(keyPath: "transform")
+            slide.fromValue = appearing ? away : home
+            slide.toValue = appearing ? home : away
+            animations.append(slide)
+        }
+        let group = CAAnimationGroup()
+        group.animations = animations
+        group.duration = Self.transitionDuration
+        group.timingFunction = appearing ? CommentPalette.easeOut : CommentPalette.exit
+        return group
+    }
 }
 
 /// Drags the docked list wider or narrower (240–600); double-click resets

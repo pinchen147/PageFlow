@@ -52,7 +52,7 @@ final class RetainedMarkdownEditorSurface {
 
     /// Independent of rail settings: history also uses this active native host token.
     var activePresentation: Int? {
-        guard !isReleased, isDisplayed, isFocused, let owner, owner.surface === self,
+        guard !isReleased, isDisplayed, let owner, owner.surface === self,
               let window = nativeView.window, owner.window === window,
               !nativeView.isHiddenOrHasHiddenAncestor else { return nil }
         return presentationGeneration
@@ -90,7 +90,7 @@ final class RetainedMarkdownEditorSurface {
 
     func update(_ editor: MarkdownEditorView, in container: MarkdownEditorSurfaceContainer) {
         guard !isReleased, owner === container else { return }
-        if isDisplayed != editor.isDisplayed || isFocused != editor.isFocused {
+        if isDisplayed != editor.isDisplayed {
             presentationGeneration &+= 1
             container.navigationRailAdapter?.rail.invalidate()
         }
@@ -145,7 +145,8 @@ final class RetainedMarkdownEditorSurface {
                   container.window === window, self.isDisplayed, self.isFocused,
                   let keyView = self.nativeView.markdownEditorKeyView,
                   keyView.window === window, !keyView.isHiddenOrHasHiddenAncestor,
-                  window.firstResponder !== keyView else { return }
+                  window.firstResponder !== keyView,
+                  self.configuration.editorController?.ownsAnnotationResponder(window.firstResponder) != true else { return }
             window.makeFirstResponder(keyView)
         }
     }
@@ -200,6 +201,28 @@ final class MarkdownEditorSurfaceContainer: NSView {
         return result
     }
 
+    /// The main body, rather than a focused table-cell editor or preview field.
+    var nativeBodyTextView: NSTextView? {
+        guard surface?.owner === self, let document = surface?.nativeView.documentView else { return nil }
+        func find(_ view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            for child in view.subviews { if let text = find(child) { return text } }
+            return nil
+        }
+        return find(document)
+    }
+
+    /// Reserve the true scaled prose extent without laying out or reparsing the note.
+    /// Controls outside the body are reserved independently by nativeControlRects.
+    func nativeProseRect(in destination: NSView) -> NSRect? {
+        guard let text = nativeBodyTextView, text.window === window,
+              !text.isHiddenOrHasHiddenAncestor else { return nil }
+        let leading = destination.convert(text.textContainerOrigin, from: text).x
+        guard leading.isFinite else { return nil }
+        return NSRect(x: leading, y: destination.bounds.minY,
+                      width: max(0, destination.bounds.maxX - leading), height: destination.bounds.height)
+    }
+
     private static func isNativeControl(_ view: NSView) -> Bool {
         view is NSControl || view.accessibilityRole() == .button || view.accessibilityRole() == .disclosureTriangle
     }
@@ -208,7 +231,7 @@ final class MarkdownEditorSurfaceContainer: NSView {
         if let rail = navigationRailAdapter?.rail, rail.eligible {
             let local = rail.convert(point, from: superview)
             if let panel = rail.panel, panel.frame.contains(local) { return rail.hitTest(convert(point, from: superview)) }
-            if local.x >= 0, local.x < 44, local.y >= 0, local.y < rail.bounds.height,
+            if local.x >= 0, local.x < NavigationRailView.laneWidth, local.y >= 0, local.y < rail.bounds.height,
                let native = nativeControl(at: convert(convert(point, from: superview), to: nil)) { return native }
         }
         return super.hitTest(point)
@@ -220,6 +243,7 @@ final class MarkdownEditorSurfaceContainer: NSView {
         // The rail is a sibling of the editor, so both need the document's scheme.
         appearance = editor.forcedAppearanceName.flatMap { NSAppearance(named: $0) }
         let retained: RetainedMarkdownEditorSurface
+        let isNew = content.retainedEditorSurface == nil
         if let existing = content.retainedEditorSurface {
             retained = existing
         } else {
@@ -232,6 +256,7 @@ final class MarkdownEditorSurfaceContainer: NSView {
             surface?.detach(from: self)
             retained.attach(to: self, editor: editor)
         }
+        if isNew { content.searchManager.repaintHighlights() }
     }
 
     override func viewDidMoveToWindow() {

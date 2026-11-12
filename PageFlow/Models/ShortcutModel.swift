@@ -57,6 +57,36 @@ struct ShortcutModel: Codable, Equatable {
 
     var hasModifier: Bool { command || shift || option || control }
 
+    /// Saved spellings stay intact; consumers compare the semantic key.
+    var canonicalKey: String {
+        let aliases = ["↑": "up", "↓": "down", "←": "left", "→": "right",
+                       "⎋": "escape", "esc": "escape", "↩": "return", "enter": "return",
+                       "⇥": "tab", "⌫": "delete", "backspace": "delete", " ": "space",
+                       "⌦": "deleteforward", "forwarddelete": "deleteforward"]
+        let lower = key.lowercased()
+        return aliases[lower] ?? lower
+    }
+
+    func hasSameChord(as other: ShortcutModel) -> Bool {
+        guard let chord = editorChord, let otherChord = other.editorChord else { return false }
+        if chord == otherChord { return true }
+        guard shift, other.shift, command == other.command, option == other.option, control == other.control,
+              canonicalKey.count == 1, other.canonicalKey.count == 1 else { return false }
+        // Older saved values may name the shifted glyph. The matcher accepts
+        // both that glyph and its base key, so collision checks must too. Ask
+        // AppKit for their relationship in the current layout, never an ANSI map.
+        for code in UInt16(0)..<UInt16(128) {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .shift,
+                timestamp: 0, windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: code),
+                let base = event.characters(byApplyingModifiers: [])?.lowercased(),
+                let shifted = event.characters(byApplyingModifiers: [.shift])?.lowercased() else { continue }
+            if (base == canonicalKey && shifted == other.canonicalKey)
+                || (base == other.canonicalKey && shifted == canonicalKey) { return true }
+        }
+        return false
+    }
+
     private static func functionKeyNumber(_ key: String) -> Int? {
         let lower = key.lowercased()
         guard lower.hasPrefix("f"), let number = Int(lower.dropFirst()), (1...12).contains(number) else { return nil }
@@ -67,13 +97,7 @@ struct ShortcutModel: Codable, Equatable {
 
     var displayString: String {
         guard !isNone else { return "None" }
-        var parts: [String] = []
-        if control { parts.append("⌃") }
-        if option { parts.append("⌥") }
-        if shift { parts.append("⇧") }
-        if command { parts.append("⌘") }
-        parts.append(key.uppercased())
-        return parts.joined()
+        return editorChord?.displayString ?? key.uppercased()
     }
 
     // MARK: - SwiftUI KeyboardShortcut
@@ -84,16 +108,17 @@ struct ShortcutModel: Codable, Equatable {
     }
 
     private var keyEquivalent: KeyEquivalent? {
-        switch key.lowercased() {
-        case "↑", "up": return .upArrow
-        case "↓", "down": return .downArrow
-        case "←", "left": return .leftArrow
-        case "→", "right": return .rightArrow
-        case "⎋", "escape", "esc": return .escape
-        case "↩", "return", "enter": return .return
-        case "⇥", "tab": return .tab
-        case "⌫", "delete", "backspace": return .delete
-        case " ", "space": return .space
+        switch canonicalKey {
+        case "up": return .upArrow
+        case "down": return .downArrow
+        case "left": return .leftArrow
+        case "right": return .rightArrow
+        case "escape": return .escape
+        case "return": return .return
+        case "tab": return .tab
+        case "delete": return .delete
+        case "deleteforward": return .deleteForward
+        case "space": return .space
         case "home": return .home
         case "end": return .end
         case "pageup": return .pageUp
@@ -102,19 +127,15 @@ struct ShortcutModel: Codable, Equatable {
             if let number = Self.functionKeyNumber(key), let scalar = UnicodeScalar(NSF1FunctionKey + number - 1) {
                 return KeyEquivalent(Character(scalar))
             }
-            guard let char = key.lowercased().first else { return nil }
+            guard canonicalKey.count == 1, let char = canonicalKey.first else { return nil }
             return KeyEquivalent(char)
         }
     }
 
     /// The same chord for the Markdown editor's own key handling.
     var editorChord: MarkdownKeyChord? {
-        guard !isNone else { return nil }
-        let named: [String: String] = ["↑": "up", "↓": "down", "←": "left", "→": "right", "⎋": "escape", "esc": "escape",
-                                       "↩": "return", "enter": "return", "⇥": "tab", "⌫": "delete", "backspace": "delete",
-                                       " ": "space"]
-        let lower = key.lowercased()
-        return MarkdownKeyChord(named[lower] ?? lower, command: command, shift: shift, option: option, control: control)
+        guard keyEquivalent != nil else { return nil }
+        return MarkdownKeyChord(canonicalKey, command: command, shift: shift, option: option, control: control)
     }
 
     private var modifiers: SwiftUI.EventModifiers {
@@ -138,12 +159,11 @@ struct ShortcutModel: Codable, Equatable {
     }
 
     var nsKeyEquivalent: String {
-        switch key.lowercased() {
-        case "↑", "up": return String(Character(UnicodeScalar(NSUpArrowFunctionKey)!))
-        case "↓", "down": return String(Character(UnicodeScalar(NSDownArrowFunctionKey)!))
-        case "←", "left": return String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!))
-        case "→", "right": return String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
-        default: return key.lowercased()
+        switch canonicalKey {
+        // NSMenu documents different Delete characters from NSEvent/SwiftUI.
+        case "delete": return "\u{08}"
+        case "deleteforward": return "\u{7F}"
+        default: return keyEquivalent.map { String($0.character) } ?? ""
         }
     }
 
@@ -152,7 +172,21 @@ struct ShortcutModel: Codable, Equatable {
     /// The active binding for `action`: the user's override, else the factory
     /// default from `ShortcutCatalog`, else an empty (no-op) shortcut.
     static func current(for action: String) -> ShortcutModel {
-        SettingsManager.shared.customShortcuts[action] ?? ShortcutCatalog.defaults[action] ?? ShortcutModel(key: "")
+        ShortcutCatalog.shortcut(for: action, saved: SettingsManager.shared.customShortcuts)
+    }
+
+    static func currentForMarkdown(for action: String) -> ShortcutModel {
+        let canonical = ShortcutCatalog.canonicalID(for: action)
+        return current(for: ShortcutCatalog.legacyMarkdownIDs[canonical] ?? canonical)
+    }
+
+    static func commentsPanelMenuShortcut(isMarkdown: Bool) -> ShortcutModel? {
+        guard isMarkdown, let shortcut = SettingsManager.shared.customShortcuts["markdownToggleComments"] else {
+            return current(for: "toggleComments")
+        }
+        // The editor already routes non-command/control keys outside text.
+        // Registering them in the View menu would also intercept typing.
+        return shortcut.command || shortcut.control ? shortcut : nil
     }
 
     /// Returns KeyEquivalent and modifiers tuple for use with .keyboardShortcut()
@@ -165,45 +199,8 @@ struct ShortcutModel: Codable, Equatable {
 
     /// Checks if the given NSEvent matches this shortcut
     func matches(event: NSEvent) -> Bool {
-        let flags = event.modifierFlags
-        guard command == flags.contains(.command),
-              shift == flags.contains(.shift),
-              option == flags.contains(.option),
-              control == flags.contains(.control) else {
-            return false
-        }
-
-        // Check key match via keyCode or character
-        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
-            return false
-        }
-
-        let normalizedKey = key.lowercased()
-        if normalizedKey == characters { return true }
-
-        // Handle special keys by keyCode
-        switch event.keyCode {
-        case UInt16(kVK_Delete) where normalizedKey == "⌫" || normalizedKey == "delete" || normalizedKey == "backspace":
-            return true
-        case UInt16(kVK_UpArrow) where normalizedKey == "↑" || normalizedKey == "up":
-            return true
-        case UInt16(kVK_DownArrow) where normalizedKey == "↓" || normalizedKey == "down":
-            return true
-        case UInt16(kVK_LeftArrow) where normalizedKey == "←" || normalizedKey == "left":
-            return true
-        case UInt16(kVK_RightArrow) where normalizedKey == "→" || normalizedKey == "right":
-            return true
-        case UInt16(kVK_Return) where normalizedKey == "↩" || normalizedKey == "return" || normalizedKey == "enter":
-            return true
-        case UInt16(kVK_Tab) where normalizedKey == "⇥" || normalizedKey == "tab":
-            return true
-        case UInt16(kVK_Space) where normalizedKey == " " || normalizedKey == "space":
-            return true
-        case UInt16(kVK_Escape) where normalizedKey == "⎋" || normalizedKey == "escape" || normalizedKey == "esc":
-            return true
-        default:
-            return false
-        }
+        guard event.type == .keyDown else { return false }
+        return editorChord?.matches(event) == true
     }
 
     // MARK: - Create from NSEvent
@@ -214,11 +211,7 @@ struct ShortcutModel: Codable, Equatable {
     ]
 
     static func from(event: NSEvent) -> ShortcutModel? {
-        // The key's own character, as it types with no modifiers: ⇧⌘8 is "8"
-        // with Shift (charactersIgnoringModifiers would say "*").
-        guard let characters = (event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers)?.lowercased(),
-              !characters.isEmpty else { return nil }
-
+        guard event.type == .keyDown else { return nil }
         let flags = event.modifierFlags
         let hasModifier = flags.contains(.command) || flags.contains(.option) ||
                           flags.contains(.control) || flags.contains(.shift)
@@ -233,17 +226,22 @@ struct ShortcutModel: Codable, Equatable {
         case UInt16(kVK_DownArrow): key = "↓"
         case UInt16(kVK_LeftArrow): key = "←"
         case UInt16(kVK_RightArrow): key = "→"
-        case UInt16(kVK_Return): key = "↩"
+        case UInt16(kVK_Return), UInt16(kVK_ANSI_KeypadEnter): key = "↩"
         case UInt16(kVK_Tab): key = "⇥"
         case UInt16(kVK_Delete): key = "⌫"
+        case UInt16(kVK_ForwardDelete): key = "⌦"
+        case UInt16(kVK_Home): key = "Home"
+        case UInt16(kVK_End): key = "End"
+        case UInt16(kVK_PageUp): key = "PageUp"
+        case UInt16(kVK_PageDown): key = "PageDown"
         case UInt16(kVK_Space): key = "Space"
         case UInt16(kVK_Escape): key = "⎋"
-        // Bracket keys carry their unshifted glyph by keyCode: with Shift held,
-        // `charactersIgnoringModifiers` returns "{"/"}", so a recorded ⇧⌘[ would
-        // otherwise persist the wrong key.
-        case UInt16(kVK_ANSI_LeftBracket): key = "["
-        case UInt16(kVK_ANSI_RightBracket): key = "]"
-        default: key = characters
+        default:
+            // AppKit re-translates keyCode using the current input source. ANSI
+            // positions must not override what another layout actually types.
+            guard let characters = (event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers)?.lowercased(),
+                  characters.count == 1 else { return nil }
+            key = characters
         }
 
         return ShortcutModel(

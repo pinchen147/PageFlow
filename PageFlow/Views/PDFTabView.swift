@@ -25,8 +25,9 @@ struct PDFTabView: View {
     @Bindable var tabManager: TabManager
     var onRequestFocus: () -> Void = {}
 
-    @State private var isHoveringPageIndicator = false
     @State private var settingsManager = SettingsManager.shared
+    /// The Find bar's width while it shows; the page chip stays clear of it.
+    @State private var findBarWidth: CGFloat = 0
 
     private var showingGoToPage: Bool {
         get { tabManager.showingGoToPage(for: tabID) }
@@ -69,10 +70,6 @@ struct PDFTabView: View {
         TopChromeView.height(toolbarScale: settingsManager.toolbarScale)
     }
 
-    private var isPageIndicatorVisible: Bool {
-        settingsManager.isPageIndicatorAlwaysVisible || isHoveringPageIndicator
-    }
-
     var body: some View {
         ZStack {
             if pdfManager.hasDocument {
@@ -85,6 +82,7 @@ struct PDFTabView: View {
                     tabUndoManager: tabUndoManager,
                     isActive: isActive,
                     isDisplayed: isDisplayed,
+                    takesKeyboard: FindOverlay.documentTakesKeyboard(isShown: isActive && isDisplayed, findIsOpen: showingSearch),
                     onRequestFocus: onRequestFocus
                 )
             } else {
@@ -95,8 +93,10 @@ struct PDFTabView: View {
         .overlay {
             if isActive, isDisplayed {
                 PDFNavigationRail(pdfManager: pdfManager, bookmarkManager: bookmarkManager,
-                    eligible: settingsManager.showNavigationRail && !showingOutline && !pdfManager.suppressesNavigationRail,
-                    topInset: topChromeHeight, onShowSidebar: { showingOutline = true })
+                    eligible: settingsManager.showNavigationRail && !showingOutline && !pdfManager.suppressesNavigationRail
+                        && pdfManager.navigationRailFitsViewport,
+                    topInset: topChromeHeight, onShowSidebar: { showingOutline = true },
+                    pageRects: pdfManager.navigationRailPageRects)
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -117,7 +117,8 @@ struct PDFTabView: View {
                 driver: pdfFindDriver,
                 isActive: isActive,
                 showingSearch: $showingSearch,
-                focusRequest: searchFocusRequest
+                focusRequest: searchFocusRequest,
+                onBarWidthChange: { findBarWidth = $0 }
             )
         }
         .pageFlowFileDropTarget(tabManager: tabManager)
@@ -160,7 +161,7 @@ struct PDFTabView: View {
                 .padding(.top, topChromeHeight + DesignTokens.spacingXS)
                 .padding(.bottom, DesignTokens.spacingMD)
                 .padding(.trailing, DesignTokens.spacingXS)
-                .transition(.move(edge: .trailing).combined(with: .opacity))
+                .pageFlowPanelTransition(edge: .trailing)
             }
         }
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingComments)
@@ -176,6 +177,10 @@ struct PDFTabView: View {
                     pdfManager: pdfManager,
                     bookmarkManager: bookmarkManager,
                     isEditingPages: isEditingPagesBinding,
+                    mode: Binding(
+                        get: { tabManager.pdfSidebarMode(for: tabID) },
+                        set: { tabManager.setPDFSidebarMode($0, for: tabID) }
+                    ),
                     items: pdfManager.outlineItems(),
                     onClose: { showingOutline = false }
                 )
@@ -186,7 +191,7 @@ struct PDFTabView: View {
                 .padding(.top, topChromeHeight + DesignTokens.spacingXS)
                 .padding(.bottom, DesignTokens.spacingMD)
                 .padding(.leading, DesignTokens.spacingXS)
-                .transition(.move(edge: .leading).combined(with: .opacity))
+                .pageFlowPanelTransition(edge: .leading)
             }
         }
         .animation(.easeInOut(duration: DesignTokens.animationFast), value: showingOutline)
@@ -235,44 +240,26 @@ struct PDFTabView: View {
                 .pageFlowLiquidGlassPanel(.primaryButton)
             }
 
-            Text("or drag and drop a PDF or Markdown file here")
+            Text("or drag and drop a PDF, EPUB or Markdown file here")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: - Page Indicator
 
-    private var pageIndicator: some View {
-        Button {
-            showingGoToPage = true
-        } label: {
-            Text("Page \(pdfManager.currentPageIndex + 1) of \(pdfManager.pageCount)")
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundStyle(.primary)
-                .padding(.horizontal, DesignTokens.spacingSM + 2)
-                .padding(.vertical, DesignTokens.spacingSM)
-                .pageFlowLiquidGlassSurface(.pageIndicator)
-        }
-        .buttonStyle(.plain)
-        .pageFlowClickCursor()
-        .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 10, y: -3)
-        .padding(.bottom, DesignTokens.spacingXS)
-        .padding(.trailing, DesignTokens.spacingMD)
-    }
-
     private var bottomPageBar: some View {
-        HStack {
-            Spacer()
-            if isPageIndicatorVisible {
-                pageIndicator
-            }
+        DocumentStatusBar(
+            label: "Page \(pdfManager.currentPageIndex + 1) of \(pdfManager.pageCount)",
+            shorterLabels: ["\(pdfManager.currentPageIndex + 1) / \(pdfManager.pageCount)"],
+            centerReservation: FindOverlay.chipReservation(barWidth: findBarWidth),
+            help: "Go to page",
+            height: topChromeHeight
+        ) {
+            showingGoToPage = true
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: topChromeHeight)
-        .overlay(ChromeHoverSensor(isHovered: $isHoveringPageIndicator))
     }
 
     // MARK: - Go To Page Dialog
@@ -285,7 +272,7 @@ struct PDFTabView: View {
                 guard page > 0, page <= pdfManager.pageCount else {
                     return "Page must be between 1 and \(pdfManager.pageCount)."
                 }
-                pdfManager.goToPage(page - 1)
+                pdfManager.jump(toPage: page - 1)
                 return nil
             },
             isPresented: showingGoToPageBinding

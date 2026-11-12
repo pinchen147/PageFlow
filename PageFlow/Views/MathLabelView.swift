@@ -13,6 +13,7 @@ struct MathLabelView: NSViewRepresentable {
     let fontSize: CGFloat
     let mode: MTMathUILabelMode
     let maxWidth: CGFloat
+    var textColor: NSColor? = nil
     var onError: ((Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
@@ -48,7 +49,7 @@ struct MathLabelView: NSViewRepresentable {
             invalidatesIntrinsicSize = true
         }
 
-        let textColor = DesignTokens.commentTextNSColor.withAlphaComponent(DesignTokens.commentTextOpacity)
+        let textColor = (self.textColor ?? DesignTokens.commentTextNSColor).withAlphaComponent(DesignTokens.commentTextOpacity)
         if view.textColor != textColor {
             view.textColor = textColor
         }

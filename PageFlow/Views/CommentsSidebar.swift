@@ -2,7 +2,7 @@
 //  CommentsSidebar.swift
 //  PageFlow
 //
-//  Right sidebar displaying comments as speech bubbles.
+//  Right sidebar displaying PDF comment cards.
 //
 
 import SwiftUI
@@ -29,50 +29,54 @@ struct CommentsSidebar: View {
                 .font(.headline)
                 .foregroundStyle(.primary)
             Spacer()
-            sidebarCloseButton
+            GlassSidebarCloseButton(label: "Close Comments", action: onClose)
         }
         .padding(.leading, DesignTokens.spacingMD)
         .padding(.trailing, DesignTokens.spacingSM)
         .padding(.top, DesignTokens.spacingSM)
     }
 
-    private var sidebarCloseButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.secondary)
-                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-        }
-        .buttonStyle(.plain)
-        .pageFlowClickCursor()
-        .contentShape(Rectangle())
-    }
-
     // MARK: - Comments List
 
     private var commentsList: some View {
-        ScrollView {
-            LazyVStack(spacing: DesignTokens.spacingSM) {
-                if commentManager.comments.isEmpty {
-                    emptyState
-                } else {
-                    ForEach(commentManager.sortedComments) { comment in
-                        CommentBubbleView(
-                            comment: comment,
-                            isSelected: commentManager.selectedCommentID == comment.id,
-                            isEditing: commentManager.editingCommentID == comment.id,
-                            canEdit: commentManager.canEdit,
-                            onSelect: { commentManager.selectComment(comment.id) },
-                            onStartEditing: { commentManager.startEditing(comment.id) },
-                            onTextChange: { commentManager.updateComment(comment.id, text: $0) },
-                            onStopEditing: { commentManager.stopEditing() },
-                            onDelete: { commentManager.deleteComment(comment.id) }
-                        )
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: DesignTokens.spacingSM) {
+                    if commentManager.comments.isEmpty {
+                        emptyState
+                    } else {
+                        ForEach(commentManager.sortedComments) { comment in
+                            CommentBubbleView(
+                                comment: comment,
+                                presentation: commentManager.presentation(for: comment.id),
+                                annotationOwner: commentManager,
+                                isSelected: commentManager.selectedCommentID == comment.id,
+                                isEditing: commentManager.editingCommentID == comment.id,
+                                focusRevision: commentManager.editingRevision,
+                                canEdit: commentManager.canEdit,
+                                onSelect: { commentManager.selectComment(comment.id) },
+                                onStartEditing: { commentManager.startEditing(comment.id) },
+                                onTextChange: { commentManager.updateComment(comment.id, text: $0) },
+                                onColorChange: { commentManager.updateCommentColor(comment.id, color: $0) },
+                                onStopEditing: { commentManager.stopEditing() },
+                                onDelete: { commentManager.deleteComment(comment.id) }
+                            )
+                            .id(comment.id)
+                        }
                     }
                 }
+                .padding(.horizontal, DesignTokens.spacingSM)
+                .padding(.bottom, DesignTokens.spacingMD)
             }
-            .padding(.horizontal, DesignTokens.spacingSM)
-            .padding(.bottom, DesignTokens.spacingMD)
+            .scrollContentBackground(.hidden)
+            .onChange(of: commentManager.selectedCommentID, initial: true) { _, id in
+                guard let id else { return }
+                withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { proxy.scrollTo(id, anchor: .top) }
+            }
+            .onChange(of: commentManager.editingRevision, initial: true) {
+                guard let id = commentManager.editingCommentID else { return }
+                withAnimation(.easeInOut(duration: DesignTokens.animationFast)) { proxy.scrollTo(id, anchor: .top) }
+            }
         }
     }
 
@@ -84,7 +88,7 @@ struct CommentsSidebar: View {
             Text("No comments yet")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("Select text and press ⌘E")
+            Text(addCommentHint)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -92,198 +96,76 @@ struct CommentsSidebar: View {
         .padding(.vertical, DesignTokens.spacingXL)
     }
 
+    /// Names the Add Comment shortcut as the user has it bound, not the default.
+    private var addCommentHint: String {
+        let shortcut = ShortcutModel.current(for: "comment")
+        return shortcut.isNone ? "Select text and choose Tools > Add Comment"
+            : "Select text and press \(shortcut.displayString)"
+    }
+
 }
 
-// MARK: - Comment Bubble
+// MARK: - PDF Comment Card
 
 struct CommentBubbleView: View {
     let comment: CommentModel
+    let presentation: CommentManager.Presentation?
+    var annotationOwner: AnyObject? = nil
     let isSelected: Bool
     let isEditing: Bool
-    /// False for a document that forbids commenting: the comment is read-only.
+    let focusRevision: Int
     let canEdit: Bool
     let onSelect: () -> Void
     let onStartEditing: () -> Void
     let onTextChange: (String) -> Void
+    let onColorChange: (NSColor) -> Void
     let onStopEditing: () -> Void
     let onDelete: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
-    @State private var editText: String = ""
-    @FocusState private var isFocused: Bool
-    @State private var editorHeight: CGFloat = 20
-    @State private var isViewActive: Bool = true
+    private func resolved(_ color: NSColor) -> NSColor {
+        let appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua)
+        var result = color
+        appearance?.performAsCurrentDrawingAppearance { result = color.usingColorSpace(.sRGB) ?? color }
+        return result
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
-            pageLabel
-            bubbleContent
-        }
-        .onAppear {
-            isViewActive = true
-            editText = comment.text
-        }
-        .onDisappear {
-            isViewActive = false
-        }
-        .onChange(of: isEditing) { _, editing in
-            guard isViewActive else { return }
-            if editing {
-                editText = comment.text
-                isFocused = true
-            }
-        }
-    }
-
-    private var pageLabel: some View {
-        Button(action: onSelect) {
-            Text("Page \(comment.pageIndex + 1)")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, DesignTokens.spacingXS)
-                .padding(.vertical, 2)
-        }
-        .buttonStyle(.plain)
-        .pageFlowClickCursor()
-        .padding(.leading, DesignTokens.commentTailSize + DesignTokens.spacingXS)
-        .contentShape(Rectangle())
-    }
-
-    private var bubbleContent: some View {
-        HStack(alignment: .top, spacing: 0) {
-            bubbleTail
-            bubbleBody
-        }
-    }
-
-    private var bubbleTail: some View {
-        BubbleTail()
-            .fill(DesignTokens.commentCardBackground)
-            .frame(width: DesignTokens.commentTailSize, height: DesignTokens.commentTailSize * 2)
-            .padding(.top, DesignTokens.spacingSM)
-    }
-
-    private var bubbleBody: some View {
-        ZStack(alignment: .topTrailing) {
-            HStack(alignment: .center, spacing: DesignTokens.spacingSM) {
-                contentArea
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Spacer(minLength: DesignTokens.spacingXS)
-            }
-            .padding(.horizontal, DesignTokens.spacingSM)
-            .padding(.vertical, DesignTokens.spacingXS)
-            .frame(minHeight: DesignTokens.tabHeight)
-            .background(bubbleBackground)
-            .environment(\.colorScheme, .light)
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius))
-            .shadow(color: .black.opacity(DesignTokens.commentBubbleShadowOpacity), radius: DesignTokens.commentBubbleShadowRadius, y: 2)
-            .contentShape(Rectangle())
-            // Single click jumps to the comment on its page; double click edits.
-            // Uses AppKit click recognizers (single requires double to fail) instead of
-            // SwiftUI TapGesture(count:)/.exclusively, which composed unreliably here —
-            // a double-click registered as separate single clicks, so editing needed a
-            // third click. Absent while editing so clicks reach the text editor.
-            .background {
-                if !isEditing {
-                    ClickCatcher(onSingleClick: onSelect, onDoubleClick: onStartEditing)
-                }
-            }
-            .pageFlowClickCursor(when: !isEditing)
-            .contextMenu { contextMenuItems }
-
-            bubbleCloseButton
-                .padding(.top, DesignTokens.spacingXS)
-                .padding(.trailing, DesignTokens.spacingXS)
-        }
-    }
-
-    @ViewBuilder
-    private var contentArea: some View {
-        if isEditing {
-            editableText
-        } else {
-            displayText
-        }
-    }
-
-    private var bubbleCloseButton: some View {
-        Button(action: onDelete) {
-            Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.secondary)
-                .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-        }
-        .buttonStyle(.plain)
-        .pageFlowClickCursor()
-        .environment(\.colorScheme, .light)
-        .disabled(!canEdit)
-    }
-
-        private var editableText: some View {
-            ZStack(alignment: .leading) {
-                if editText.isEmpty {
-                    Text("Add a comment...")
-                        .font(.system(size: DesignTokens.commentFontSize))
-                        .foregroundStyle(.tertiary)
-                        .italic()
-                        .allowsHitTesting(false)
-                }
-
-                CustomTextEditor(
-                    text: $editText,
-                    isFocused: _isFocused,
-                    calculatedHeight: $editorHeight,
-                    onCommit: { [onStopEditing] in
-                        onStopEditing()
+        let ink = resolved(.textColor)
+        AnnotationNoteCard(
+            pageLabel: "Page \(comment.pageIndex + 1)",
+            accessibilityLabel: "Comment on page \(comment.pageIndex + 1)", deleteLabel: "Delete Comment",
+            excerpt: presentation?.excerpt, annotationColor: presentation?.color ?? DesignTokens.commentHighlightColor,
+            surface: resolved(.textBackgroundColor), ink: ink, colorScheme: colorScheme,
+            isSelected: isSelected, isEditing: isEditing, canEdit: canEdit,
+            onSelect: onSelect, onEdit: onStartEditing, onDelete: onDelete
+        ) {
+            if isEditing && canEdit {
+                VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
+                    HStack(spacing: DesignTokens.spacingSM) {
+                        AnnotationNoteColors(color: Binding(
+                            get: { presentation?.color ?? DesignTokens.commentHighlightColor },
+                            set: onColorChange), presets: SettingsManager.shared.commentPresets)
+                        Spacer()
                     }
-                )
-                .frame(minHeight: editorHeight, alignment: .topLeading)
-            }
-            .padding(.vertical, 2)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .onChange(of: editText) { _, newValue in
-                guard isViewActive else { return }
-                onTextChange(newValue)
+                    AnnotationNoteTextEditor(text: Binding(get: { comment.text }, set: onTextChange),
+                        placeholder: "Add a comment...", accessibilityLabel: "Comment",
+                        annotationOwner: annotationOwner, textColor: ink, colorScheme: colorScheme,
+                        focusRevision: focusRevision, onDone: onStopEditing)
+                }
+            } else if comment.text.isEmpty {
+                Text("Add a comment...")
+                    .font(.system(size: DesignTokens.commentFontSize))
+                    .foregroundStyle(.tertiary)
+                    .italic()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                MathTextView(text: comment.text, textColor: ink)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-
-        private var displayText: some View {
-            Group {
-                if comment.text.isEmpty {
-                    Text("Add a comment...")
-                        .font(.system(size: DesignTokens.commentFontSize))
-                        .foregroundStyle(.tertiary)
-                        .italic()
-                } else {
-                    MathTextView(text: comment.text)
-                }
-            }
-            .lineLimit(nil)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 2)
-    }
-
-    private var bubbleBackground: some View {
-        RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
-            .fill(DesignTokens.commentCardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.tabCornerRadius, style: .continuous)
-                    .strokeBorder(
-                        isSelected ? DesignTokens.commentCardStrokeSelected : DesignTokens.commentCardStroke,
-                        lineWidth: isSelected ? 1.5 : 1
-                    )
-            )
-    }
-
-    @ViewBuilder
-    private var contextMenuItems: some View {
-        Button("Edit") { onStartEditing() }
-            .disabled(!canEdit)
-        Button("Go to Page") { onSelect() }
-        Divider()
-        Button("Delete", role: .destructive) { onDelete() }
-            .disabled(!canEdit)
     }
 }
 
@@ -297,7 +179,7 @@ struct CommentBubbleView: View {
 /// (non-interactive) text content's clicks fall through to it while the close button
 /// and context menu layered in front keep working; it's omitted while editing so the
 /// text editor receives clicks directly.
-private struct ClickCatcher: NSViewRepresentable {
+struct ClickCatcher: NSViewRepresentable {
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
 
@@ -342,18 +224,5 @@ private struct ClickCatcher: NSViewRepresentable {
                   let other = other as? NSClickGestureRecognizer else { return false }
             return recognizer.numberOfClicksRequired == 1 && other.numberOfClicksRequired == 2
         }
-    }
-}
-
-// MARK: - Bubble Tail Shape
-
-struct BubbleTail: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.closeSubpath()
-        return path
     }
 }

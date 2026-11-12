@@ -2,162 +2,98 @@
 //  AnnotationsSettingsTab.swift
 //  PageFlow
 //
-//  Settings tab for customizing highlight and underline colors
+//  Settings pane for customizing highlight, underline and comment colors
 //
 
 import SwiftUI
 import AppKit
 
 struct AnnotationsSettingsTab: View {
+    private typealias Presets = ReferenceWritableKeyPath<SettingsManager, [SettingsManager.ColorPreset]>
+
     private var settings: SettingsManager { SettingsManager.shared }
 
     var body: some View {
         Form {
-            Section {
-                ForEach(settings.highlightPresets) { preset in
-                    PresetRow(
-                        name: Binding(
-                            get: {
-                                SettingsManager.shared.highlightPresets.first { $0.id == preset.id }?.name ?? ""
-                            },
-                            set: { newValue in
-                                guard let index = SettingsManager.shared.highlightPresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                                SettingsManager.shared.highlightPresets[index].name = newValue
-                            }
-                        ),
-                        color: Binding(
-                            get: {
-                                SettingsManager.shared.highlightPresets.first { $0.id == preset.id }?.color ?? .yellow
-                            },
-                            set: { newValue in
-                                guard let index = SettingsManager.shared.highlightPresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                                var updated = SettingsManager.shared.highlightPresets[index]
-                                updated.color = newValue
-                                SettingsManager.shared.highlightPresets[index] = updated
-                            }
-                        ),
-                        canDelete: settings.highlightPresets.count > 1,
-                        onDelete: {
-                            guard let index = SettingsManager.shared.highlightPresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                            SettingsManager.shared.removeHighlightPreset(at: index)
-                        }
-                    )
-                }
-            } header: {
-                HStack {
-                    Text("Highlight Colors")
-                    Spacer()
-                    Button(action: { SettingsManager.shared.addHighlightPreset() }) {
-                        Image(systemName: "plus")
-                            .frame(width: 20, height: 20)
-                            .pageFlowLiquidGlassSurface(.settingsRow)
-                    }
-                    .buttonStyle(.plain)
-                    .pageFlowClickCursor()
-                }
-            }
+            presetSection(
+                "Highlight Colors", \.highlightPresets, fallback: .yellow,
+                add: { $0.addHighlightPreset() }, remove: { $0.removeHighlightPreset(at: $1) }
+            )
+            presetSection(
+                "Underline Colors", \.underlinePresets, fallback: .black,
+                add: { $0.addUnderlinePreset() }, remove: { $0.removeUnderlinePreset(at: $1) }
+            )
+            presetSection(
+                "Comment Colors", \.commentPresets, fallback: .gray,
+                add: { $0.addCommentPreset() }, remove: { $0.removeCommentPreset(at: $1) }
+            )
 
             Section {
-                ForEach(settings.underlinePresets) { preset in
-                    PresetRow(
-                        name: Binding(
-                            get: {
-                                SettingsManager.shared.underlinePresets.first { $0.id == preset.id }?.name ?? ""
-                            },
-                            set: { newValue in
-                                guard let index = SettingsManager.shared.underlinePresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                                SettingsManager.shared.underlinePresets[index].name = newValue
-                            }
-                        ),
-                        color: Binding(
-                            get: {
-                                SettingsManager.shared.underlinePresets.first { $0.id == preset.id }?.color ?? .black
-                            },
-                            set: { newValue in
-                                guard let index = SettingsManager.shared.underlinePresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                                var updated = SettingsManager.shared.underlinePresets[index]
-                                updated.color = newValue
-                                SettingsManager.shared.underlinePresets[index] = updated
-                            }
-                        ),
-                        canDelete: settings.underlinePresets.count > 1,
-                        onDelete: {
-                            guard let index = SettingsManager.shared.underlinePresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                            SettingsManager.shared.removeUnderlinePreset(at: index)
-                        }
-                    )
+                Button("Reset Colors to Defaults") {
+                    settings.resetColors()
                 }
-            } header: {
-                HStack {
-                    Text("Underline Colors")
-                    Spacer()
-                    Button(action: { SettingsManager.shared.addUnderlinePreset() }) {
-                        Image(systemName: "plus")
-                            .frame(width: 20, height: 20)
-                            .pageFlowLiquidGlassSurface(.settingsRow)
-                    }
-                    .buttonStyle(.plain)
-                    .pageFlowClickCursor()
-                }
-            }
-
-            Section {
-                ForEach(settings.commentPresets) { preset in
-                    PresetRow(
-                        name: Binding(
-                            get: {
-                                SettingsManager.shared.commentPresets.first { $0.id == preset.id }?.name ?? ""
-                            },
-                            set: { newValue in
-                                guard let index = SettingsManager.shared.commentPresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                                SettingsManager.shared.commentPresets[index].name = newValue
-                            }
-                        ),
-                        color: Binding(
-                            get: {
-                                SettingsManager.shared.commentPresets.first { $0.id == preset.id }?.color ?? .gray
-                            },
-                            set: { newValue in
-                                guard let index = SettingsManager.shared.commentPresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                                var updated = SettingsManager.shared.commentPresets[index]
-                                updated.color = newValue
-                                SettingsManager.shared.commentPresets[index] = updated
-                            }
-                        ),
-                        canDelete: settings.commentPresets.count > 1,
-                        onDelete: {
-                            guard let index = SettingsManager.shared.commentPresets.firstIndex(where: { $0.id == preset.id }) else { return }
-                            SettingsManager.shared.removeCommentPreset(at: index)
-                        }
-                    )
-                }
-            } header: {
-                HStack {
-                    Text("Comment Colors")
-                    Spacer()
-                    Button(action: { SettingsManager.shared.addCommentPreset() }) {
-                        Image(systemName: "plus")
-                            .frame(width: 20, height: 20)
-                            .pageFlowLiquidGlassSurface(.settingsRow)
-                    }
-                    .buttonStyle(.plain)
-                    .pageFlowClickCursor()
-                }
-            }
-
-            Section {
-                Button("Reset to Defaults") {
-                    SettingsManager.shared.resetColors()
-                }
-                .buttonStyle(.plain)
-                .pageFlowClickCursor()
-                .padding(.horizontal, DesignTokens.spacingMD)
-                .padding(.vertical, DesignTokens.spacingXS)
-                .pageFlowLiquidGlassSurface(.settingsRow)
             }
         }
         .formStyle(.grouped)
-        .padding()
+        .scrollContentBackground(.hidden)
+    }
+
+    private func presetSection(
+        _ title: String,
+        _ presets: Presets,
+        fallback: NSColor,
+        add: @escaping (SettingsManager) -> Void,
+        remove: @escaping (SettingsManager, Int) -> Void
+    ) -> some View {
+        Section {
+            ForEach(settings[keyPath: presets]) { preset in
+                PresetRow(
+                    name: nameBinding(of: preset.id, in: presets),
+                    color: colorBinding(of: preset.id, in: presets, fallback: fallback),
+                    canDelete: settings[keyPath: presets].count > 1,
+                    onDelete: {
+                        guard let index = settings[keyPath: presets].firstIndex(where: { $0.id == preset.id }) else { return }
+                        remove(settings, index)
+                    }
+                )
+            }
+        } header: {
+            HStack {
+                Text(title)
+                Spacer()
+                Button {
+                    add(settings)
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Add to \(title)")
+            }
+        }
+    }
+
+    private func nameBinding(of id: SettingsManager.ColorPreset.ID, in presets: Presets) -> Binding<String> {
+        let settings = settings
+        return Binding(
+            get: { settings[keyPath: presets].first { $0.id == id }?.name ?? "" },
+            set: { newValue in
+                guard let index = settings[keyPath: presets].firstIndex(where: { $0.id == id }) else { return }
+                settings[keyPath: presets][index].name = newValue
+            }
+        )
+    }
+
+    private func colorBinding(of id: SettingsManager.ColorPreset.ID, in presets: Presets, fallback: NSColor) -> Binding<NSColor> {
+        let settings = settings
+        return Binding(
+            get: { settings[keyPath: presets].first { $0.id == id }?.color ?? fallback },
+            set: { newValue in
+                guard let index = settings[keyPath: presets].firstIndex(where: { $0.id == id }) else { return }
+                var updated = settings[keyPath: presets][index]
+                updated.color = newValue
+                settings[keyPath: presets][index] = updated
+            }
+        )
     }
 }
 
@@ -169,8 +105,9 @@ struct PresetRow: View {
 
     var body: some View {
         HStack(spacing: DesignTokens.spacingSM) {
-            TextField("", text: $name)
+            TextField("Name", text: $name)
                 .textFieldStyle(.plain)
+                .labelsHidden()
 
             Spacer()
 
@@ -181,11 +118,9 @@ struct PresetRow: View {
                 Button(action: onDelete) {
                     Image(systemName: "minus.circle")
                         .foregroundStyle(.red)
-                        .frame(width: 20, height: 20)
-                        .pageFlowLiquidGlassSurface(.settingsRow.with(strokeOpacity: 0.12))
                 }
-                .buttonStyle(.plain)
-                .pageFlowClickCursor()
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Remove \(name)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

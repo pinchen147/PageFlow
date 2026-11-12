@@ -58,8 +58,12 @@ struct TextStylingService {
         text: String? = nil,
         configuration: MarkdownEditorConfiguration = .default
     ) {
+        let text = text ?? textView.string
         var paragraphs: [NSRange] = []
-        PerfTrace.time("svc.normalize") { paragraphs = normalize(paragraphCandidates) }
+        PerfTrace.time("svc.normalize") {
+            let source = textView.textStorage?.mutableString ?? (text as NSString)
+            paragraphs = normalize(paragraphCandidates + imageSeparatorNeighbours(of: paragraphCandidates, in: source))
+        }
 
         PerfTrace.time("svc.typingAttrs") {
         textView.typingAttributes = makeBaseTypingAttributes(
@@ -74,7 +78,6 @@ struct TextStylingService {
             return
         }
 
-        let text = text ?? textView.string
         var styledRanges: [StyledRange] = []
         PerfTrace.time("svc.compute") {
         styledRanges = MarkdownStyler.styleAttributes(
@@ -88,6 +91,11 @@ struct TextStylingService {
             precomputedTokens: precomputedTokens,
             scopedRanges: paragraphs,
             configuration: configuration
+        )
+        styledRanges = MarkdownAlignmentStyling.applying(
+            to: styledRanges, text: text, base: paragraphStyle,
+            hiddenFont: NSFont(name: baseFont.fontName, size: configuration.markers.hiddenMarkerFontSize)
+                ?? .systemFont(ofSize: configuration.markers.hiddenMarkerFontSize)
         )
         }
 
@@ -239,6 +247,29 @@ struct TextStylingService {
             ))
         }
         return parts
+    }
+
+    /// An image's line and the blank separator after it are styled together:
+    /// the image's pass decides whether the separator collapses (Q24A), and
+    /// writes are clipped to the restyled paragraphs. For each candidate, the
+    /// image line above its first line when that line is blank, and the blank
+    /// line below its last line when that line is an image's.
+    static func imageSeparatorNeighbours(of candidates: [NSRange], in text: NSString) -> [NSRange] {
+        var neighbours: [NSRange] = []
+        for candidate in candidates where candidate.location != NSNotFound && NSMaxRange(candidate) <= text.length {
+            let first = text.paragraphRange(for: NSRange(location: candidate.location, length: 0))
+            if first.location > 0, MarkdownStyler.isBlankLine(first, in: text) {
+                let above = text.paragraphRange(for: NSRange(location: first.location - 1, length: 0))
+                if MarkdownStyler.startsWithBang(above, in: text) { neighbours.append(above) }
+            }
+            let last = candidate.length > 0
+                ? text.paragraphRange(for: NSRange(location: NSMaxRange(candidate) - 1, length: 0)) : first
+            if NSMaxRange(last) < text.length, MarkdownStyler.startsWithBang(last, in: text) {
+                let below = text.paragraphRange(for: NSRange(location: NSMaxRange(last), length: 0))
+                if MarkdownStyler.isBlankLine(below, in: text) { neighbours.append(below) }
+            }
+        }
+        return neighbours
     }
 
     private static func normalize(_ candidates: [NSRange]) -> [NSRange] {

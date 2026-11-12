@@ -24,7 +24,7 @@
 //  document set (the load-bearing part) is still recovered.
 //
 
-import Foundation
+import AppKit
 import os.log
 
 /// One restorable tab: a security-scoped bookmark to reopen it inside the sandbox
@@ -50,10 +50,34 @@ struct WindowSessionState: Codable, Equatable {
     /// Index into `tabs` of the active tab, or `nil` when the active tab was
     /// untitled (and thus not persisted) or the window had no active tab.
     var activeIndex: Int?
+
+    /// Where the window was, or `nil` for a session saved before this was kept
+    /// (it opens centered at the default size).
+    var placement: WindowPlacement?
+}
+
+/// Where a window was: its frame out of full screen, and whether it was in full
+/// screen. Decodes with `WindowSessionState` from any earlier session.
+struct WindowPlacement: Codable, Equatable {
+    var frame: CGRect
+    var isFullScreen: Bool
+
+    /// The saved frame on the screen it overlaps most, kept wholly on it. A
+    /// display since unplugged leaves the window at its size on the first screen.
+    func restoredFrame(onScreens screens: [CGRect]) -> CGRect {
+        func overlap(_ screen: CGRect) -> CGFloat {
+            let shared = screen.intersection(frame)
+            return shared.isNull ? 0 : shared.width * shared.height
+        }
+        let best = screens.max { overlap($0) < overlap($1) }.flatMap { overlap($0) > 0 ? $0 : nil }
+        guard let screen = best ?? screens.first else { return frame }
+        return NSScreen.onScreenFrame(frame, in: screen)
+    }
 }
 
 /// The whole app's restorable session: one entry per window that had at least one
-/// file-backed tab, in a stable (registration) order.
+/// file-backed tab, back to front, so reopening them in order leaves the same
+/// window in front.
 struct SessionRestoreState: Codable, Equatable {
     var windows: [WindowSessionState]
 
@@ -97,7 +121,58 @@ extension WindowSessionState {
             survivors.append(tab)
         }
         guard !survivors.isEmpty else { return nil }
-        return WindowSessionState(tabs: survivors, activeIndex: newActiveIndex)
+        return WindowSessionState(tabs: survivors, activeIndex: newActiveIndex, placement: placement)
+    }
+}
+
+// MARK: - Window placement
+
+/// Keeps a live window's `WindowPlacement`. In full screen `frame` is the whole
+/// screen, so the frame to come back to is the one from before: resizes and moves
+/// update it only outside full screen, and capture reads it in full screen.
+@MainActor
+final class WindowPlacementTracker {
+    private weak var window: NSWindow?
+    private var windowedFrame: NSRect
+    private var isFullScreen = false
+    private var observers: [NSObjectProtocol] = []
+
+    /// `onChange` runs when a settled move, resize or full-screen change or a
+    /// new main window gives the session something new to save.
+    init(window: NSWindow, onChange: @escaping @MainActor () -> Void) {
+        self.window = window
+        windowedFrame = window.frame
+        let center = NotificationCenter.default
+        func observe(_ names: [Notification.Name], _ work: @escaping @MainActor (WindowPlacementTracker) -> Void) {
+            observers += names.map { name in
+                center.addMainActorObserver(forName: name, object: window) { [weak self] in
+                    if let self { work(self) }
+                }
+            }
+        }
+        observe([NSWindow.didResizeNotification, NSWindow.didMoveNotification]) { $0.noteFrame() }
+        observe([NSWindow.willEnterFullScreenNotification]) { $0.isFullScreen = true }
+        observe([NSWindow.didExitFullScreenNotification, .pageFlowWindowDidFailToEnterFullScreen]) {
+            $0.isFullScreen = false
+            $0.noteFrame()
+        }
+        observe([NSWindow.didMoveNotification, NSWindow.didEndLiveResizeNotification,
+                 NSWindow.didEnterFullScreenNotification, NSWindow.didExitFullScreenNotification,
+                 .pageFlowWindowDidFailToEnterFullScreen, NSWindow.didBecomeMainNotification]) { _ in onChange() }
+    }
+
+    deinit {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    var placement: WindowPlacement? {
+        guard let window else { return nil }
+        return WindowPlacement(frame: isFullScreen ? windowedFrame : window.frame, isFullScreen: isFullScreen)
+    }
+
+    private func noteFrame() {
+        guard let window, !isFullScreen, !window.styleMask.contains(.fullScreen) else { return }
+        windowedFrame = window.frame
     }
 }
 
@@ -113,10 +188,11 @@ final class SessionRestoreStore {
 
     private static let storageKey = "sessionRestore.v1"
 
-    private let defaults: UserDefaults
+    /// Internal so a test can check where this writes without writing there.
+    let defaults: UserDefaults
     private let logger = Logger(subsystem: "com.pageflow", category: "SessionRestoreStore")
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = AppDefaults.store) {
         self.defaults = defaults
     }
 

@@ -117,6 +117,7 @@ final class BlockMover: NSObject, NSDraggingSource {
     /// Cursor rectangles can be superseded by the underlying text view's callbacks.
     @discardableResult
     func applyCursor(for event: NSEvent) -> Bool {
+        guard grip.frontmostCursorHit(for: event) === grip else { return false }
         guard let main, let coordinator, main.isEditable,
               coordinator.configuration.showsSelectionBar, !grip.isHiddenOrHasHiddenAncestor,
               generation == coordinator.nativeSourceGeneration,
@@ -368,7 +369,7 @@ private final class BlockGripView: NSView {
         super.init(frame: frameRect)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeAlways, .inVisibleRect, .cursorUpdate], owner: self))
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.activeInActiveApp, .inVisibleRect, .cursorUpdate], owner: self))
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .openHand) }

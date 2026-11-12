@@ -27,6 +27,7 @@ extension TabManager {
             // Do not persist here: no live view must not erase durable scroll.
             _ = pdfManager.captureViewState()
         }
+        session.pdfManager?.releaseViewForTransfer()
 
         // Edit mode is ephemeral: leaving the window exits it, exactly as a tab
         // switch does (selectTab). The flag never travels true; the monitor is
@@ -40,6 +41,7 @@ extension TabManager {
         // pending unlock — travels intact. Only this window's presentation order
         // is released; the session's undo observers are NOT torn down.
         unlockQueue.removeAll { $0 == tabID }
+        tabRecency.remove(tabID)
         // Capture before the native editor changes windows, so the destination
         // can restore the same reading position after its viewport changes.
         session.content.markdown?.armReadingPositionRestore()
@@ -51,7 +53,7 @@ extension TabManager {
             activeTabID = nil
             closeFilePicker()
             if closeIfEmpty {
-                WindowRegistry.shared.closeWindow(for: self, onlyIfEmpty: true)
+                WindowRegistry.shared.closeAfterMovingLastTab(from: self)
             }
         } else if activeTabID == tabID {
             activeTabID = fallbackTabID
@@ -93,6 +95,10 @@ extension TabManager {
         if select || activeSession == nil {
             selectTab(session.id)
         }
+        if activeTabID != session.id {
+            noteArrivedHidden(session)
+            tabRecency.noteArrivedHidden(session.id)
+        }
         retainTransferredEditor(session.id)
 
         // The destination window gained a tab — refresh the restore store (S8 P1).
@@ -103,8 +109,19 @@ extension TabManager {
     /// teardown (close document, clear markup, drop undo history + observers).
     func closeSession(for tabID: UUID) {
         logger.debug("session.close tab=\(tabID.uuidString, privacy: .public)")
-        sessions.removeValue(forKey: tabID)?.cleanup()
+        let session = sessions.removeValue(forKey: tabID)
+        let thumbnailed = session?.content.pdf?.pdfManager.document
+        session?.cleanup()
         unlockQueue.removeAll { $0 == tabID }
+        tabRecency.remove(tabID)
         dropRenderedTab(tabID)
+        if let thumbnailed { ThumbnailImageCache.shared.removeImages(of: thumbnailed) }
+        if session?.content.markdown != nil, !holdsNote, !WindowRegistry.shared.holdsNote {
+            MarkdownEditorView.releaseRenderCaches()
+        }
     }
+
+    /// Whether a note with anything in it is open: a new window's empty buffer
+    /// has no use for what notes share.
+    var holdsNote: Bool { sessions.values.contains { $0.content.markdown?.documentManager.text.isEmpty == false } }
 }

@@ -5,6 +5,7 @@ import MarkdownEngine
 @MainActor
 final class NavigationRailView: NSView {
     enum Kind { case pdf, markdown }
+    static let laneWidth: CGFloat = 44
     private(set) var geometry = NavigationRailGeometry(totalRanks: 0, height: 0)
     private(set) var generation = 0
     private(set) var panel: NSView?
@@ -17,9 +18,30 @@ final class NavigationRailView: NSView {
     var reservedNativeHit: ((NSPoint) -> NSView?)?
     var paintExclusions: (() -> [NSRect])?
     private(set) var kind: Kind = .pdf
+    /// The Settings choice (Show the rail only when the pointer is at the
+    /// edge): hidden while reading, shown while the pointer is at the rail or
+    /// its preview. Off, a rail shows whenever it is eligible.
+    var revealsOnHover = false {
+        didSet { if revealsOnHover != oldValue { updateVisibility(animated: true) } }
+    }
+
+    /// Keeps `revealsOnHover` on the Settings choice for every rail.
+    private func followRevealSetting() {
+        withObservationTracking {
+            revealsOnHover = SettingsManager.shared.navigationRailRevealsOnHover
+        } onChange: { [weak self] in
+            DispatchQueue.main.async { self?.followRevealSetting() }
+        }
+    }
     private(set) var eligible = false
+    /// Whether the rail is showing (or sliding in) for the reader now.
+    private(set) var isShowing = false
+    /// Marks still drawn while the rail slides away after leaving eligibility.
+    private var isSlidingOut = false
+    private var hasConfigured = false
     private var count = 0
     private var visible: Set<Int> = []
+    fileprivate var visibleRanks: Set<Int> { visible }
     private var identity: AnyHashable?
     private var topInset: CGFloat = 0
     private var hoveredRank: Int?
@@ -47,6 +69,7 @@ final class NavigationRailView: NSView {
         setAccessibilityRole(.button)
         setAccessibilityLabel("Show document sidebar")
         setAccessibilityHelp("Open the sidebar for exact document navigation")
+        followRevealSetting()
     }
     required init?(coder: NSCoder) { nil }
 
@@ -64,11 +87,15 @@ final class NavigationRailView: NSView {
         self.count = count
         self.visible = visible
         self.identity = identity
+        if !eligible { releaseOwnedFocus() }
         self.eligible = eligible
         self.topInset = topInset
         if changed { invalidate() }
-        geometry = NavigationRailGeometry(totalRanks: eligible ? count : 0, height: bounds.height, topInset: topInset)
-        isHidden = !eligible
+        geometry = makeGeometry()
+        // Slides in and out as it becomes eligible; the first configure (a
+        // tab mounting) just shows its state.
+        updateVisibility(animated: hasConfigured && window != nil)
+        hasConfigured = true
         setAccessibilityElement(eligible && count > 0)
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
@@ -84,7 +111,11 @@ final class NavigationRailView: NSView {
     /// Dismantling retires callbacks as well as presentation, even if a client still
     /// holds the former accessibility element until its next refresh.
     func retire() {
+        releaseOwnedFocus()
         eligible = false
+        isShowing = false
+        isSlidingOut = false
+        layer?.removeAnimation(forKey: "railSlide")
         isHidden = true
         invalidate()
         removeObservers()
@@ -97,8 +128,13 @@ final class NavigationRailView: NSView {
     }
 
     private var lane: NSRect {
-        NSRect(x: 0, y: min(bounds.height, max(0, topInset)), width: min(44, bounds.width),
+        NSRect(x: 0, y: min(bounds.height, max(0, topInset)), width: min(Self.laneWidth, bounds.width),
                height: max(0, bounds.height - topInset))
+    }
+
+    private func makeGeometry() -> NavigationRailGeometry {
+        NavigationRailGeometry(totalRanks: eligible || isSlidingOut ? count : 0, height: bounds.height,
+                               topInset: topInset)
     }
     private var pointerIsInLane: Bool {
         guard let window else { return false }
@@ -110,7 +146,7 @@ final class NavigationRailView: NSView {
         super.setFrameSize(newSize)
         if changed {
             invalidate()
-            geometry = NavigationRailGeometry(totalRanks: eligible ? count : 0, height: bounds.height, topInset: topInset)
+            geometry = makeGeometry()
         }
     }
 
@@ -194,6 +230,7 @@ final class NavigationRailView: NSView {
     func pointerMoved(to point: NSPoint, dragging: Bool = false) {
         let inside = combinedRegionContains(point)
         pointerInRegion = inside
+        updateVisibility(animated: true)
         if !inside {
             requiresFreshEntry = false
             hoveredRank = nil
@@ -234,7 +271,8 @@ final class NavigationRailView: NSView {
     private func combinedRegionContains(_ point: NSPoint) -> Bool {
         if lane.contains(point) { return true }
         guard let panel else { return false }
-        let bridge = NSRect(x: lane.maxX, y: panel.frame.minY, width: max(0, panel.frame.minX - lane.maxX), height: panel.frame.height)
+        let bridge = NSRect(x: lane.maxX, y: panel.frame.minY, width: max(0, panel.frame.minX - lane.maxX),
+                            height: panel.frame.height)
         return panel.frame.contains(point) || bridge.contains(point)
     }
 
@@ -250,10 +288,12 @@ final class NavigationRailView: NSView {
         panel?.removeFromSuperview()
         panel = next
         presentedTarget = target
-        let x = min(52, max(0, bounds.width - 24))
-        let width = max(0, min(kind == .pdf ? DesignTokens.sidebarWidth : 352, bounds.width - x - 12))
+        // Just past the marks, so the preview reads as the rail's own.
+        let x = min(DesignTokens.navigationRailPreviewX, max(0, bounds.width - 24))
+        let width = max(0, min(kind == .pdf ? DesignTokens.sidebarWidth : DesignTokens.navigationRailSectionPreviewWidth,
+                               bounds.width - x - 12))
         let available = max(0, bounds.height - topInset - 24)
-        let height = kind == .pdf ? available : min(104, available)
+        let height = kind == .pdf ? available : min(DesignTokens.navigationRailSectionPreviewHeight, available)
         let y = kind == .pdf ? topInset + 12 : max(topInset + 12, min(bounds.height - height - 12,
             (geometry.marks.first { $0.representative == rank }?.y ?? topInset) - height / 2))
         next.frame = NSRect(x: x, y: y, width: width, height: height)
@@ -296,6 +336,15 @@ final class NavigationRailView: NSView {
         return false
     }
 
+    private func releaseOwnedFocus() {
+        guard let window, let responder = window.firstResponder as? NSView else { return }
+        let focusedControl = (responder as? NSTextView).flatMap { $0.isFieldEditor ? $0.delegate as? NSView : nil }
+        if responder === self || responder.isDescendant(of: self)
+            || focusedControl.map({ $0 === self || $0.isDescendant(of: self) }) == true {
+            window.makeFirstResponder(nil)
+        }
+    }
+
     private func closePreview() {
         exitWork?.cancel()
         exitWork = nil
@@ -306,6 +355,92 @@ final class NavigationRailView: NSView {
         presentedTarget = nil
         hoveredRank = nil
         needsDisplay = true
+        updateVisibility(animated: true)
+    }
+
+    /// Slides the rail in from the leading edge, or out to it: as it
+    /// becomes eligible or not, and, with `revealsOnHover`, as the pointer
+    /// reaches or leaves it. Reduce Motion shows and hides it at once.
+    private func updateVisibility(animated: Bool) {
+        let show = eligible && (!revealsOnHover || pointerInRegion || panel != nil)
+        guard show != isShowing else {
+            if !eligible, !isSlidingOut {
+                isHidden = true
+            } else if eligible, !show {
+                // An edge-only rail waits slid out and transparent, but stays
+                // un-hidden so its tracking area and hit test see the pointer.
+                parkOffEdge()
+            }
+            return
+        }
+        isShowing = show
+        wantsLayer = true
+        if show {
+            isHidden = false
+            isSlidingOut = false
+        } else if !eligible {
+            // Keep drawing the marks while they slide away.
+            isSlidingOut = true
+            geometry = makeGeometry()
+            needsDisplay = true
+        }
+        let transform = show ? CATransform3DIdentity : Self.offEdgeTransform
+        let opacity: Float = show ? 1 : 0
+        guard let layer else { finishSlide(); return }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if animated, !reduceMotion {
+            // From wherever an interrupted slide had got to.
+            let current = layer.presentation() ?? layer
+            let slide = CABasicAnimation(keyPath: "transform")
+            slide.fromValue = current.transform
+            slide.toValue = transform
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = current.opacity
+            fade.toValue = opacity
+            let group = CAAnimationGroup()
+            group.animations = [slide, fade]
+            group.duration = DesignTokens.navigationRailSlideDuration
+            group.timingFunction = CAMediaTimingFunction(name: show ? .easeOut : .easeIn)
+            CATransaction.setCompletionBlock { [weak self] in self?.finishSlide() }
+            layer.removeAnimation(forKey: "railSlide")
+            layer.add(group, forKey: "railSlide")
+        } else {
+            layer.removeAnimation(forKey: "railSlide")
+        }
+        layer.transform = transform
+        layer.opacity = opacity
+        CATransaction.commit()
+        if !animated || reduceMotion { finishSlide() }
+    }
+
+    private static var offEdgeTransform: CATransform3D {
+        CATransform3DMakeTranslation(-DesignTokens.navigationRailSlideDistance, 0, 0)
+    }
+
+    /// An eligible rail waiting for the pointer: in place for events, but
+    /// off the leading edge and transparent, without disturbing a slide.
+    private func parkOffEdge() {
+        isHidden = false
+        wantsLayer = true
+        guard let layer, layer.animation(forKey: "railSlide") == nil else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.transform = Self.offEdgeTransform
+        layer.opacity = 0
+        CATransaction.commit()
+    }
+
+    /// Once a slide out ends: an ineligible rail stops drawing and hides.
+    private func finishSlide() {
+        guard !isShowing else { return }
+        if isSlidingOut {
+            isSlidingOut = false
+            geometry = makeGeometry()
+            needsDisplay = true
+        }
+        if !eligible { isHidden = true }
     }
 
     private func installEscapeMonitor() {
@@ -361,17 +496,7 @@ final class NavigationRailView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard eligible else { return }
-        // PDF paper keeps its own colors, so semantic marks need a stable
-        // native surface rather than blending into white or dark page content.
-        if kind == .pdf, let first = geometry.marks.first, let last = geometry.marks.last {
-            let background = NSRect(x: 6, y: first.y - 8, width: 30,
-                                    height: last.y - first.y + 16).intersection(lane)
-            if !background.isEmpty {
-                NSColor.windowBackgroundColor.setFill()
-                NSBezierPath(roundedRect: background, xRadius: 8, yRadius: 8).fill()
-            }
-        }
+        guard eligible || isSlidingOut else { return }
         let exclusions = paintExclusions?() ?? []
         let hoveredIndex = hoveredRank.flatMap { rank in geometry.marks.firstIndex { $0.representative == rank } }
         for (index, mark) in geometry.marks.enumerated() {
@@ -386,7 +511,7 @@ final class NavigationRailView: NSView {
                     if distance < 5 { length = max(length, [28, 22, 16, 11, 8][distance]) }
                 }
             }
-            (active || index == hoveredIndex ? NSColor.labelColor : NSColor.tertiaryLabelColor).setFill()
+            let ink = active || index == hoveredIndex ? NSColor.labelColor : NSColor.tertiaryLabelColor
             var pieces = [NSRect(x: 12, y: mark.y - 1, width: length, height: 2)]
             // Subtract each native control conservatively. Unlike an even-odd clip,
             // overlapping controls cannot put rail ink back over a native glyph.
@@ -403,7 +528,11 @@ final class NavigationRailView: NSView {
                     return remainder
                 }
             }
-            for piece in pieces { NSBezierPath(roundedRect: piece, xRadius: 1, yRadius: 1).fill() }
+            for piece in pieces {
+                let path = NSBezierPath(roundedRect: piece, xRadius: 1, yRadius: 1)
+                ink.setFill()
+                path.fill()
+            }
         }
     }
 }

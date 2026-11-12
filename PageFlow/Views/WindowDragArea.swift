@@ -39,7 +39,7 @@ private final class WindowDragView: NSView {
 
     private func performTitlebarAction() {
         guard let window else { return }
-        let preference = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick")
+        let preference = AppDefaults.store.string(forKey: "AppleActionOnDoubleClick")
         switch TitlebarDoubleClick.action(for: preference) {
         case .zoom:
             window.performZoom(nil)

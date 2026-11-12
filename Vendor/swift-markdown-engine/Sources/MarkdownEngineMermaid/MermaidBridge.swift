@@ -34,6 +34,10 @@ import MarkdownEngine
 /// The cached image is never mutated, so sharing it across tabs and fit widths
 /// is safe.
 ///
+/// Layouts are kept separately from those rasters, capped at 1,024 diagrams. They
+/// survive ``clearCache()`` and memory pressure on purpose: elk-swift leaks a layout
+/// per run, so running one again costs more than keeping it.
+///
 /// Light/dark ink follows the host editor's forced appearance
 /// (``appearanceOverride``) when set — same reason as ``SwiftMathBridge``: a
 /// restyle triggered while another window is key must not bake the diagram
@@ -78,6 +82,25 @@ public final class MermaidBridge: BlockDiagramRenderer, @unchecked Sendable {
     static let maxSourceLength = 16_000
     private var cacheSequence: UInt64 = 0
     private let cacheLock = NSLock()
+
+    private struct KeptLayout {
+        let graph: PositionedGraph
+        var lastUse: UInt64
+    }
+
+    /// Each diagram's layout, kept apart from its rasters. elk-swift's graphs are
+    /// cycles of strong references, so every layout it runs stays in memory for
+    /// good, a few hundred KB for a large diagram, and takes tens of milliseconds
+    /// on the calling thread. Rasters are evicted, re-made per zoom density and per
+    /// theme, and cleared under memory pressure; none of that lays out again. A
+    /// kept layout costs a small part of what one more run would leak, so these
+    /// survive ``clearCache()``.
+    private var layouts: [String: KeptLayout] = [:]
+    private let layoutLimit: Int
+    #if DEBUG
+    /// How many layouts this bridge has run.
+    private(set) var layoutCount = 0
+    #endif
     private let renderScale: CGFloat
     private let cacheCountLimit: Int
     private let cacheCostLimit: Int
@@ -94,13 +117,14 @@ public final class MermaidBridge: BlockDiagramRenderer, @unchecked Sendable {
     ///   diagram is fitted to the reading column.
     public convenience init(renderScale: CGFloat = 2.0) {
         self.init(renderScale: renderScale, cacheCountLimit: 256,
-                  cacheCostLimit: 32 * 1_024 * 1_024)
+                  cacheCostLimit: 32 * 1_024 * 1_024, layoutLimit: 1_024)
     }
 
-    init(renderScale: CGFloat, cacheCountLimit: Int, cacheCostLimit: Int) {
+    init(renderScale: CGFloat, cacheCountLimit: Int, cacheCostLimit: Int, layoutLimit: Int) {
         self.renderScale = renderScale
         self.cacheCountLimit = max(1, cacheCountLimit)
         self.cacheCostLimit = max(0, cacheCostLimit)
+        self.layoutLimit = max(1, layoutLimit)
     }
 
     /// Clears the rendered-image cache (e.g. after an appearance flip if the host
@@ -109,7 +133,6 @@ public final class MermaidBridge: BlockDiagramRenderer, @unchecked Sendable {
         cacheLock.lock()
         cache.removeAll()
         cacheCost = 0
-        cacheSequence = 0
         cacheLock.unlock()
     }
 
@@ -240,7 +263,8 @@ public final class MermaidBridge: BlockDiagramRenderer, @unchecked Sendable {
         // `try?` → nil folds every BeautifulMermaid failure (unknown diagram
         // type, syntax error, empty, degenerate 0-size output) into the
         // show-the-source fallback.
-        guard let raw = try? MermaidRenderer.renderImage(source: source, theme: diagramTheme, scale: scale) else {
+        guard let graph = layout(of: source),
+              let raw = MermaidImageRenderer(theme: diagramTheme).renderImage(from: graph, scale: scale) else {
             return nil
         }
         let natural = raw.size
@@ -248,6 +272,31 @@ public final class MermaidBridge: BlockDiagramRenderer, @unchecked Sendable {
         let corrected = correctingOrientation(raw)
         let cost = corrected.raster.flatMap { Self.cacheCost(of: $0, source: source) }
         return Entry(image: corrected.image, naturalSize: natural, cost: cost)
+    }
+
+    /// The diagram's layout, which depends only on its source.
+    private func layout(of source: String) -> PositionedGraph? {
+        cacheLock.lock()
+        cacheSequence &+= 1
+        if let kept = layouts[source]?.graph {
+            layouts[source]?.lastUse = cacheSequence
+            cacheLock.unlock()
+            return kept
+        }
+        cacheLock.unlock()
+        guard let graph = try? MermaidRenderer.layout(source) else { return nil }
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        #if DEBUG
+        layoutCount += 1
+        #endif
+        cacheSequence &+= 1
+        while layouts.count >= layoutLimit,
+              let oldest = layouts.min(by: { $0.value.lastUse < $1.value.lastUse })?.key {
+            layouts[oldest] = nil
+        }
+        layouts[source] = KeptLayout(graph: graph, lastUse: cacheSequence)
+        return graph
     }
 
     /// BeautifulMermaid 1.0.4's macOS `renderImage` rasterizes into a raw

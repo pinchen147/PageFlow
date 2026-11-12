@@ -45,6 +45,8 @@ struct TextFileFidelity: Equatable, Sendable {
     /// writes the replacement character, so the host asks before the first save.
     var replacedInvalidUTF8 = false
 
+    var mixedLineEndings: MixedLineEndings?
+
     /// The default for a brand-new (untitled) document: UTF-8, LF, no BOM.
     static let utf8LF = TextFileFidelity(
         encoding: .utf8, hadUTF8BOM: false, lineEnding: .lf, savedAsDowngradedUTF8: false)
@@ -66,6 +68,7 @@ nonisolated enum TextFileCodec {
         /// encoding and was saved as UTF-8 instead (e.g. an emoji typed into a
         /// CP1252 file) — surfaced as a one-time note rather than corrupting.
         var downgradedToUTF8: Bool
+        var mixedLineEndings: MixedLineEndings?
     }
 
     // MARK: - Decode (load)
@@ -145,6 +148,7 @@ nonisolated enum TextFileCodec {
     ) -> Decoded {
         let bytes = Array(raw.utf8)
         let endings = lineEndings(in: bytes)
+        var separators: [LineEnding]? = endings.isMixed ? [] : nil
         let normalized: String
         if endings.hasCR {
             // CR and LF are single-byte ASCII and cannot appear inside a
@@ -156,7 +160,12 @@ nonisolated enum TextFileCodec {
             while offset < bytes.count {
                 let byte = bytes[offset]
                 output.append(byte == 0x0D ? 0x0A : byte)
-                if byte == 0x0D, offset + 1 < bytes.count, bytes[offset + 1] == 0x0A { offset += 1 }
+                if byte == 0x0D {
+                    if offset + 1 < bytes.count, bytes[offset + 1] == 0x0A {
+                        separators?.append(.crlf)
+                        offset += 1
+                    } else { separators?.append(.cr) }
+                } else if byte == 0x0A { separators?.append(.lf) }
                 offset += 1
             }
             normalized = String(decoding: output, as: UTF8.self)
@@ -170,7 +179,8 @@ nonisolated enum TextFileCodec {
                 hadUTF8BOM: hadUTF8BOM,
                 lineEnding: endings.dominant,
                 savedAsDowngradedUTF8: downgraded,
-                replacedInvalidUTF8: replacedInvalidUTF8))
+                replacedInvalidUTF8: replacedInvalidUTF8,
+                mixedLineEndings: separators.map { MixedLineEndings(source: normalized, separators: $0) }))
     }
 
     /// CRLF is one ending; ties prefer CRLF, then LF, matching saved fidelity.
@@ -178,7 +188,7 @@ nonisolated enum TextFileCodec {
         lineEndings(in: Array(text.utf8)).dominant
     }
 
-    private static func lineEndings(in bytes: [UInt8]) -> (dominant: LineEnding, hasCR: Bool) {
+    private static func lineEndings(in bytes: [UInt8]) -> (dominant: LineEnding, hasCR: Bool, isMixed: Bool) {
         var crlf = 0, cr = 0, lf = 0
         var offset = 0
         while offset < bytes.count {
@@ -190,9 +200,9 @@ nonisolated enum TextFileCodec {
             } else if bytes[offset] == 0x0A { lf += 1 }
             offset += 1
         }
-        if crlf >= lf && crlf >= cr && crlf > 0 { return (.crlf, true) }
-        if cr > lf && cr > 0 { return (.cr, true) }
-        return (.lf, crlf > 0 || cr > 0)
+        if crlf >= lf && crlf >= cr && crlf > 0 { return (.crlf, true, cr > 0 || lf > 0) }
+        if cr > lf && cr > 0 { return (.cr, true, crlf > 0 || lf > 0) }
+        return (.lf, crlf > 0 || cr > 0, crlf > 0 || cr > 0)
     }
 
     // MARK: - Encode (save)
@@ -202,11 +212,23 @@ nonisolated enum TextFileCodec {
     /// `nonisolated`: pure Sendable-value work — the save path runs it INSIDE
     /// the detached write task so a large document's encode never occupies
     /// the main actor.
-    nonisolated static func encode(_ text: String, fidelity: TextFileFidelity) -> Encoded {
+    nonisolated static func encode(_ text: String, fidelity: TextFileFidelity, nativeBody: MixedLineEndings? = nil) -> Encoded {
+        if let layout = fidelity.mixedLineEndings ?? nativeBody {
+            let expanded = layout.expanding(text, default: fidelity.lineEnding, bodySeparators: nativeBody?.separators)
+            var encoded = encodePhysical(expanded.text, fidelity: fidelity)
+            if expanded.layout.separators.contains(where: { $0 != fidelity.lineEnding }) {
+                encoded.mixedLineEndings = expanded.layout
+            }
+            return encoded
+        }
         let expanded = fidelity.lineEnding == .lf
             ? text
-            : text.replacingOccurrences(of: "\n", with: fidelity.lineEnding.rawValue)
+            : text.replacingOccurrences(of: "\n", with: fidelity.lineEnding.rawValue, options: .literal)
 
+        return encodePhysical(expanded, fidelity: fidelity)
+    }
+
+    private static func encodePhysical(_ expanded: String, fidelity: TextFileFidelity) -> Encoded {
         // UTF-16/32 sources save as plain UTF-8 (no BOM) in v1.
         if fidelity.savedAsDowngradedUTF8 {
             return Encoded(data: Data(expanded.utf8), downgradedToUTF8: false)

@@ -29,6 +29,12 @@ struct MarkdownRuntime: Identifiable {
     var id: UUID { tabID }
 }
 
+struct EPUBRuntime: Identifiable {
+    let tabID: UUID
+    let content: EPUBContent
+    var id: UUID { tabID }
+}
+
 /// The content-discriminated unit the window iterates to mount a tab's view: a
 /// PDF runtime drives `PDFTabView`, a markdown runtime drives `MarkdownTabView`.
 /// The single switch the view layer makes — so a future content type is a
@@ -36,11 +42,13 @@ struct MarkdownRuntime: Identifiable {
 enum TabRender: Identifiable {
     case pdf(TabRuntime)
     case markdown(MarkdownRuntime)
+    case epub(EPUBRuntime)
 
     var id: UUID {
         switch self {
         case .pdf(let runtime): return runtime.tabID
         case .markdown(let runtime): return runtime.tabID
+        case .epub(let runtime): return runtime.tabID
         }
     }
 }

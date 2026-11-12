@@ -28,7 +28,14 @@ extension NativeTextViewCoordinator {
         let (baseFont, baseParagraphStyle) = baseFontAndStyle()
         var result = newTypingAttributes
         result[.paragraphStyle] = baseParagraphStyle
-        result[.font] = baseFont
+        let traits = emphasisTraits(in: textView)
+        var font = baseFont
+        if traits.contains(.bold) { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
+        if traits.contains(.italic) { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
+        result[.font] = font
+        result[.underlineStyle] = traits.contains(.underline) ? NSUnderlineStyle.single.rawValue : 0
+        result[.strikethroughStyle] = traits.contains(.strikethrough) ? NSUnderlineStyle.single.rawValue : 0
+        result[.backgroundColor] = traits.contains(.highlight) ? configuration.theme.highlight : nil
         result[.foregroundColor] = configuration.theme.bodyText
         return result
     }
@@ -49,6 +56,9 @@ extension NativeTextViewCoordinator {
             pendingCompositionRefresh = true
             return
         }
+        if !emphasisEditor.applying { emphasisEditor.typingRun = nil }
+        emphasisEditor.cache = nil
+        advanceRenderedSourceIntent(after: pendingTextChange)
         nativeSourceGeneration &+= 1
         #if DEBUG
         (tv as? NativeTextView)?.anchorCensusTrace("textDidChange.start")
@@ -84,6 +94,8 @@ extension NativeTextViewCoordinator {
             pendingViewportFirstRange = nil
             pendingPreEditActiveTokenIndices = nil
             pendingPreEditRestyleRanges.removeAll(keepingCapacity: true)
+            listEditor.pendingInsertion = nil
+            normalizeCommittedListCaret(in: tv)
         }
 
         let rawSelRange = tv.selectedRange()
@@ -309,6 +321,8 @@ extension NativeTextViewCoordinator {
     }
 
     public func textViewDidChangeSelection(_ notification: Notification) {
+        guard !emphasisEditor.navigating else { return }
+        if let view = notification.object as? NSTextView { emphasisSelectionDidChange(in: view) }
         selectionBar?.setNeedsUpdate()
         if let comments { MainActor.assumeIsolated { comments.selectionDidChange() } }
         (notification.object as? NativeTextView)?.selectionDidChangeForWideTables()
@@ -329,6 +343,7 @@ extension NativeTextViewCoordinator {
         notifyFoldingStateChange()
         foldControls?.refresh()
         let selRange = tv.selectedRange()
+        retireRenderedSourceIntentIfNeeded(in: tv)
         let currentEventType = NSApp.currentEvent?.type
         if skipNextSelectionChangeAfterPlainEdit {
             skipNextSelectionChangeAfterPlainEdit = false
@@ -448,11 +463,19 @@ extension NativeTextViewCoordinator {
         let currentBulletSyntax = MarkdownStyler.bulletSyntaxRange(at: selLoc, in: nsText)
         let bulletSyntaxChanged = prevBulletSyntax?.location != currentBulletSyntax?.location
             || prevBulletSyntax?.length != currentBulletSyntax?.length
+        // The blank line after an image collapses only while the caret is off
+        // it (Q24A): the caret entering or leaving one restyles it.
+        let prevSeparator = previousCaretLocation.flatMap {
+            MarkdownStyler.imageSeparatorCandidate(at: min($0, nsText.length), in: nsText)
+        }
+        let currentSeparator = MarkdownStyler.imageSeparatorCandidate(at: selLoc, in: nsText)
+        let separatorChanged = prevSeparator?.location != currentSeparator?.location
         // Mid-drag restyle is suppressed (revealing markers shifts the layout → drag hit-test lands short, dropping trailing chars) and replayed on release.
         let isDragSelecting = currentEventType == .leftMouseDragged || currentEventType == .periodic
         if isDragSelecting {
             needsRestyleAfterDrag = true
-        } else if tokensChanged || taskSyntaxChanged || hrLineChanged || bulletSyntaxChanged || needsRestyleAfterDrag {
+        } else if tokensChanged || taskSyntaxChanged || hrLineChanged || bulletSyntaxChanged || separatorChanged
+                    || needsRestyleAfterDrag {
             needsRestyleAfterDrag = false
             // EVERY selection-driven reveal/collapse can change layout height:
             // banded blocks (table, block LaTeX, image embed) swap a ~207pt
@@ -478,7 +501,7 @@ extension NativeTextViewCoordinator {
                 // view (the jarring "jump + select-all"). Clicking block math should just place
                 // a caret to edit the revealed source. Inline latex / image embeds are atomic
                 // chips where select-to-retype is the intended affordance, so they stay.
-                guard token.kind == .inlineLatex
+                guard (token.kind == .inlineLatex && isEditingRenderedSource(token, in: tv))
                     || token.kind == .imageEmbed else {
                     continue
                 }
@@ -576,6 +599,8 @@ extension NativeTextViewCoordinator {
         if isProgrammaticEdit || isComposing(in: textView) { return true }
         if isWritingToolsActive { return true }
         guard let textStorage = textView.textStorage else { return true }
+        if applyRichBoundaryInput(replacementString ?? "", range: affectedCharRange, in: textView) { return false }
+        if applyEmphasisInput(replacementString ?? "", range: affectedCharRange, in: textView) { return false }
         guard captureSourceEdit(in: textView, range: affectedCharRange, replacement: replacementString ?? "") else { return false }
         let currentText = textStorage.mutableString
         let replacement = replacementString ?? ""
@@ -638,6 +663,7 @@ extension NativeTextViewCoordinator {
             affectedCharRange: affectedCharRange,
             replacementString: replacementString
         )
+        if let change = pendingTextChange { captureListInsertion(in: textView, change: change) }
         pendingPreEditActiveTokenIndices = previousActiveTokenIndices
 
         if let nativeTextView = textView as? NativeTextView {
@@ -690,6 +716,10 @@ extension NativeTextViewCoordinator {
             }
             if selectionBar?.suppressForEscape() == true { return true }
         }
+        if let handled = handleListCommand(commandSelector, in: textView) { return handled }
+        if extendProseSelection(commandSelector, in: textView) { return true }
+        if let handled = handleRichBoundaryCommand(commandSelector, in: textView) { return handled }
+        if let handled = handleEmphasisCommand(commandSelector, in: textView) { return handled }
         return moveCaretRememberingTableEntry(commandSelector, in: textView)
     }
 
@@ -712,15 +742,21 @@ extension NativeTextViewCoordinator {
               let target = WikiLinkService.resolveIdentifier(link: link, textView: textView, at: charIndex) else {
             return true
         }
+        openWikiLink(target)
+        return true
+    }
+
+    /// Hands a wiki-link's target to the host (`onLinkClick`) on the next
+    /// turn, unless the document changed or an input method is composing by then.
+    func openWikiLink(_ target: String) {
         isWikiLinkActive = false
         let callback = onLinkClick
         let generation = documentGeneration
-        DispatchQueue.main.async { [weak self, weak textView] in
-            guard let self, let textView, generation == self.documentGeneration,
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let textView = self.textView, generation == self.documentGeneration,
                   !self.isComposing(in: textView) else { return }
             callback?(target)
         }
-        return true
     }
 
     func updateSelectionStates(_ tv: NSTextView) {
@@ -735,13 +771,13 @@ extension NativeTextViewCoordinator {
         if let name = bus.selectionBoldDidChange {
             center.post(
                 name: name, object: scopeObject,
-                userInfo: ["isBold": isSelectionBold(in: nsText, range: selRange)]
+                userInfo: ["isBold": selRange.length == 0 ? emphasisTraits(in: tv).contains(.bold) : isSelectionBold(in: nsText, range: selRange)]
             )
         }
         if let name = bus.selectionItalicDidChange {
             center.post(
                 name: name, object: scopeObject,
-                userInfo: ["isItalic": isSelectionItalic(in: nsText, range: selRange)]
+                userInfo: ["isItalic": selRange.length == 0 ? emphasisTraits(in: tv).contains(.italic) : isSelectionItalic(in: nsText, range: selRange)]
             )
         }
     }

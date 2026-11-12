@@ -31,12 +31,69 @@ import AppKit
 public final class MarkdownEditorController {
     /// Set by ``NativeTextViewCoordinator`` when the editor is created; cleared on teardown.
     /// Weak so the controller never keeps a torn-down editor alive.
-    weak var coordinator: NativeTextViewCoordinator? {
-        didSet {
-            guard oldValue !== coordinator else { return }
-            oldValue?.invalidateSectionNavigation()
-            coordinator?.refreshSectionNavigation()
+    private weak var attachedSession: AnyObject?
+    var sessionFailure: Error?
+    weak var semanticHost: SemanticEditorHostSession?
+    weak var semanticComments: MarkdownCommentsController?
+    var pendingSemanticReload = false
+    var semanticReloadPosition: ReadingPosition?
+
+    /// Whether selection and Find offsets address visible semantic text.
+    public var usesSemanticStorage: Bool { semanticCoordinator != nil }
+    var coordinator: NativeTextViewCoordinator? {
+        get { attachedSession as? NativeTextViewCoordinator }
+        set {
+            let previous = coordinator
+            guard previous !== newValue else { return }
+            previous?.invalidateSectionNavigation()
+            attachedSession = newValue
+            newValue?.refreshSectionNavigation()
         }
+    }
+
+    var semanticCoordinator: NativeSemanticDocumentCoordinator? {
+        get { attachedSession as? NativeSemanticDocumentCoordinator }
+        set {
+            coordinator?.invalidateSectionNavigation()
+            attachedSession = newValue
+        }
+    }
+
+    /// Export the committed document; encoding failures must prevent saving.
+    public func exportSource() throws -> String? {
+        if let sessionFailure { throw sessionFailure }
+        if let semanticCoordinator { return try semanticCoordinator.exportResult().source }
+        return coordinator?.snapshotStorageText()
+    }
+
+    /// Publish pending committed edits before saving, without committing provisional IME text.
+    @discardableResult
+    public func flushCommittedSource() throws -> String? {
+        if let sessionFailure { throw sessionFailure }
+        if let semanticCoordinator { return try semanticCoordinator.flushCommittedSource() }
+        return coordinator?.commitPendingTextNow()
+    }
+
+    /// Adopt imported image resources through structured descriptors and one Undo transaction.
+    public func adoptImageLinks(ranges: [NSRange], replacements: [String], expectedSource: String) throws -> Bool? {
+        guard let semanticCoordinator else { return nil }
+        return try semanticCoordinator.adoptImageLinks(ranges: ranges, replacements: replacements, expectedSource: expectedSource)
+    }
+
+    /// Map an explicit source navigation target into the live visible text.
+    public func visibleRange(forSourceRange range: NSRange) throws -> NSRange? {
+        guard let owner = semanticCoordinator else { return range }
+        let map = try owner.exportResult().sourceMap
+        guard let start = map.visibleOffset(for: .init(rawValue: range.location), affinity: .leading),
+              let end = map.visibleOffset(for: .init(rawValue: NSMaxRange(range)), affinity: .trailing),
+              start.rawValue <= end.rawValue else { return nil }
+        return NSRange(location: start.rawValue, length: end.rawValue - start.rawValue)
+    }
+
+    /// Original-byte splice provenance, available for the semantic document backend.
+    public func exportSourceReceipt() throws -> SemanticMarkdownExportResult? {
+        if let sessionFailure { throw sessionFailure }
+        return try semanticCoordinator?.exportResult()
     }
 
     let foldSession = MarkdownFoldSession()
@@ -46,24 +103,27 @@ public final class MarkdownEditorController {
 
     /// Whether the section containing the caret is collapsed.
     public var isCurrentSectionFolded: Bool {
+        if let host = semanticHost, let region = host.currentRegion { return host.collapsedBlocks.contains(region.id) }
         guard let region = coordinator?.currentFoldRegion else { return false }
         return foldSession.collapsedHeadings.contains(region.heading.location)
     }
 
     /// Whether the view can safely perform this disclosure command now.
     public func canPerformFoldingCommand(_ command: MarkdownEditorKeyCommand) -> Bool {
-        coordinator?.canPerformFolding(command) ?? false
+        semanticHost?.canFold(command) ?? coordinator?.canPerformFolding(command) ?? false
     }
 
     /// Toggle one section, collapse all, or expand all without changing source or text Undo.
     @discardableResult
     public func performFoldingCommand(_ command: MarkdownEditorKeyCommand) -> Bool {
-        coordinator?.performFolding(command) ?? false
+        semanticHost?.fold(command) ?? coordinator?.performFolding(command) ?? false
     }
 
     /// Clear session disclosure choices after an authoritative source-changing reload.
     public func resetFolds() {
         foldSession.reset()
+        semanticHost?.collapsedBlocks.removeAll()
+        semanticHost?.refreshFolds()
         coordinator?.applyFoldPresentation()
     }
 
@@ -86,22 +146,41 @@ public final class MarkdownEditorController {
     /// The exact native string used for selection and find ranges. Live preview
     /// hides syntax through attributes, so it is the source itself, in source
     /// UTF-16 coordinates. Returns `nil` when no editor is bound.
+    /// Visible Find text includes retained table cells in row order.
+    public var currentSearchText: String? {
+        if let semanticCoordinator { return NativeSemanticSearchIndex(owner: semanticCoordinator).text }
+        return currentDisplayText
+    }
+
     public var currentDisplayText: String? {
-        coordinator?.snapshotDisplayText()
+        semanticCoordinator?.textView.string ?? coordinator?.snapshotDisplayText()
     }
 
     /// Applies a format command to the mounted editor's selection.
     public func apply(_ format: MarkdownFormat) {
-        coordinator?.apply(format)
+        if let semanticCoordinator { _ = semanticCoordinator.applyFormat(format) }
+        else { coordinator?.apply(format) }
     }
 
     /// The formatting at the editor's selection, as the selection bar shows it.
     public var formatState: MarkdownFormatState {
-        coordinator?.currentFormatState() ?? MarkdownFormatState()
+        semanticCoordinator?.currentFormatState ?? coordinator?.currentFormatState() ?? MarkdownFormatState()
     }
 
     /// Called whenever the selection's formatting changes (selection or edit).
     public var onFormatStateChange: ((MarkdownFormatState) -> Void)?
+
+    /// Whether `command` can act on the table the caret is in now: false
+    /// outside a table, or where its Cell actions row is disabled.
+    public func canPerformTableCommand(_ command: MarkdownTableCommand) -> Bool {
+        semanticCoordinator?.canPerformTable(command) ?? coordinator?.tableEditingSession.canPerform(command) ?? false
+    }
+
+    /// Runs `command` on the caret's table, as its Cell actions row does.
+    @discardableResult
+    public func performTableCommand(_ command: MarkdownTableCommand) -> Bool {
+        semanticCoordinator?.performTable(command) ?? coordinator?.tableEditingSession.performCommand(command) ?? false
+    }
 
     /// View-only table column widths (doc 24 §7.3.6, deviation a): per table
     /// key, one box width per column, nil for Auto. They never reach the file;
@@ -111,6 +190,7 @@ public final class MarkdownEditorController {
         set {
             guard newValue != tableWidthsStore.widths else { return }
             tableWidthsStore.widths = newValue
+            semanticCoordinator?.refreshTableWidths()
             onTableColumnWidthsChange?(newValue)
         }
     }
@@ -128,7 +208,11 @@ public final class MarkdownEditorController {
     /// the editor finds each one's text by its quote.
     public var commentThreads: [MarkdownCommentThread] {
         get { commentStore.threads }
-        set { commentStore.load(newValue, text: coordinator?.textView.map { $0.string as NSString }) }
+        set {
+            if let anchors = semanticComments?.semanticAnchors {
+                do { try anchors.load(newValue) } catch { sessionFailure = error }
+            } else { commentStore.load(newValue, text: coordinator?.textView.map { $0.string as NSString }) }
+        }
     }
 
     /// Called when a comment is posted, replied to, edited, reacted to,
@@ -143,13 +227,19 @@ public final class MarkdownEditorController {
         return commentStore.threadsForSaving(text: text as NSString)
     }
 
+    /// Resolve live annotation coordinates into the same committed source being saved.
+    public func committedCommentThreadsForSaving(text: String) throws -> [MarkdownCommentThread] {
+        if let anchors = semanticComments?.semanticAnchors { return try anchors.threadsForSaving() }
+        return commentThreadsForSaving(text: text)
+    }
+
     let commentStore = MarkdownCommentStore()
 
     /// Margin cards, the list, or hidden; the host's Comments button sets it.
     public var commentsMode: MarkdownCommentsMode {
         get { commentStore.mode }
         set {
-            if let comments = coordinator?.comments { comments.setMode(newValue) } else { commentStore.mode = newValue }
+            if let comments = (semanticComments ?? coordinator?.comments) { comments.setMode(newValue) } else { commentStore.mode = newValue }
         }
     }
 
@@ -170,11 +260,27 @@ public final class MarkdownEditorController {
     /// Opens a thread as a `#thread-‹id›` link asks: brings its text into
     /// view and opens its card (the list for a resolved or detached one).
     public func openCommentThread(_ id: String) {
-        guard let comments = coordinator?.comments else {
+        guard let comments = semanticComments ?? coordinator?.comments else {
             commentStore.pendingOpenID = id
             return
         }
         comments.openLinked(id)
+    }
+
+    /// Whether the current responder is live editable annotation input owned by
+    /// this bound editor. Hosts query the target window immediately before an
+    /// automatic focus claim; open drafts alone do not own the keyboard.
+    public func ownsAnnotationResponder(_ responder: NSResponder?) -> Bool {
+        (semanticComments ?? coordinator?.comments)?.ownsAnnotationResponder(responder) ?? false
+    }
+
+    /// The Comment command, for a host's menu: comments on the selection, or
+    /// opens the comment at the caret. With neither, `onCommentsToast` says what
+    /// to select: a menu click has no selection bar to show it disabled.
+    public func performCommentCommand() {
+        guard let comments = semanticComments ?? coordinator?.comments else { return }
+        if !comments.commandHasTarget { onCommentsToast?("Select some text or table cells to comment") }
+        comments.commandComment()
     }
 
     /// The thread id in a comment link's fragment (`thread-‹id›`), if it is one.
@@ -189,6 +295,14 @@ public final class MarkdownEditorController {
     /// ``MarkdownPrintRenderer``). Returns `nil` when no editor is bound. A pure
     /// read; does NOT mutate the binding or editor state.
     public func makePrintTextView(pageWidth: CGFloat) -> NSView? {
+        if let owner = semanticCoordinator {
+            do {
+                let source = try owner.exportResult().source
+                return MarkdownPrintRenderer.makePrintTextView(source: source, configuration: owner.configuration,
+                    fontName: owner.documentStorage.baseFont.fontName, fontSize: owner.documentStorage.baseFont.pointSize,
+                    baseFont: owner.documentStorage.baseFont, pageWidth: pageWidth)
+            } catch { owner.onExportFailure?(error); return nil }
+        }
         guard let coordinator, let textView = coordinator.textView else { return nil }
         let baseFont = (textView as? NativeTextView)?.baseFont ?? textView.font ?? .systemFont(ofSize: NSFont.systemFontSize)
         return MarkdownPrintRenderer.makePrintTextView(
@@ -229,25 +343,59 @@ public final class MarkdownEditorController {
         ) ?? false
     }
 
+    /// Replaces visible emphasis-projected matches as one canonical source edit.
+    /// Ranges are ordered, disjoint UTF-16 offsets in the emphasis-only visible text.
+    /// Surviving emphasis stays balanced; inserted text inherits each match's first
+    /// character style. Returns the resulting caret, or nil for a stale, protected,
+    /// read-only or unbound editor. Replace All is one native Undo operation.
+    @discardableResult
+    public func replaceEmphasisMatches(
+        in visibleRanges: [NSRange], with replacement: String, expectedSource: String,
+        actionName: String = "Replace"
+    ) -> NSRange? {
+        if let semanticCoordinator {
+            return semanticCoordinator.replaceSearchRanges(visibleRanges, with: replacement,
+                expectedText: expectedSource, actionName: actionName)
+        }
+        guard let coordinator,
+              let plan = MarkdownEmphasisEditPlanner.replacement(
+                text: replacement, visibleRanges: visibleRanges,
+                projection: MarkdownEmphasisProjection(source: expectedSource)),
+              coordinator.replaceSourceRanges(
+                [plan.replacementRange], with: plan.replacement, expectedSource: expectedSource,
+                actionName: actionName, selectionAfter: plan.selectionAfter) else { return nil }
+        return plan.selectionAfter
+    }
+
     // MARK: - Image drops (doc 26 §9)
 
     /// The places near the viewport where a dropped image can land, as source
     /// offsets, top to bottom. Empty when no editor is bound.
     public var dropSlotsNearViewport: [Int] {
-        (coordinator?.textView as? NativeTextView)?.dropSlotsNearViewport().map(\.offset) ?? []
+        if let host = semanticHost, let receipt = try? host.sourceReceipt() {
+            let view = host.owner.textView
+            return receipt.blockRanges.values.compactMap { range in
+                guard let visible = receipt.sourceMap.visibleOffset(for: .init(rawValue: range.location), affinity: .leading),
+                      let rect = host.lineRect(at: visible.rawValue), rect.intersects(view.visibleRect.insetBy(dx: 0, dy: -100)) else { return nil }
+                return range.location
+            }.sorted()
+        }
+        return (coordinator?.textView as? NativeTextView)?.dropSlotsNearViewport().map(\.offset) ?? []
     }
 
     /// Imports `drop` at `slot` through the same entry a real drop uses: the
     /// host's image hook, then the insertion at the slot mapped through any
     /// edit made meanwhile. Replays drive it; a synthetic drag cannot.
     public func importImages(_ drop: MarkdownImageDrop, at slot: Int) {
-        (coordinator?.textView as? NativeTextView)?.importImages(drop, at: slot)
+        if let semanticCoordinator { semanticCoordinator.importSemanticImages(drop, at: slot) }
+        else { (coordinator?.textView as? NativeTextView)?.importImages(drop, at: slot) }
     }
 
     /// Moves a source block through the same validated transaction used by native drags.
     /// `kind` is image, equation, diagram, code, or table; offsets are UTF-16.
     @discardableResult
     public func moveBlock(kind: String, sourceRange: NSRange, to slot: Int, copying: Bool = false) -> Bool {
+        if let semanticCoordinator { return semanticCoordinator.moveSemanticBlock(kind: kind, sourceRange: sourceRange, to: slot, copying: copying) }
         guard let coordinator, let kind = BlockMovePasteboard.Kind(rawValue: kind),
               let payload = coordinator.blockMovePayload(range: sourceRange, kind: kind) else { return false }
         return coordinator.moveBlock(payload, to: slot, copying: copying)
@@ -271,13 +419,15 @@ public final class MarkdownEditorController {
     /// Reconciles the native viewport and returns current headings/visible ranks;
     /// nil while unavailable. Publication callbacks receive this committed value directly.
     public var sectionNavigationSnapshot: MarkdownSectionNavigationSnapshot? {
+        if let semanticHost { return semanticHost.navigationSnapshot() }
         coordinator?.refreshSectionNavigation()
         return coordinator?.sectionNavigationState.snapshot
     }
 
     /// Reads a bounded excerpt, or nil when the target's editor revision has retired.
     public func sectionPreview(for target: MarkdownSectionTarget) -> MarkdownSectionPreview? {
-        coordinator?.sectionPreview(for: target)
+        if let semanticHost { return semanticHost.preview(target) }
+        return coordinator?.sectionPreview(for: target)
     }
 
     /// Scrolls without changing source, selection, Find or Undo. Input protection defers
@@ -285,7 +435,8 @@ public final class MarkdownEditorController {
     public func scrollToSection(_ target: MarkdownSectionTarget,
                                 whileValid: @escaping () -> Bool,
                                 didNavigate: @escaping (ReadingPosition) -> Void) {
-        coordinator?.scrollToSection(target, whileValid: whileValid, didNavigate: didNavigate)
+        if let semanticHost { semanticHost.scroll(to: target, whileValid: whileValid, didNavigate: didNavigate) }
+        else { coordinator?.scrollToSection(target, whileValid: whileValid, didNavigate: didNavigate) }
     }
 
     // MARK: - Reading position (D7)
@@ -294,27 +445,41 @@ public final class MarkdownEditorController {
     /// the viewport + magnification). `nil` when no editor is bound or nothing
     /// is laid out yet. A pure O(visible) read.
     public var readingPosition: ReadingPosition? {
-        (coordinator?.textView as? NativeTextView)?.readingPosition()
+        semanticHost?.readingPosition() ?? (coordinator?.textView as? NativeTextView)?.readingPosition()
+    }
+
+    /// The source offset of the line the reader is at: a quarter of the way
+    /// down the visible text, where Find and outline jumps land a heading.
+    /// For a host's "current section"; nil when unbound or not laid out.
+    public var readingLineOffset: Int? {
+        semanticHost?.readingPosition()?.anchorOffset ?? (coordinator?.textView as? NativeTextView)?.readingLineOffset()
     }
 
     /// Lands the viewport on `position` (lays out its paragraph and aligns the
     /// source line). A no-op when no editor is bound; returns whether it landed.
     @discardableResult
     public func restore(_ position: ReadingPosition) -> Bool {
-        (coordinator?.textView as? NativeTextView)?.restore(position) ?? false
+        semanticHost?.restore(position) ?? (coordinator?.textView as? NativeTextView)?.restore(position) ?? false
     }
 
     /// Defers restoration until protected native input settles. Reports the execution-time
     /// departure only after a successful restore, provided host ownership remains valid.
     public func restore(_ position: ReadingPosition, whileValid: @escaping () -> Bool,
                         didRestore: @escaping (ReadingPosition) -> Void) {
-        coordinator?.restoreWhenInputSettles(position, whileValid: whileValid, didRestore: didRestore)
+        if let semanticHost {
+            semanticHost.restore(position, whileValid: whileValid, didRestore: didRestore)
+        } else { coordinator?.restoreWhenInputSettles(position, whileValid: whileValid, didRestore: didRestore) }
     }
 
     /// Asks the editor to put the caret and the reader back after the NEXT
     /// host-driven rebuild (a reload of the same document replaces the whole
     /// storage). Call it right before assigning the new text.
     public func keepPositionAcrossNextRebuild() {
+        if let semanticHost {
+            pendingSemanticReload = true
+            semanticReloadPosition = semanticHost.readingPosition()
+            return
+        }
         guard let coordinator, let textView = coordinator.textView else { return }
         coordinator.pendingRebuildRestore = (
             (textView as? NativeTextView)?.readingPosition(),
@@ -324,7 +489,7 @@ public final class MarkdownEditorController {
 
     /// The caret (insertion point) as a UTF-16 offset; `nil` when unbound.
     public var caretLocation: Int? {
-        coordinator?.textView?.selectedRange().location
+        semanticCoordinator?.textView.selectedRange().location ?? coordinator?.textView?.selectedRange().location
     }
 
     // MARK: - Scroll seam (PageFlow fork: reading-position + navigation history)
@@ -333,7 +498,7 @@ public final class MarkdownEditorController {
     /// y — the same value the engine's own warm-tab scroll retention stores).
     /// `nil` when no editor is bound. A pure read.
     public var currentScrollOffset: CGFloat? {
-        coordinator?.textView?.enclosingScrollView?.contentView.bounds.origin.y
+        (semanticCoordinator?.textView ?? coordinator?.textView)?.enclosingScrollView?.contentView.bounds.origin.y
     }
 
     /// Scrolls the live editor to `offset` (clamped by the scroll view's own
@@ -341,7 +506,7 @@ public final class MarkdownEditorController {
     /// (Go Back/Forward) and cross-launch reading-position restore for an
     /// already-mounted editor. A no-op when no editor is bound.
     public func scroll(toOffset offset: CGFloat) {
-        guard let textView = coordinator?.textView,
+        guard let textView = semanticCoordinator?.textView ?? coordinator?.textView,
               let scrollView = textView.enclosingScrollView else { return }
         ScrollTrace.stamp("controllerSeam(scrollToOffset)")
         scrollView.contentView.scroll(to: NSPoint(x: scrollView.contentView.bounds.origin.x, y: offset))

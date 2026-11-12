@@ -41,6 +41,10 @@ extension URL {
         URL.pageFlowMarkdownExtensions.contains(pathExtension.lowercased())
     }
 
+    var pageFlowIsEPUB: Bool {
+        pathExtension.lowercased() == "epub"
+    }
+
     /// The file extensions PageFlow opens as a document tab today: PDF plus the
     /// Markdown family. The single authority the OPEN gates (`onOpenURL`,
     /// `application(open:)`, pending-URL enqueue, Recent Files) filter on, so the
@@ -48,6 +52,6 @@ extension URL {
     /// per-engine load firewalls — `PDFManager.loadDocument` stays PDF-only and a
     /// `.md` is still routed exclusively through `MarkdownDocumentManager`.
     var pageFlowIsOpenableDocument: Bool {
-        pathExtension.lowercased() == "pdf" || pageFlowIsMarkdown
+        pathExtension.lowercased() == "pdf" || pageFlowIsMarkdown || pageFlowIsEPUB
     }
 }

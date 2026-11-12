@@ -126,6 +126,7 @@ final class TabDragController {
     /// The original mouse-down window must survive until release, including
     /// when that same window is reused for a one-tab drag and later merged.
     private weak var captureWindow: NSWindow?
+    @ObservationIgnored private var captureWindowPlacement: WindowPlacement?
     private var originalCollectionBehavior: NSWindow.CollectionBehavior?
     /// Host bar rect in screen coords. Updated whenever `dragHost`
     /// changes so the tear-off threshold uses the correct anchor.
@@ -167,6 +168,7 @@ final class TabDragController {
         adoptHost(tabManager)
         captureWindow = bars[ObjectIdentifier(tabManager)]?.handle?.window
             ?? WindowRegistry.shared.window(for: tabManager)
+        captureWindowPlacement = WindowRegistry.shared.placement(for: tabManager)
         self.grabOffset = grabOffset ?? CGPoint(x: snapshot.width / 2, y: DesignTokens.tabHeight / 2)
 
         let preview = TabDragPreviewWindow(snapshot: snapshot, grabOffset: self.grabOffset)
@@ -693,7 +695,6 @@ final class TabDragController {
         preview?.close()
         preview = nil
         dragHost = nil
-        captureWindow = nil
         hostWindowFrameSize = .zero
         hostBarScreenRect = .zero
         grabOffset = .zero
@@ -703,6 +704,8 @@ final class TabDragController {
         activeDrag = nil
         isActive = false
         flushDeferredCloses()
+        captureWindow = nil
+        captureWindowPlacement = nil
     }
 
     /// Closes any TabManager whose window we kept alive during the drag
@@ -713,7 +716,9 @@ final class TabDragController {
         let pending = deferredCloseManagers
         deferredCloseManagers.removeAll()
         for manager in pending where manager.tabs.isEmpty {
-            WindowRegistry.shared.closeWindow(for: manager, onlyIfEmpty: true)
+            let registry = WindowRegistry.shared
+            let originalPlacement = registry.window(for: manager) === captureWindow ? captureWindowPlacement : nil
+            registry.closeAfterMovingLastTab(from: manager, originalPlacement: originalPlacement)
         }
     }
 
@@ -724,7 +729,8 @@ final class TabDragController {
             eventMonitor = NSEvent.addLocalMonitorForEvents(
                 matching: [.leftMouseDragged, .leftMouseUp, .keyDown]
             ) { [weak self] event in
-                self?.handleMonitoredEvent(event) ?? event
+                guard let self else { return event }
+                return self.handleMonitoredEvent(event)
             }
         }
         if resignActiveObserver == nil {

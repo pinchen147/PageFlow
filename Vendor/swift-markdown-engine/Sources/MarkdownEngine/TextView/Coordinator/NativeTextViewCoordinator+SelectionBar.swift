@@ -75,6 +75,11 @@ extension NativeTextViewCoordinator {
                 text: text as NSString, tokens: tokens, codeTokens: tokens.filter { $0.kind == .inlineCode },
                 selection: session.editor.selectedRange(), isEditable: main.isEditable
             )
+            if session.editor.selectedRange().length == 0 {
+                state.bold = session.effectiveEmphasisTraits.contains(.bold)
+                state.italic = session.effectiveEmphasisTraits.contains(.italic)
+                state.underline = session.effectiveEmphasisTraits.contains(.underline)
+            }
             state.context = session.editor.selectedRange().length > 0 ? .cellText : .none
             state.inTableCell = true
             state.textStyle = nil
@@ -92,6 +97,14 @@ extension NativeTextViewCoordinator {
         guard let found = tokens(near: selection, in: source) else { return nil }
         var state = MarkdownFormatStateCalculator.state(text: text, tokens: found.tokens, codeTokens: found.codeTokens,
                                                         selection: selection, isEditable: main.isEditable)
+        if selection.length == 0 {
+            let traits = emphasisTraits(in: main)
+            state.bold = traits.contains(.bold)
+            state.italic = traits.contains(.italic)
+            state.underline = traits.contains(.underline)
+            state.highlight = traits.contains(.highlight)
+            state.strikethrough = traits.contains(.strikethrough)
+        }
         // A fence outside a local region is unknown; keep the last known code-block context.
         if found.isLocal, publishedFormatState.context == .codeBlock, state.context != .none { state.context = .codeBlock }
         return state
@@ -144,7 +157,7 @@ extension NativeTextViewCoordinator {
     }
 
     /// The blank-line-delimited blocks around `selection`, at most 32k characters each way.
-    private static func blockRegion(around selection: NSRange, in text: NSString) -> NSRange? {
+    static func blockRegion(around selection: NSRange, in text: NSString) -> NSRange? {
         let limit = 32_768
         var start = selection.location
         let floor = max(0, start - limit)

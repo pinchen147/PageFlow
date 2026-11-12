@@ -29,6 +29,7 @@ extension NativeTextViewCoordinator {
             return
         }
         if !(textView.string as NSString).isEqual(to: text) {
+            renderedSourceIntent = nil
             isUpdatingSourceOrStyle = true
             textView.string = text
             isUpdatingSourceOrStyle = false
@@ -48,7 +49,10 @@ extension NativeTextViewCoordinator {
             return
         }
         isUpdatingSourceOrStyle = true
-        defer { isUpdatingSourceOrStyle = false }
+        defer {
+            isUpdatingSourceOrStyle = false
+            normalizeCommittedListCaret(in: textView)
+        }
         let displayText = textView.string
         let nsDisplay = displayText as NSString
         let fullRange = NSRange(location: 0, length: nsDisplay.length)
@@ -100,13 +104,16 @@ extension NativeTextViewCoordinator {
         let length = nsDisplay.length
         var styleScope: [NSRange]? = nil
         var deferred: [NSRange] = []
-        if length >= Self.viewportFirstRebuildThreshold {
+        if length >= Self.viewportFirstRebuildThreshold
+            || Self.formulaLocations(in: NSRange(location: 0, length: length), tokens: tokens).count > Self.viewportFirstRebuildFormulas {
             let focus = min(max(0, focusOffset ?? 0), max(0, length - 1))
             let start = nsDisplay.paragraphRange(for: NSRange(location: max(0, focus - Self.deferredRestyleMargin), length: 0)).location
             let end = NSMaxRange(nsDisplay.paragraphRange(for: NSRange(location: min(length - 1, focus + Self.deferredRestyleMargin), length: 0)))
-            styleScope = [NSRange(location: start, length: max(0, end - start))]
-            if start > 0 { deferred.append(NSRange(location: 0, length: start)) }
-            if end < length { deferred.append(NSRange(location: end, length: length - end)) }
+            let scope = Self.rebuildScope(NSRange(location: start, length: max(0, end - start)), focus: focus,
+                                          in: nsDisplay, tokens: tokens, visibleLines: visibleLineCapacity(of: textView))
+            styleScope = [scope]
+            if scope.location > 0 { deferred.append(NSRange(location: 0, length: scope.location)) }
+            if NSMaxRange(scope) < length { deferred.append(NSRange(location: NSMaxRange(scope), length: length - NSMaxRange(scope))) }
         }
         var ranges: [StyledRange] = []
         PerfTrace.time("rebuild.compute") {
@@ -123,6 +130,11 @@ extension NativeTextViewCoordinator {
             configuration: configuration
         )
         }
+        ranges = MarkdownAlignmentStyling.applying(
+            to: ranges, text: displayText, base: paragraph,
+            hiddenFont: NSFont(name: fontName, size: configuration.markers.hiddenMarkerFontSize)
+                ?? .systemFont(ofSize: configuration.markers.hiddenMarkerFontSize)
+        )
         }
         PerfTrace.time("rebuild.write") {
         // One ordered `setAttributes` per flattened run (base + overrides),
@@ -140,21 +152,23 @@ extension NativeTextViewCoordinator {
             theme: configuration.theme
         )
 
+        // A rebuild supersedes whatever chunks an earlier pass had queued.
+        deferredRestyleRanges.removeAll()
+        if !deferred.isEmpty { enqueueDeferredRestyle(deferred) }
+
         if let tlm = textView.textLayoutManager {
             if invalidateLayout {
                 tlm.invalidateLayout(for: tlm.documentRange)
             }
             // Before the view has a window and a width (a first mount), a
             // whole-note layout would run at width 0 and be discarded; the
-            // exact height measure lays the note out once it is sized.
-            if textView.window != nil, (textView.textContainer?.size.width ?? 0) > 1 {
+            // exact height measure lays the note out once it is sized. At the top
+            // of a note still styling, the last chunk measures it instead.
+            if textView.window != nil, (textView.textContainer?.size.width ?? 0) > 1,
+               !isAtTopWhileStyling(focusOffset: focusOffset) {
                 PerfTrace.time("rebuild.layout") { textView.ensureWholeNoteLayoutUnlessLong() }
             }
         }
-
-        // A rebuild supersedes whatever chunks an earlier pass had queued.
-        deferredRestyleRanges.removeAll()
-        if !deferred.isEmpty { enqueueDeferredRestyle(deferred) }
 
         // Reconcile wide-table overlays after layout settles. SYNC realign
         // first: layout was just ensured, so visible overlays move in the SAME
@@ -169,6 +183,13 @@ extension NativeTextViewCoordinator {
             }
         }
         }
+    }
+
+    /// Whether a rebuild leaves a note at its top with chunks to come: nowhere to restore,
+    /// nothing above the reader, so its whole-note layout waits for them.
+    func isAtTopWhileStyling(focusOffset: Int?) -> Bool {
+        !deferredRestyleRanges.isEmpty && (focusOffset ?? 0) == 0
+            && documentId.map { scrollOffsets[$0] == nil } ?? true
     }
 
     func restyleTextView(

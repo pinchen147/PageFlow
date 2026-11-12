@@ -100,6 +100,19 @@ nonisolated enum RecoveryQA {
         guard let editor, content.recoverySession != nil, empty.recoverySession != nil else {
             throw Failure("Native editor or ordinary recovery timer missing")
         }
+        // Undoing to the saved bytes can leave the previous edit in the journal
+        // until the next timer tick. Command-S must retire it immediately.
+        let end = (editor.string as NSString).length
+        editor.insertText("x", replacementRange: NSRange(location: end, length: 0))
+        content.recoverySession?.checkpoint()
+        let staged = await MarkdownRecoveryStore.shared.load()
+        guard staged.contains(where: { $0.originalURL == original && $0.source.hasSuffix("x") }) else {
+            throw Failure("Transient edit did not reach recovery")
+        }
+        editor.insertText("", replacementRange: NSRange(location: end, length: 1))
+        guard case .success = await manager.saveActiveDocument() else { throw Failure("Clean Save failed") }
+        let afterSave = await MarkdownRecoveryStore.shared.load()
+        let cleanSaveClearedDraft = !afterSave.contains { $0.originalURL == original }
         editor.insertText("\nRecovery e\u{301} 😀\n", replacementRange: NSRange(location: (editor.string as NSString).length, length: 0))
         content.editorController.commentThreads = [MarkdownCommentThread(
             anchor: MarkdownCommentAnchor(prefix: "", exact: "Recovery", suffix: ""), root: MarkdownComment(body: "Keep this comment 二")
@@ -125,6 +138,7 @@ nonisolated enum RecoveryQA {
         }
         let source = records.first { $0.originalURL == original }
         let checks = [
+            "cleanSaveClearedDraft": cleanSaveClearedDraft,
             "twoPeriodicCheckpoints": records.count == 2,
             "liveTypingCapturedBeforePublication": capturedBeforeModelPublication,
             "exactNativeText": source.map { parts($0).body.hasSameSource(as: expectedBody) } ?? false,

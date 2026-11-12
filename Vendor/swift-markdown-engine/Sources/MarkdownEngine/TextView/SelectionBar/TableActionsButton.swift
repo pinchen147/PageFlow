@@ -4,7 +4,7 @@ import AppKit
 /// the table's visible right edge (22 pt out, or 34 pt in when the editor has
 /// less than 50 pt to spare). It opens "Table actions": Edit table source and
 /// Delete table. It lives in the editor's scroll view, above the text.
-final class TableActionsButton: NSView {
+final class TableActionsButton: NSView, NSViewToolTipOwner {
     weak var controller: TableActionsController?
     var isHovered = false { didSet { if isHovered != oldValue { needsDisplay = true } } }
     var isMenuOpen = false { didSet { if isMenuOpen != oldValue { needsDisplay = true } } }
@@ -15,7 +15,7 @@ final class TableActionsButton: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("More actions")
-        toolTip = "More actions (⌘F6)"
+        addToolTip(bounds, owner: self, userData: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -29,7 +29,16 @@ final class TableActionsButton: NSView {
     }
     override func accessibilityPerformShowMenu() -> Bool { accessibilityPerformPress() }
     override func isAccessibilityExpanded() -> Bool { isMenuOpen }
-    override func accessibilityHelp() -> String? { toolTip }
+    private var helpText: String {
+        guard let shortcut = controller?.focusShortcut else { return "More actions" }
+        return "More actions (\(shortcut.displayString))"
+    }
+
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        helpText
+    }
+
+    override func accessibilityHelp() -> String? { helpText }
     override var focusRingMaskBounds: NSRect { bounds }
     override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8).fill() }
 
@@ -84,6 +93,7 @@ final class TableActionsController {
     private weak var coordinator: NativeTextViewCoordinator?
     private weak var scrollView: NSScrollView?
     let button = TableActionsButton()
+    var focusShortcut: MarkdownKeyChord? { coordinator?.keyBindings[.focusSelectionBar].first }
     private(set) var menu: TableMenuView?
     /// The table under the pointer, set by the hover chrome.
     var hoveredTable: NSRange? { didSet { if hoveredTable != oldValue { update() } } }
@@ -188,9 +198,9 @@ final class TableActionsController {
             ]
         }
         items += [
-            Item("Edit table source", symbol: nil) { [weak session] in session?.editTableSource(nil) },
+            Item("Edit Table Source", symbol: nil) { [weak session] in session?.editTableSource(nil) },
             .separator,
-            Item("Delete table", symbol: nil, isDanger: true) { [weak session] in
+            Item("Delete Table", symbol: nil, isDanger: true) { [weak session] in
                 guard let session else { return }
                 session.setCellSelection(nil)
                 // the reference editor always announces this one, even from a click.

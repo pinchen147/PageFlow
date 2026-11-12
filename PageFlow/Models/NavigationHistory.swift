@@ -13,6 +13,12 @@ import Foundation
 ///
 /// The owner (PDFManager) supplies the current page on each step and applies the
 /// returned target; this type never touches the `PDFView` or the manager's state.
+/// The rule for Back in every document with pages: a jump that changes the page
+/// records it; a jump to the page in view records nothing and leaves Forward.
+nonisolated enum BackRule {
+    static func records(from currentPage: Int, to target: Int) -> Bool { currentPage != target }
+}
+
 /// `canGoBack`/`canGoForward` are read through PDFManager's computed forwarders,
 /// so SwiftUI still invalidates when the history changes (the stored `var` is the
 /// observed property).

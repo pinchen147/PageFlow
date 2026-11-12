@@ -18,13 +18,12 @@ struct SidebarView: View {
     @Bindable var pdfManager: PDFManager
     @Bindable var bookmarkManager: BookmarkManager
     @Binding var isEditingPages: Bool
+    /// What it shows: the tab's, since this view unmounts while the tab is hidden.
+    @Binding var mode: SidebarMode
     let items: [OutlineItem]
     let onClose: () -> Void
 
-    @State private var mode: SidebarMode = .outline
     @State private var editingBookmarkID: UUID?
-    @State private var editingTitle: String = ""
-    @FocusState private var isEditingBookmarkFocused: Bool
 
     var body: some View {
         GlassSidebarShell {
@@ -69,8 +68,7 @@ struct SidebarView: View {
     private func outlineItemRow(_ item: OutlineItem) -> some View {
         Button {
             if let index = item.pageIndex {
-                pdfManager.pushNavigationState()
-                pdfManager.goToPage(index)
+                pdfManager.jump(toPage: index)
             }
         } label: {
             HStack {
@@ -118,74 +116,17 @@ struct SidebarView: View {
     }
 
     private func bookmarkRow(_ bookmark: BookmarkModel) -> some View {
-        HStack {
-            Button {
-                if editingBookmarkID == nil {
-                    pdfManager.pushNavigationState()
-                    bookmarkManager.selectBookmark(bookmark.id)
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "bookmark.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-
-                    if editingBookmarkID == bookmark.id {
-                        TextField("", text: $editingTitle)
-                            .textFieldStyle(.plain)
-                            .focused($isEditingBookmarkFocused)
-                            .onSubmit { commitBookmarkEdit(bookmark.id) }
-                            .onExitCommand { cancelBookmarkEdit() }
-                    } else {
-                        Text(bookmark.title)
-                            .lineLimit(1)
-                            .onTapGesture { startEditingBookmark(bookmark) }
-                    }
-
-                    Spacer()
-                    Text("\(bookmark.pageIndex + 1)")
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, DesignTokens.spacingXS)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .pageFlowClickCursor(when: editingBookmarkID == nil)
-
-            Button {
-                bookmarkManager.removeBookmark(bookmark.id)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
-            }
-            .buttonStyle(.plain)
-            .pageFlowClickCursor()
-            .opacity(0.6)
-        }
-    }
-
-    // MARK: - Bookmark Editing
-
-    private func startEditingBookmark(_ bookmark: BookmarkModel) {
-        editingBookmarkID = bookmark.id
-        editingTitle = bookmark.title
-        isEditingBookmarkFocused = true
-    }
-
-    private func commitBookmarkEdit(_ id: UUID) {
-        let trimmed = editingTitle.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty {
-            bookmarkManager.renameBookmark(id, to: trimmed)
-        }
-        editingBookmarkID = nil
-        editingTitle = ""
-    }
-
-    private func cancelBookmarkEdit() {
-        editingBookmarkID = nil
-        editingTitle = ""
+        SidebarBookmarkRow(
+            id: bookmark.id,
+            title: bookmark.title,
+            pageLabel: "\(bookmark.pageIndex + 1)",
+            editingID: $editingBookmarkID,
+            onSelect: {
+                pdfManager.jump(toPage: bookmark.pageIndex)
+                bookmarkManager.selectBookmark(bookmark.id)
+            },
+            onRename: { bookmarkManager.renameBookmark(bookmark.id, to: $0.trimmingCharacters(in: .whitespaces)) },
+            onRemove: { bookmarkManager.removeBookmark(bookmark.id) }
+        )
     }
 }

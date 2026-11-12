@@ -15,7 +15,7 @@
 //  `previous()`. Not `AnyObject`-constrained, so a lightweight value type conforms.
 //
 
-import Foundation
+import AppKit
 
 /// The narrow surface the shared Find bar reads and drives. 1-based `currentMatch`
 /// matches the "N of M" the bar shows; `resultCount` is M. Stepping (`next`/
@@ -37,6 +37,9 @@ protocol FindDriving {
 
     /// Total number of matches for the current query (M in "N of M").
     var resultCount: Int { get }
+
+    /// Includes the debounce interval while a query waits to run.
+    var isSearching: Bool { get }
 
     /// The focused match, 1-based (N in "N of M"); 0 when there are no results.
     var currentMatch: Int { get }
@@ -60,9 +63,17 @@ protocol FindDriving {
 
     /// Reset the backend: clear the query, results, and any highlights.
     func clear()
+
+    /// The focused match's words, for Copy with the Find field holding the keyboard.
+    var currentMatchText: String? { get }
 }
 
 extension FindDriving {
+    var resultStatus: String {
+        if hasResults { return "\(currentMatch) of \(resultCount)" }
+        return isSearching ? "Searching…" : "No results"
+    }
+
     func scheduleSearch() { runSearch() }
     var hasResults: Bool { resultCount > 0 }
 }
@@ -76,4 +87,10 @@ protocol FindReplacing: FindDriving {
     func setShowingReplacement(_ showing: Bool)
     @discardableResult func replaceCurrent() -> Bool
     @discardableResult func replaceAll() -> Int
+}
+
+/// Optional results list: the bar offers a button that shows every match.
+@MainActor
+protocol FindResultsListing: FindDriving {
+    func showResultsList()
 }

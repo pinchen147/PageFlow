@@ -1,12 +1,18 @@
 import AppKit
 import Observation
 
-/// Edit commands belong to the focused native field while it is editing. An
-/// empty field history must never fall through to the document's Undo stack.
+/// Edit commands belong to the focused text field or editor while it is editing:
+/// the Find bar, a PDF comment, a book's note, a Markdown comment. An empty field
+/// history must never fall through to the document's Undo stack, where ⌘Z would
+/// remove the mark a note belongs to. The Markdown editor is an editor too, and
+/// its history is the document's stack, so routing to it changes nothing. A table
+/// cell's editor keeps no history: its keystrokes are source edits on that stack,
+/// so its commands stay the document's.
 @MainActor
 @Observable
 final class UndoCommandRouter {
     private struct FieldState: Equatable {
+        var responderID: ObjectIdentifier?
         var ownsCommands = false
         var availability = UndoAvailability()
     }
@@ -49,8 +55,15 @@ final class UndoCommandRouter {
         // Observe the cached snapshot for menu invalidation, but resolve actual
         // focus again so a command never uses the previous field or window.
         _ = fieldState
-        if let field = fieldEditor { return Self.availability(of: field) }
+        if let field = commandOwner { return Self.availability(of: field) }
         return fallback
+    }
+
+    /// Menu commands also use this observation to leave an editable field's
+    /// shortcuts with that field. Resolve live ownership again at invocation.
+    var focusedTextView: NSTextView? {
+        _ = fieldState
+        return keyWindow()?.firstResponder as? NSTextView
     }
 
     func undo(fallback: UndoManager?) {
@@ -65,13 +78,14 @@ final class UndoCommandRouter {
         refresh()
     }
 
-    private var fieldEditor: NSTextView? {
-        guard let field = keyWindow()?.firstResponder as? NSTextView, field.isFieldEditor else { return nil }
+    private var commandOwner: NSTextView? {
+        guard let field = keyWindow()?.firstResponder as? NSTextView,
+              field.isFieldEditor || (field.isEditable && field.allowsUndo) else { return nil }
         return field
     }
 
     private func commandManager(fallback: UndoManager?) -> UndoManager? {
-        if let field = fieldEditor { return field.allowsUndo ? field.undoManager : nil }
+        if let field = commandOwner { return field.allowsUndo ? field.undoManager : nil }
         return fallback
     }
 
@@ -79,8 +93,7 @@ final class UndoCommandRouter {
         guard field.allowsUndo, let manager = field.undoManager else { return UndoAvailability() }
         // Reading canRedo can settle registrations and posts a checkpoint. Do
         // not observe checkpoints: doing so would recursively refresh this read.
-        let canRedo = manager.canRedo
-        return UndoAvailability(canUndo: manager.canUndo, canRedo: canRedo)
+        return UndoAvailability(manager)
     }
 
     private func refresh() {
@@ -92,7 +105,7 @@ final class UndoCommandRouter {
                 Task { @MainActor [weak self] in self?.refresh() }
             }
         }
-        let field = fieldEditor
+        let field = commandOwner
         let manager = field?.undoManager
         if observedManager !== manager {
             undoObservers.forEach(NotificationCenter.default.removeObserver(_:))
@@ -108,7 +121,8 @@ final class UndoCommandRouter {
                 }
             } ?? []
         }
-        let updated = FieldState(ownsCommands: field != nil, availability: field.map(Self.availability(of:)) ?? UndoAvailability())
+        let updated = FieldState(responderID: window?.firstResponder.map(ObjectIdentifier.init),
+                                 ownsCommands: field != nil, availability: field.map(Self.availability(of:)) ?? UndoAvailability())
         if updated != fieldState { fieldState = updated }
     }
 }

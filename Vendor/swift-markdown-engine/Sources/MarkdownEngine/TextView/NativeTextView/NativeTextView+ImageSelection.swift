@@ -70,8 +70,10 @@ extension NativeTextView {
         if event.type == .leftMouseDown, let coordinator = delegate as? NativeTextViewCoordinator,
            coordinator.imageControls?.routeResizeMouseDown(event, nextEvent: nextEvent) == true { return true }
         guard isEditable, event.type == .leftMouseDown, !event.modifierFlags.contains(.shift),
-              let coordinator = delegate as? NativeTextViewCoordinator, let window,
-              let hit = renderedImage(at: convert(event.locationInWindow, from: nil)) else { return false }
+              let coordinator = delegate as? NativeTextViewCoordinator, let window else { return false }
+        guard let hit = renderedImage(at: convert(event.locationInWindow, from: nil)) else {
+            return routeClickBelowImage(event)
+        }
         if window.firstResponder !== self { window.makeFirstResponder(self) }
         coordinator.selectImage(hit.image, in: self)
         coordinator.selectionBar?.imageClicked()
@@ -87,6 +89,30 @@ extension NativeTextView {
                 return true // The native dragging session now owns drag and mouse-up events.
             }
         }
+        return true
+    }
+
+    /// A click in the gap under a rendered image whose blank separator is
+    /// collapsed (Q24A) puts the caret where the next paragraph starts, or at
+    /// the end of a note the image ends; the gap is the image's, so AppKit
+    /// would place the caret on the image's line and select the image.
+    private func routeClickBelowImage(_ event: NSEvent) -> Bool {
+        guard event.clickCount == 1, let storage = textStorage,
+              let layout = textLayoutManager, let content = layout.textContentManager else { return false }
+        let point = convert(event.locationInWindow, from: nil)
+        let click = CGPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        guard let fragment = layout.textLayoutFragment(for: click) as? MarkdownTextLayoutFragment else { return false }
+        let start = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.location)
+        let end = content.offset(from: content.documentRange.location, to: fragment.rangeInElement.endLocation)
+        guard start != NSNotFound, end != NSNotFound, start < end, end <= storage.length else { return false }
+        var anchor: Int?
+        storage.enumerateAttribute(.renderedBlockImage, in: NSRange(location: start, length: end - start)) { value, range, stop in
+            if value != nil { anchor = range.location; stop.pointee = true }
+        }
+        guard let anchor, let image = renderedImageRect(at: anchor), point.y > image.maxY,
+              let caret = NativeTextViewCoordinator.caretAfterCollapsedGap(belowLineEndingAt: end, in: storage) else { return false }
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        setSelectedRange(NSRange(location: caret, length: 0))
         return true
     }
 
