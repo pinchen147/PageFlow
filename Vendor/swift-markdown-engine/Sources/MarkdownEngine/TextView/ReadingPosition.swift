@@ -18,7 +18,9 @@ public struct ReadingPosition: Codable, Equatable, Sendable {
     /// Older persisted paragraph starts remain valid first-line anchors.
     public var anchorOffset: Int
     /// Distance from the viewport's top edge down to the containing line's top,
-    /// in document points (negative when the line starts above the viewport).
+    /// in document points (negative when the line starts above the viewport). That
+    /// edge is the clip's, which runs on above the text under the host's bars, so a
+    /// note a little way down from its top reads as far as it has moved.
     public var offsetInViewport: CGFloat
     /// The view magnification the position was read at.
     public var magnification: CGFloat
@@ -45,15 +47,18 @@ public struct ReadingPositionRequest: Equatable, Sendable {
 
 extension NativeTextView {
     /// The reading position of the current viewport, or nil when nothing is
-    /// laid out: the first laid-out source line whose frame reaches below the
-    /// viewport's top edge (plus a small tolerance), and its top relative to
-    /// that edge. O(visible fragments); never forces layout.
-    func readingPosition() -> ReadingPosition? {
-        guard let tlm = textLayoutManager, let tcm = tlm.textContentManager,
+    /// laid out or the view is hidden, which has no viewport to read: the first
+    /// laid-out source line whose frame reaches below the viewport's top edge
+    /// (plus a small tolerance), and its top relative to that edge.
+    /// O(visible fragments); never forces layout.
+    func readingPosition(probeY requestedProbeY: CGFloat? = nil) -> ReadingPosition? {
+        guard !isHiddenOrHasHiddenAncestor, let tlm = textLayoutManager, let tcm = tlm.textContentManager,
               let scrollView = enclosingScrollView else { return nil }
         let visible = visibleRect
         let origin = textContainerOrigin
-        let probeY = visible.minY + 8
+        let probeY = requestedProbeY ?? visible.minY + 8
+        let clip = scrollView.contentView
+        let clipTop = convert(clip.bounds, from: clip).minY
         var found: ReadingPosition?
         let start = tlm.textViewportLayoutController.viewportRange?.location ?? tlm.documentRange.location
         tlm.enumerateTextLayoutFragments(from: start, options: []) { fragment in
@@ -70,12 +75,36 @@ extension NativeTextView {
             guard anchor != NSNotFound else { return true }
             found = ReadingPosition(
                 anchorOffset: anchor,
-                offsetInViewport: frame.minY + line.typographicBounds.minY - visible.minY,
+                offsetInViewport: frame.minY + line.typographicBounds.minY - min(visible.minY, clipTop),
                 magnification: scrollView.magnification
             )
             return false
         }
         return found
+    }
+
+    /// How far the clip moves to put a line at `offset` below the viewport's top edge,
+    /// from where the clip is: an editor just built rests above the text. A place of
+    /// exactly 0 is what a position saved before that edge was the clip's reads for
+    /// anywhere from the bars down to the text's top: it leaves a clip already there
+    /// where it is, and brings any other back to the bars.
+    private func restoreDelta(toLineAt lineTop: CGFloat, offsetInViewport: CGFloat) -> CGFloat {
+        let target = lineTop - offsetInViewport
+        guard let scrollView = enclosingScrollView else { return target - visibleRect.minY }
+        let clip = scrollView.contentView
+        let clipTop = convert(clip.bounds, from: clip).minY
+        if abs(target) > 0.01 { return target - clipTop }
+        return clipTop <= 0 ? 0 : -scrollView.contentInsets.top / max(scrollView.magnification, 0.01) - clip.bounds.minY
+    }
+
+    /// The source offset of the line a quarter of the way down the text's
+    /// visible area (below the top inset): Find and outline jumps land a
+    /// heading just above it, so the host's "current section" reads here.
+    func readingLineOffset() -> Int? {
+        guard let scrollView = enclosingScrollView else { return nil }
+        let visible = visibleRect
+        let top = visible.minY + scrollView.contentInsets.top
+        return readingPosition(probeY: top + max(0, visible.maxY - top) * 0.25)?.anchorOffset
     }
 
     /// Scrolls so the anchor's containing line sits `offsetInViewport` below the
@@ -90,7 +119,7 @@ extension NativeTextView {
         let anchor = min(position.anchorOffset, max(0, length - 1))
         guard let top = lineFrame(at: anchor)?.minY else { return false }
         ScrollTrace.stamp(String(format: "readingPositionRestore(anchor=%d)", position.anchorOffset))
-        scroll(by: top - visibleRect.minY - position.offsetInViewport, landing: anchor)
+        scroll(by: restoreDelta(toLineAt: top, offsetInViewport: position.offsetInViewport), landing: anchor)
         return true
     }
 }

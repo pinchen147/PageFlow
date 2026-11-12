@@ -34,13 +34,24 @@ final class MarkdownRecoverySession {
     func checkpoint() {
         guard !isRetired, let content, !content.documentManager.isClosed else { return }
         let document = content.documentManager
-        let body = content.editorController.currentStorageText ?? document.text
+        let body: String
+        let threads: [MarkdownCommentThread]
+        do {
+            body = try content.editorController.exportSource() ?? document.text
+            threads = try content.editorController.committedCommentThreadsForSaving(text: body)
+        } catch {
+            if !didReportFailure, let onFailure {
+                didReportFailure = true
+                onFailure(error.localizedDescription)
+            }
+            return
+        }
         let block = MarkdownContent.commentBlock(
-            for: content.editorController.commentThreadsForSaving(text: body), keeping: document.commentBlock
+            for: threads, keeping: document.commentBlock
         )
         let source = MarkdownCommentBlock.join(body: body, block: block)
         if source.hasSameSource(as: document.savedText), !document.isDirty {
-            if hasCheckpoint { store.remove(id); hasCheckpoint = false }
+            clearCheckpoint()
             return
         }
         hasCheckpoint = true
@@ -64,11 +75,18 @@ final class MarkdownRecoverySession {
         hasCheckpoint = true
     }
 
+    /// Ordered behind any pending write. Future edits can checkpoint again.
+    func clearCheckpoint() {
+        guard hasCheckpoint else { return }
+        store.remove(id)
+        hasCheckpoint = false
+    }
+
     /// Called only after a deliberate close/discard or approved termination.
     func retire() {
         isRetired = true
         timer?.cancel()
         timer = nil
-        if hasCheckpoint { store.remove(id); hasCheckpoint = false }
+        clearCheckpoint()
     }
 }

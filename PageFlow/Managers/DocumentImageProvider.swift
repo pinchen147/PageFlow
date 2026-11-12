@@ -32,6 +32,9 @@ final class DocumentImageProvider: EmbeddedImageProvider, @unchecked Sendable {
         cache.totalCostLimit = 192 * 1024 * 1024
     }
 
+    /// Drops decoded images; they decode again when next drawn.
+    func releaseDecodedImages() { cache.removeAllObjects() }
+
     func image(for request: EmbeddedImageRequest) -> NSImage? {
         guard let url = resolve(request.name) else { return nil }
         let key = url.path as NSString

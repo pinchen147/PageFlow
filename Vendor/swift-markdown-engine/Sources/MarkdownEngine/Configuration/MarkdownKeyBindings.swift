@@ -19,6 +19,9 @@ public enum MarkdownEditorKeyCommand: String, CaseIterable, Hashable, Sendable {
     case tableCellActions
     /// View-only heading disclosure commands.
     case toggleFold, collapseAll, expandAll
+    /// Word-processor alignment (⌘L / ⌘E / ⌘R / ⌘J by default in PageFlow).
+    case alignLeft, alignCenter, alignRight, alignJustify
+    case clearFormatting, moveLinesUp, moveLinesDown, insertTable
 
     /// The format the command applies, for the ones that are formats.
     var format: MarkdownFormat? {
@@ -43,15 +46,33 @@ public enum MarkdownEditorKeyCommand: String, CaseIterable, Hashable, Sendable {
         case .quote: .quote
         case .codeBlock: .codeBlock
         case .toggleChecked: .toggleChecked
+        case .alignLeft: .align(.left)
+        case .alignCenter: .align(.center)
+        case .alignRight: .align(.right)
+        case .alignJustify: .align(.justify)
+        case .clearFormatting: .clearFormatting
+        case .moveLinesUp: .moveLines(up: true)
+        case .moveLinesDown: .moveLines(up: false)
+        case .insertTable: .table
         case .comment, .toggleComments, .focusSelectionBar, .tableCellActions, .toggleFold, .collapseAll, .expandAll: nil
         }
     }
 
-    /// Commands that change whole lines; in a table cell they do nothing.
+    /// In a table cell these align the cell's column instead of its lines.
+    var alignsTableColumn: Bool {
+        switch self {
+        case .alignLeft, .alignCenter, .alignRight: true
+        default: false
+        }
+    }
+
+    /// Commands that change whole lines; in a table cell they do nothing
+    /// (Align Left, Center and Right align the cell's column instead).
     var isBlock: Bool {
         switch self {
         case .paragraph, .heading1, .heading2, .heading3, .heading4, .heading5, .heading6,
-             .bulletedList, .numberedList, .checklist, .quote, .codeBlock, .toggleChecked: true
+             .bulletedList, .numberedList, .checklist, .quote, .codeBlock, .toggleChecked,
+             .alignLeft, .alignCenter, .alignRight, .alignJustify, .moveLinesUp, .moveLinesDown, .insertTable: true
         default: false
         }
     }
@@ -59,7 +80,8 @@ public enum MarkdownEditorKeyCommand: String, CaseIterable, Hashable, Sendable {
 
 /// A key and its modifiers. `key` is the character the key types with no
 /// modifiers ("b", "8", "["), or a named key: "return", "tab", "space",
-/// "delete", "escape", "up", "down", "left", "right", "f1"…"f12".
+/// "delete", "deleteforward", "escape", "home", "end", "pageup", "pagedown",
+/// "up", "down", "left", "right", "f1"…"f12".
 public struct MarkdownKeyChord: Hashable, Sendable {
     public var key: String
     public var command: Bool
@@ -88,9 +110,18 @@ public struct MarkdownKeyChord: Hashable, Sendable {
             || event.charactersIgnoringModifiers?.lowercased() == key
     }
 
+    /// The chord as a menu shows it: ⌃⌥⇧⌘ then the key ("⌥⇧C").
+    public var displayString: String {
+        let named = ["return": "↩", "tab": "⇥", "space": "Space", "delete": "⌫", "deleteforward": "⌦", "escape": "⎋",
+                     "left": "←", "right": "→", "down": "↓", "up": "↑"]
+        return (control ? "⌃" : "") + (option ? "⌥" : "") + (shift ? "⇧" : "") + (command ? "⌘" : "")
+            + (named[key] ?? key.uppercased())
+    }
+
     /// Key codes of the named keys (Return and keypad Enter are one key).
     static let namedKeys: [String: Set<UInt16>] = [
         "return": [36, 76], "tab": [48], "space": [49], "delete": [51], "escape": [53],
+        "deleteforward": [117], "home": [115], "end": [119], "pageup": [116], "pagedown": [121],
         "left": [123], "right": [124], "down": [125], "up": [126],
         "f1": [122], "f2": [120], "f3": [99], "f4": [118], "f5": [96], "f6": [97],
         "f7": [98], "f8": [100], "f9": [101], "f10": [109], "f11": [103], "f12": [111],
@@ -126,7 +157,7 @@ public struct MarkdownKeyBindings: Equatable, Sendable {
         .italic: [MarkdownKeyChord("i", command: true)],
         .underline: [MarkdownKeyChord("u", command: true)],
         .strikethrough: [MarkdownKeyChord("x", command: true, shift: true)],
-        .paragraph: [MarkdownKeyChord("0", command: true, option: true)],
+        .paragraph: [MarkdownKeyChord("7", command: true, option: true)],
         .heading1: [MarkdownKeyChord("1", command: true, option: true)],
         .heading2: [MarkdownKeyChord("2", command: true, option: true)],
         .heading3: [MarkdownKeyChord("3", command: true, option: true)],
@@ -139,7 +170,8 @@ public struct MarkdownKeyBindings: Equatable, Sendable {
         .toggleChecked: [MarkdownKeyChord("return", command: true)],
         .comment: [MarkdownKeyChord("m", command: true, option: true), MarkdownKeyChord("m", option: true, control: true)],
         .toggleComments: [MarkdownKeyChord("c", shift: true, option: true)],
-        .focusSelectionBar: [MarkdownKeyChord("f6"), MarkdownKeyChord("f6", command: true)],
+        // F6, ⌘F6 and ⌥F10 (doc 24 §5.11.2): the bar, else the caret's table's "…".
+        .focusSelectionBar: [MarkdownKeyChord("f6"), MarkdownKeyChord("f6", command: true), MarkdownKeyChord("f10", option: true)],
         .tableCellActions: [MarkdownKeyChord("f10", shift: true)],
     ])
 }

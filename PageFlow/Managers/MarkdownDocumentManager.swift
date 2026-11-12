@@ -18,7 +18,7 @@
 //  block, and the file is their join (`source`).
 //
 
-import Foundation
+import AppKit
 import MarkdownEngine
 import os.log
 
@@ -130,7 +130,7 @@ final class MarkdownDocumentManager {
     // Dirty compares against what disk will hold once queued writes land, so
     // undoing back to the old saved text mid-save still reads as unsaved.
     var isDirty: Bool {
-        hasRecoveredChanges || hasPendingExternalOverwrite || isBackingFileMissing
+        sourceExportFailure != nil || hasRecoveredChanges || hasPendingExternalOverwrite || isBackingFileMissing
             || !source.hasSameSource(as: queuedWrite?.text ?? savedText)
     }
 
@@ -223,6 +223,7 @@ final class MarkdownDocumentManager {
     /// A decoded candidate holds its scope until delivery accepts or discards it.
     struct PreparedOpen: Sendable {
         let access: MarkdownFileAccess
+        var originalData: Data? = nil
         let decoded: TextFileCodec.Decoded
         let body: String
         let comments: String
@@ -249,7 +250,7 @@ final class MarkdownDocumentManager {
         let parts = MarkdownCommentBlock.split(decoded.text)
         let date = (try? FileManager.default.attributesOfItem(atPath: access.url.path))?[.modificationDate] as? Date
         PerfTrace.stamp("load.decoded")
-        return PreparedOpen(access: access, decoded: decoded, body: parts.body, comments: parts.block,
+        return PreparedOpen(access: access, originalData: data, decoded: decoded, body: parts.body, comments: parts.block,
                             modificationDate: date, byteCount: data.count)
     }
 
@@ -270,6 +271,9 @@ final class MarkdownDocumentManager {
         isClosed = false
         hasRecoveredChanges = false
         recoveredTitle = nil
+        sourceExportFailure = nil
+        loadOriginData = prepared.originalData
+        preparedSourceBytes = nil
         fileAccess = prepared.access
         fileSession.reset(access: prepared.access, fidelity: prepared.decoded.fidelity)
         text = prepared.body
@@ -278,6 +282,7 @@ final class MarkdownDocumentManager {
         acknowledgedDiskSource = prepared.decoded.text
         fidelity = prepared.decoded.fidelity
         documentURL = prepared.access.url
+        resetLineEndingsAfterRead()
         encodingWasDowngraded = prepared.decoded.fidelity.savedAsDowngradedUTF8
         contentModificationDate = prepared.modificationDate
         hasPendingExternalOverwrite = false
@@ -360,6 +365,11 @@ final class MarkdownDocumentManager {
         isClosed = true
         acknowledgedDiskSource = nil
         fileAccess = nil
+        loadOriginData = nil
+        preparedSourceBytes = nil
+        sourceExportFailure = nil
+        nativeStorage = nil
+        resetLineEndingsAfterRead()
         fileSession.reset(access: nil, fidelity: .utf8LF)
     }
 
@@ -516,6 +526,9 @@ final class MarkdownDocumentManager {
         let decoded = TextFileCodec.decode(data)
         documentEpoch &+= 1
         queuedWrite = nil
+        sourceExportFailure = nil
+        loadOriginData = data
+        preparedSourceBytes = nil
         fileSession.reset(access: fileAccess, fidelity: decoded.fidelity)
         let parts = MarkdownCommentBlock.split(decoded.text)
         text = parts.body
@@ -523,6 +536,7 @@ final class MarkdownDocumentManager {
         savedText = decoded.text
         acknowledgedDiskSource = decoded.text
         fidelity = decoded.fidelity
+        resetLineEndingsAfterRead()
         encodingWasDowngraded = decoded.fidelity.savedAsDowngradedUTF8
         contentModificationDate = modificationDate(of: url)
         hasPendingExternalOverwrite = false
@@ -531,6 +545,7 @@ final class MarkdownDocumentManager {
     }
 
     private struct ReloadRead: Sendable {
+        var originalData: Data? = nil
         let decoded: TextFileCodec.Decoded
         let body: String
         let comments: String
@@ -543,7 +558,7 @@ final class MarkdownDocumentManager {
         let decoded = TextFileCodec.decode(data)
         let parts = MarkdownCommentBlock.split(decoded.text)
         let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
-        return ReloadRead(decoded: decoded, body: parts.body, comments: parts.block, modificationDate: date)
+        return ReloadRead(originalData: data, decoded: decoded, body: parts.body, comments: parts.block, modificationDate: date)
     }
 
     /// Focus-triggered reloads never read/decode/stat on the main actor. A read
@@ -576,12 +591,16 @@ final class MarkdownDocumentManager {
         willApply()
         documentEpoch &+= 1
         queuedWrite = nil
+        sourceExportFailure = nil
+        loadOriginData = read.originalData
+        preparedSourceBytes = nil
         fileSession.reset(access: fileAccess, fidelity: read.decoded.fidelity)
         text = read.body
         commentBlock = read.comments
         savedText = read.decoded.text
         acknowledgedDiskSource = read.decoded.text
         fidelity = read.decoded.fidelity
+        resetLineEndingsAfterRead()
         encodingWasDowngraded = read.decoded.fidelity.savedAsDowngradedUTF8
         contentModificationDate = read.modificationDate
         hasPendingExternalOverwrite = false
@@ -631,7 +650,74 @@ final class MarkdownDocumentManager {
 
     // MARK: - Private
 
+    /// A failed live export must never admit a write of the previous binding snapshot.
+    var sourceExportFailure: String?
+    @ObservationIgnored private weak var nativeStorage: NSTextStorage?
+    @ObservationIgnored private weak var nativeUndoManager: UndoManager?
+    @ObservationIgnored private var nativeLineEndings: NativeMixedLineEndings?
+
+    @ObservationIgnored private var detachedBodyEndings: MixedLineEndings?
+
+    private var nativeBodyEndings: MixedLineEndings? {
+        if let nativeLineEndings { return nativeLineEndings.snapshot(matching: text) }
+        guard let detachedBodyEndings, detachedBodyEndings.source.hasSameSource(as: text) else { return nil }
+        return detachedBodyEndings
+    }
+
+    func bindLineEndings(to storage: NSTextStorage?, undoManager: UndoManager?) {
+        let previous = nativeBodyEndings
+        nativeStorage = storage
+        nativeUndoManager = undoManager
+        nativeLineEndings = nil
+        detachedBodyEndings = storage == nil ? previous : nil
+        if let storage, let layout = previous ?? fidelity.mixedLineEndings {
+            nativeLineEndings = NativeMixedLineEndings(storage: storage, source: text, layout: layout,
+                                                        defaultEnding: fidelity.lineEnding, undoManager: undoManager)
+        }
+    }
+
+    private func resetLineEndingsAfterRead() {
+        nativeLineEndings = nil
+        detachedBodyEndings = nil
+        bindLineEndings(to: nativeStorage, undoManager: nativeUndoManager)
+    }
+
+    private var loadOriginData: Data?
+    private var preparedSourceBytes: (source: String, data: Data)?
+
+    func prepareSemanticBytes(originSource: String, body: String, pieces: [TextFileOrigin.Piece]) throws {
+        preparedSourceBytes = nil
+        guard let loadOriginData else { return }
+        let origin = try TextFileOrigin(data: loadOriginData)
+        let originalBody = MarkdownCommentBlock.split(origin.text).body
+        guard originalBody.hasSameSource(as: originSource), body.hasSameSource(as: text) else {
+            throw TextFileOrigin.Failure.unsupportedSource
+        }
+        let suffix = String(source.dropFirst(body.count))
+        let originalSuffix = String(origin.text.dropFirst(originalBody.count))
+        let suffixPiece: TextFileOrigin.Piece = suffix.hasSameSource(as: originalSuffix)
+            ? .original(NSRange(location: originalBody.utf16.count, length: originalSuffix.utf16.count))
+            : .generated(suffix)
+        preparedSourceBytes = (source, try origin.composing(pieces + [suffixPiece]))
+    }
+
+    private var writePreparationFailure: String? {
+        if let sourceExportFailure { return sourceExportFailure }
+        if let preparedSourceBytes, !preparedSourceBytes.source.hasSameSource(as: source) {
+            return "The document changed after its save snapshot was prepared. Please save again."
+        }
+        return nil
+    }
+
+    private var admittedBytes: Data? {
+        guard let preparedSourceBytes, preparedSourceBytes.source.hasSameSource(as: source) else { return nil }
+        return preparedSourceBytes.data
+    }
+
     private func performAsyncWrite(target: MarkdownFileSession.Target) async -> SaveCompletion {
+        if let failure = writePreparationFailure {
+            return SaveCompletion(didWrite: false, isCurrent: true, failureReason: failure)
+        }
         let interval = Self.signposter.beginInterval("markdown.save")
         defer { Self.signposter.endInterval("markdown.save", interval) }
         pendingWrites += 1
@@ -649,7 +735,8 @@ final class MarkdownDocumentManager {
         }
         let epoch = documentEpoch
         let source = source
-        let ticket = fileSession.admit(text: source, target: target, epoch: epoch,
+        let ticket = fileSession.admit(text: source, preparedData: admittedBytes, nativeBody: nativeBodyEndings,
+                                       target: target, epoch: epoch,
                                        overwriteGeneration: externalOverwriteGeneration)
         queuedWrite = (ticket.sequence, source)
         let session = fileSession
@@ -663,7 +750,9 @@ final class MarkdownDocumentManager {
     }
 
     private func performSyncWrite(target: MarkdownFileSession.Target) -> Bool {
-        let ticket = fileSession.admit(text: source, target: target, epoch: documentEpoch,
+        guard writePreparationFailure == nil else { return false }
+        let ticket = fileSession.admit(text: source, preparedData: admittedBytes, nativeBody: nativeBodyEndings,
+                                       target: target, epoch: documentEpoch,
                                        overwriteGeneration: externalOverwriteGeneration)
         applySaved(fileSession.drain(through: ticket.sequence))
         resolveQueuedWrite(through: ticket.sequence)

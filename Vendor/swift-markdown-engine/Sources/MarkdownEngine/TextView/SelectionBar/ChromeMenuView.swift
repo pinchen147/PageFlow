@@ -51,7 +51,7 @@ final class ChromeMenuView: NSView {
         static let separator = Row()
     }
 
-    private let rows: [Row]
+    let rows: [Row]
     private var rowFrames: [NSRect] = []
     private var focused: Int?
     private var onClose: (() -> Void)?
@@ -72,6 +72,12 @@ final class ChromeMenuView: NSView {
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override var wantsUpdateLayer: Bool { false }
+
+    /// The keyboard/hover target's label, available to accessibility clients.
+    override func accessibilityValue() -> Any? {
+        guard let focused, rows.indices.contains(focused), !rows[focused].isSeparator else { return nil }
+        return rows[focused].title
+    }
 
     /// Open `rows` 4 pt below `trigger` inside `host`; `onClose` runs once when it closes.
     @discardableResult

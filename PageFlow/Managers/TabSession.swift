@@ -17,9 +17,15 @@ import Observation
 /// when a tab is moved between windows. Not persisted.
 struct TabUIState: Sendable {
     var showingOutline = false
+    /// What a PDF's or a book's sidebar shows: the view of it unmounts while
+    /// the tab is hidden, so the mode lives with the tab.
+    var pdfSidebarMode = SidebarMode.outline
+    var epubSidebarSection = EPUBReaderSidebar.Section.contents
     var showingComments = false
     var showingGoToPage = false
     var isEditingPages = false
+    /// Find is the tab's: its bar, with the query and matches on its content.
+    var showingSearch = false
 }
 
 /// Cached undo can-undo/can-redo, mirrored from an `UndoManager`'s
@@ -28,6 +34,25 @@ struct TabUIState: Sendable {
 struct UndoAvailability: Equatable {
     var canUndo = false
     var canRedo = false
+    /// The Edit menu's titles, naming the step ("Undo Highlight").
+    var undoTitle = "Undo"
+    var redoTitle = "Redo"
+
+    init(canUndo: Bool = false, canRedo: Bool = false, undoTitle: String = "Undo", redoTitle: String = "Redo") {
+        self.canUndo = canUndo
+        self.canRedo = canRedo
+        self.undoTitle = canUndo ? undoTitle : "Undo"
+        self.redoTitle = canRedo ? redoTitle : "Redo"
+    }
+
+    /// What `manager` can undo and redo now, with its titles.
+    init(_ manager: UndoManager) {
+        let canUndo = manager.canUndo
+        let canRedo = manager.canRedo
+        self.init(canUndo: canUndo, canRedo: canRedo,
+                  undoTitle: canUndo ? manager.undoMenuItemTitle : "Undo",
+                  redoTitle: canRedo ? manager.redoMenuItemTitle : "Redo")
+    }
 }
 
 /// A per-tab undo stack plus its observable availability mirror — the ONE
@@ -67,7 +92,7 @@ final class UndoAvailabilityMirror {
     }
 
     private func refresh() {
-        let updated = UndoAvailability(canUndo: manager.canUndo, canRedo: manager.canRedo)
+        let updated = UndoAvailability(manager)
         if availability != updated {
             availability = updated
         }
@@ -158,7 +183,10 @@ final class PDFContent {
     /// forcing the reused `PDFView` to re-project. A no-op without a document.
     func restoreViewSnapshot() {
         if pdfManager.hasDocument {
+            // Coming back isn't the reader going to a page: a waiting restore stands.
+            let restore = pdfManager.pendingScrollRestore
             pdfManager.goToPage(viewSnapshot.pageIndex)
+            pdfManager.pendingScrollRestore = restore
             if !pdfManager.isAutoScaling {
                 pdfManager.restoreZoom(viewSnapshot.scaleFactor)
             }
@@ -194,6 +222,7 @@ final class PDFContent {
             switch mutation {
             case .inserted(let index):
                 bookmarkManager?.handlePageInsertion(at: index)
+                commentManager?.adoptCopiedComments(onPageAt: index)
                 commentManager?.reconcilePageIndices()
             case .deleted(let index):
                 bookmarkManager?.handlePageDeletion(at: index)
@@ -214,6 +243,10 @@ final class PDFContent {
 /// this adds the open/save predicates that were formerly `switch` arms in
 /// `TabSession`/`DirtyDoc`, now owned by the content itself.
 extension PDFContent: TabDocument {
+    func ownsAnnotationResponder(_ responder: NSResponder?) -> Bool {
+        CommentTextView.owns(responder, owner: commentManager)
+    }
+
     var restoreBookmark: Data? { pdfManager.securityScopedBookmark }
 
     var hasContent: Bool { pdfManager.hasDocument }
@@ -244,6 +277,7 @@ extension PDFContent: TabDocument {
 enum TabContent {
     case pdf(PDFContent)
     case markdown(MarkdownContent)
+    case epub(EPUBContent)
 
     /// The PDF backend if this is a PDF tab, else nil. The narrow seam every
     /// PDF-specific accessor optional-chains through.
@@ -256,6 +290,10 @@ enum TabContent {
         if case .markdown(let content) = self { return content } else { return nil }
     }
 
+    var epub: EPUBContent? {
+        if case .epub(let content) = self { return content } else { return nil }
+    }
+
     /// The content kind for chrome routing (tab icon / toolbar item set / sidebar)
     /// — the tiny value the chrome layer branches on without touching the managers.
     /// Exhaustive so a new content type must declare its kind.
@@ -263,6 +301,7 @@ enum TabContent {
         switch self {
         case .pdf: return .pdf
         case .markdown: return .markdown
+        case .epub: return .epub
         }
     }
 }
@@ -318,6 +357,10 @@ final class TabSession {
         TabSession(id: id, content: .markdown(MarkdownContent(documentId: "\(id.uuidString).\(UUID().uuidString.prefix(8))")))
     }
 
+    static func epub(id: UUID, url: URL, isSecurityScoped: Bool) -> TabSession {
+        TabSession(id: id, content: .epub(EPUBContent(url: url, isSecurityScoped: isSecurityScoped)))
+    }
+
     /// Designated initializer taking explicit content. Private: the pdf entry is
     /// `init(id:)` and the markdown entry is `markdown(id:)`; both funnel here.
     private init(id: UUID, content: TabContent) {
@@ -359,6 +402,12 @@ final class TabSession {
     /// content type and rides intact when a tab moves windows. It was formerly
     /// stored on `PDFContent`, which silently no-op'd all setters for Markdown.
     var uiState = TabUIState()
+
+    /// When this tab was last hidden, until it has given memory back; nil
+    /// while shown. Rides with the tab, so a move doesn't restart its clock.
+    @ObservationIgnored var hiddenSince: Date?
+    /// The book being laid out for the print panel, so ⌘P can't start two.
+    @ObservationIgnored var printPreparation: Task<Void, Never>?
 
     /// An admitted Markdown open travels with the tab while its old content
     /// remains usable. Closing or replacing the session cancels delivery.
@@ -425,6 +474,7 @@ final class TabSession {
     func cleanup() {
         pendingMarkdownOpen?.cancel()
         pendingMarkdownOpen = nil
+        printPreparation?.cancel()
         content.document.cleanup()
     }
 

@@ -133,6 +133,7 @@ extension MarkdownCommentsController {
         closeComposer()
         arriving = thread.id
         store.add(thread, range: made.range)
+        semanticAnchors?.posted(thread)
         announce("Comment posted")
         returnToText(caret: NSMaxRange(made.range))
     }
@@ -177,6 +178,12 @@ extension MarkdownCommentsController {
     }
 
     // MARK: - ⌥⌘M
+
+    /// Whether the comment command has a selection or a comment at the caret to act on.
+    var commandHasTarget: Bool {
+        guard let main = textView else { return false }
+        return commentableSelection != nil || !store.threads(at: main.selectedRange().location).isEmpty
+    }
 
     /// Comment on the selection, or open the comment at the caret, cycling
     /// through several there (shortest anchor first).

@@ -226,10 +226,12 @@ final class ImageControlsController {
                 }
                 storage.endEditing()
             }
-            if let rect = main.renderedImageRect(at: anchor) {
-                bars.frame = rect.insetBy(dx: -12, dy: 0); bars.imageRect = NSRect(x: 12, y: 0, width: rect.width, height: rect.height)
-                bars.needsDisplay = true
-            }
+            // Place the handles from the drag itself: layout has not caught up
+            // with the new bounds yet, so the rendered rect is still the old one.
+            let rect = ImageResizeGeometry.previewRect(original: hit.1, width: width, height: height,
+                                                       alignment: target.tokens.alignment)
+            bars.frame = rect.insetBy(dx: -12, dy: 0); bars.imageRect = NSRect(x: 12, y: 0, width: rect.width, height: rect.height)
+            bars.needsDisplay = true
 #if DEBUG
             PerfTrace.add("image.resize.preview", since: resizePreviewStart)
 #endif
@@ -370,7 +372,7 @@ final class ImageControlsController {
     func cancel() { cropView?.close(applied: false); altPopover?.close(restoreFocus: false) }
 }
 
-private final class ImageResizeBars: NSView {
+final class ImageResizeBars: NSView {
     var imageRect = NSRect.zero
     var dragging = false {
         didSet { if oldValue != dragging { needsDisplay = true } }
@@ -397,7 +399,7 @@ private final class ImageResizeAccessibilityHandle: NSAccessibilityElement {
 }
 
 /// Its view paints nothing and never takes pointer input; it stays visible for a selected image.
-private final class ImageResizeAccessibilityView: NSView {
+final class ImageResizeAccessibilityView: NSView {
     var onAdjust: ((CGFloat) -> Bool)?
     private let handles = [ImageResizeAccessibilityHandle(), ImageResizeAccessibilityHandle()]
 

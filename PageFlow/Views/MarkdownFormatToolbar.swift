@@ -5,7 +5,7 @@
 //  The Markdown item set for the shared top-chrome toolbar slot, inside the
 //  same `GlassToolbarShell` as the PDF `FloatingToolbar` — identical shell,
 //  identical position (`TopChromeView`), and the SAME section structure:
-//  open | zoom cluster + sidebar toggle | actions (Bold/Italic/
+//  open | zoom cluster + sidebar toggle + Find | actions (Bold/Italic/
 //  Underline/Heading). The magnifier cluster VISUALLY zooms the document
 //  (per-document, persisted — PDF parity), the same as pinch / ⌘± / Ctrl-scroll;
 //  the base font size lives in Settings.
@@ -20,38 +20,28 @@ struct MarkdownFormatToolbar: View {
     /// The active tab's sidebar state (`TabSession.uiState.showingOutline` via
     /// `TabManager` — the same canonical slot the PDF toolbar binds).
     @Binding var showingOutline: Bool
+    /// Find, as PDF and EPUB put it after the sidebar button.
+    var canFind = true
+    var onFind: () -> Void = {}
+
+    @State private var settingsManager = SettingsManager.shared
 
     var body: some View {
         GlassToolbarShell {
-            GlassToolbarButton(icon: "doc", help: "Open a document", action: onOpenFilePicker)
+            GlassToolbarButton(icon: "doc", help: "Open a document", action: onOpenFilePicker, label: "Open")
             Divider().frame(height: 16)
-            GlassToolbarButton(
-                icon: "minus.magnifyingglass",
-                help: "Zoom out",
-                action: { content.zoomOut() },
-                disabled: content.zoomScale <= DesignTokens.markdownMinZoom + 0.0001
+            ZoomToolbarGroup(
+                canZoomOut: content.canZoomOut,
+                canZoomIn: content.canZoomIn,
+                onZoomOut: { content.zoomOut() },
+                onZoomIn: { content.zoomIn() },
+                reset: .init(help: "Actual size", disabled: !content.canResetZoom,
+                             action: { content.resetZoom() }),
+                fit: .init(isFitted: content.isWidthFitted, isAvailable: !content.isAwaitingOpen,
+                           label: "Fit Text to Window", help: "Fit the reading text to the window width",
+                           allowsRefitting: true, action: { content.zoomToFit() })
             )
-            GlassToolbarButton(
-                icon: "1.magnifyingglass",
-                help: "Actual size",
-                action: { content.resetZoom() },
-                disabled: abs(content.zoomScale - 1) < 0.0001
-            )
-            GlassToolbarButton(
-                icon: "plus.magnifyingglass",
-                help: "Zoom in",
-                action: { content.zoomIn() },
-                disabled: content.zoomScale >= DesignTokens.markdownMaxZoom - 0.0001
-            )
-            GlassToolbarButton(
-                icon: "sidebar.leading",
-                help: "Show or hide the outline",
-                action: {
-                    withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                        showingOutline.toggle()
-                    }
-                }
-            )
+            SidebarFindToolbarGroup(showingSidebar: $showingOutline, canFind: canFind, onFind: onFind)
             Divider().frame(height: 16)
             // the reference editor's host toolbar: Table, Checklist and Insert ▾; the
             // marks live on the selection bar (doc 24 §6.12).
@@ -60,7 +50,8 @@ struct MarkdownFormatToolbar: View {
                     icon: command.iconSystemName,
                     help: command.help,
                     action: { content.requestFormat(command) },
-                    disabled: !content.isFormatEnabled(command)
+                    disabled: !content.isFormatEnabled(command),
+                    label: command.title
                 )
             }
             commentsButton
@@ -76,7 +67,9 @@ struct MarkdownFormatToolbar: View {
             .pageFlowClickCursor()
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Insert")
+            // Follows the "Show button tooltips" setting like the other buttons.
+            .toolbarTooltip("Insert", enabled: settingsManager.showTooltips)
+            .accessibilityLabel("Insert")
         }
     }
 
@@ -84,8 +77,10 @@ struct MarkdownFormatToolbar: View {
     /// are hidden (with the open count as a badge), "All comments" in the
     /// margin, "Floating comments" in the list.
     private var commentsButton: some View {
-        GlassToolbarButton(icon: "bubble.left", help: content.commentsButtonHelp, action: { content.toggleCommentsList() })
-            .accessibilityLabel("Comments")
+        // PDF's comments icon, filled while the list (the panel) shows.
+        GlassToolbarButton(icon: content.isShowingCommentsList ? "bubble.right.fill" : "bubble.right",
+                           help: content.commentsButtonHelp, action: { content.toggleCommentsList() },
+                           label: "Comments", isOn: content.isShowingCommentsList)
             .overlay(alignment: .topTrailing) {
                 if let count = content.hiddenCommentBadge {
                     Text("\(count)")

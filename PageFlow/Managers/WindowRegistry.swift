@@ -44,6 +44,7 @@ final class WindowRegistry {
     private var entries: [ObjectIdentifier: Entry] = [:]
     private var mainWindowObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
     private var closeCoordinators: [ObjectIdentifier: WindowCloseCoordinator] = [:]
+    private var placementTrackers: [ObjectIdentifier: WindowPlacementTracker] = [:]
     private weak var lastActiveTabManager: TabManager?
 
     /// Holds a chosen destination until Save As publishes its committed identity.
@@ -93,6 +94,9 @@ final class WindowRegistry {
 
         if let window {
             closeCoordinators[ObjectIdentifier(tabManager)] = WindowCloseCoordinator(window: window, manager: tabManager)
+            placementTrackers[ObjectIdentifier(tabManager)] = WindowPlacementTracker(window: window) { [weak self] in
+                self?.scheduleSessionSave()
+            }
             // One-turn-deferred front-most tracking is harmless (see helper doc).
             let token = NotificationCenter.default.addMainActorObserver(
                 forName: NSWindow.didBecomeMainNotification,
@@ -101,6 +105,8 @@ final class WindowRegistry {
                 guard let self, let tabManager else { return }
                 self.lastActiveTabManager = tabManager
                 self.publishActiveWindow()
+                // ⌘` and clicks reach another window with the app already active.
+                tabManager.checkActiveMarkdownForExternalChange()
             }
             mainWindowObservers[ObjectIdentifier(tabManager)] = token
         }
@@ -117,6 +123,7 @@ final class WindowRegistry {
 
     func unregister(_ tabManager: TabManager) {
         closeCoordinators.removeValue(forKey: ObjectIdentifier(tabManager))?.detach()
+        placementTrackers.removeValue(forKey: ObjectIdentifier(tabManager))
         entries.removeValue(forKey: ObjectIdentifier(tabManager))
         if lastActiveTabManager === tabManager {
             lastActiveTabManager = nil
@@ -131,9 +138,11 @@ final class WindowRegistry {
     /// Native close is the commit point; Cancel never reaches this path.
     func finishClose(of tabManager: TabManager, window: NSWindow) {
         guard self.window(for: tabManager) === window else { return }
+        let quitting = AppDelegate.shared?.terminationApproved == true
+        if !quitting, tabManager.tabs.contains(where: tabManager.holdsDocument) { noteDocumentClosedOnPurpose() }
         tabManager.finishWindowClose()
         unregister(tabManager)
-        if AppDelegate.shared?.terminationApproved != true { scheduleSessionSave() }
+        if !quitting { scheduleSessionSave() }
     }
 
     /// Mirrors the resolved frontmost manager onto `ActiveWindowModel`, the
@@ -143,6 +152,7 @@ final class WindowRegistry {
     /// cannot route to it — commands resolve `focusedTabManager ?? frontmost`.
     private func publishActiveWindow() {
         ActiveWindowModel.shared.update(frontmostTabManager())
+        ActiveWindowModel.shared.update(windowCount: entries.values.filter { $0.window != nil }.count)
     }
 
     // MARK: - Lookups
@@ -152,6 +162,11 @@ final class WindowRegistry {
     /// own window.
     func window(for tabManager: TabManager) -> NSWindow? {
         entries[ObjectIdentifier(tabManager)]?.window
+    }
+
+    /// The manager of a document window; nil for Settings, sheets and panels.
+    func tabManager(for window: NSWindow) -> TabManager? {
+        entries.values.first { $0.window === window }?.tabManager
     }
 
     /// Content-agnostic dirty aggregation across every open window — the PDF +
@@ -169,6 +184,14 @@ final class WindowRegistry {
             .sorted { (rank($0), $0.registeredAt) < (rank($1), $1.registeredAt) }
             .flatMap { $0.tabManager.dirtyDocuments() }
     }
+
+    /// Every window's hidden tabs give back what they can.
+    func releaseHiddenTabsUnderPressure() {
+        for entry in entries.values { entry.tabManager.releaseHiddenTabsUnderPressure() }
+    }
+
+    /// Whether any window has a note open.
+    var holdsNote: Bool { entries.values.contains { $0.tabManager.holdsNote } }
 
     /// Persists every open window's active-tab reading position to the store.
     /// Called on app termination so the last position survives a quit.
@@ -219,6 +242,17 @@ final class WindowRegistry {
 
     private var sessionSaveScheduled = false
 
+    /// The reader closed a document since the last save. Only this lets a save
+    /// leave the session empty: every other way of having no document window (a
+    /// second copy of the app with a blank window, documents still downloading, a
+    /// restore that found nothing) would wipe what the next launch restores.
+    private var documentClosedSinceLastSave = false
+
+    /// A tab or window holding a document was closed, not moved and not quit.
+    func noteDocumentClosedOnPurpose() {
+        documentClosedSinceLastSave = true
+    }
+
     /// Coalesced persist of the app's file-backed tab layout. A burst of tab
     /// mutations (opening a document opens a tab AND stamps its identity, etc.)
     /// writes the store once, on the next main-runloop turn. A no-op under tests —
@@ -238,18 +272,40 @@ final class WindowRegistry {
     /// Synchronous capture + write. Used at quit (views still live) and by the
     /// coalesced schedule above.
     func persistSessionNow() {
-        SessionRestoreStore.shared.save(captureSession())
+        let session = captureSession()
+        guard !session.isEmpty || documentClosedSinceLastSave else { return }
+        documentClosedSinceLastSave = false
+        SessionRestoreStore.shared.save(session)
     }
 
-    /// The app's current file-backed session across every live window, in
-    /// registration order. Untitled windows contribute nothing (`captureWindowSession`
-    /// returns nil for an all-untitled window).
+    /// Saved windows none of whose tabs could reopen because their volume isn't
+    /// mounted now. They have no window to close, so they stay until a launch
+    /// finds the volume back, or the files gone from it.
+    var unavailableRestoreWindows: [WindowSessionState] = []
+
+    func hold(unavailableTabs tabs: [RestoreTab], placement: WindowPlacement? = nil) {
+        guard !tabs.isEmpty else { return }
+        unavailableRestoreWindows.append(WindowSessionState(tabs: tabs, activeIndex: nil, placement: placement))
+    }
+
+    /// The app's current file-backed session across every live window, back to
+    /// front (windows off the stack, such as minimized ones, furthest back, in the
+    /// order they opened). Untitled windows contribute nothing
+    /// (`captureWindowSession` returns nil for an all-untitled window).
     func captureSession() -> SessionRestoreState {
+        let stacking = NSApp.orderedWindows
+        func rank(_ entry: Entry) -> Int {
+            entry.window.flatMap { window in stacking.firstIndex { $0 === window } } ?? stacking.count
+        }
         let windows = entries.values
             .filter { $0.window != nil }
-            .sorted { $0.registeredAt < $1.registeredAt }
-            .compactMap { $0.tabManager.captureWindowSession() }
-        return SessionRestoreState(windows: windows)
+            .sorted { rank($0) != rank($1) ? rank($0) > rank($1) : $0.registeredAt < $1.registeredAt }
+            .compactMap { entry -> WindowSessionState? in
+                var window = entry.tabManager.captureWindowSession()
+                window?.placement = placement(for: entry.tabManager)
+                return window
+            }
+        return SessionRestoreState(windows: unavailableRestoreWindows + windows)
     }
 
     /// TabManager whose window was most recently main. Stays correct even
@@ -347,6 +403,13 @@ final class WindowRegistry {
         return entries.values.first { $0.window != nil && owns($0.tabManager) }?.tabManager
     }
 
+    /// The window's TabManager whose tabs hold `pdfManager`.
+    func owner(of pdfManager: PDFManager) -> TabManager? {
+        entries.values.first { entry in
+            entry.window != nil && entry.tabManager.sessions.values.contains { $0.pdfManager === pdfManager }
+        }?.tabManager
+    }
+
     /// Canonical admission happens before either synchronous or asynchronous I/O.
     /// A conflicting destination only changes focus; neither draft is written.
     func claimSaveAs(to url: URL, session: TabSession, document: any TabDocument, owner: TabManager) -> SaveAsClaim? {
@@ -421,28 +484,42 @@ final class WindowRegistry {
             }
     }
 
+    /// The managers of every open window but `tabManager`'s, frontmost first.
+    private func otherWindows(than tabManager: TabManager) -> [TabManager] {
+        allOpenTabs().map(\.tabManager).filter { $0 !== tabManager }
+    }
+
+    func canMergeAllWindows(into tabManager: TabManager) -> Bool {
+        tabManager.canMergeTabs(from: otherWindows(than: tabManager))
+    }
+
+    /// Merge All Windows: every other window's tabs come into this one.
+    func mergeAllWindows(into tabManager: TabManager) {
+        tabManager.mergeTabs(from: otherWindows(than: tabManager))
+        bringToFront(for: tabManager)
+    }
+
     /// Selects `tabID` in its window and brings that window to the front — the
     /// click-to-jump action for the Tab Switcher.
     func jumpToTab(_ tabID: UUID, in tabManager: TabManager) {
         activate(tabID, in: tabManager)
     }
 
-    /// Archives every document-backed tab of `window` into Recently Closed.
-    /// Window teardown (the red close button, or closing a multi-tab window)
-    /// never routes through `TabManager.closeTab`, so the per-tab archival there
-    /// would miss them. `ClosedTabStore.record` dedups by URL, so a tab already
-    /// archived by a per-tab close stays single.
-    func recordClosedTabs(forWindow window: NSWindow) {
-        guard let entry = entries.values.first(where: { $0.window === window }) else { return }
-        for tab in entry.tabManager.tabs {
-            ClosedTabStore.shared.record(tab)
-        }
-    }
-
     // MARK: - Window Front/Close
 
     func closeWindow(for tabManager: TabManager, onlyIfEmpty: Bool = false) {
         scheduleWindowClose(for: tabManager) { !onlyIfEmpty || $0.tabs.isEmpty }
+    }
+
+    func placement(for tabManager: TabManager) -> WindowPlacement? {
+        placementTrackers[ObjectIdentifier(tabManager)]?.placement
+    }
+
+    func closeAfterMovingLastTab(from tabManager: TabManager, originalPlacement: WindowPlacement? = nil) {
+        scheduleWindowClose(for: tabManager, beforeClose: { [weak self] manager in
+            guard let self, let session = manager.captureWindowSession() else { return }
+            self.hold(unavailableTabs: session.tabs, placement: originalPlacement ?? self.placement(for: manager))
+        }) { $0.tabs.isEmpty }
     }
 
     func closePlaceholderWindow(for tabManager: TabManager) {
@@ -452,12 +529,14 @@ final class WindowRegistry {
     /// A queued dismissal loses authority if its owner moves to another window
     /// or its empty/placeholder state changes before AppKit receives the close.
     private func scheduleWindowClose(
-        for tabManager: TabManager, when shouldClose: @escaping @MainActor (TabManager) -> Bool
+        for tabManager: TabManager, beforeClose: (@MainActor (TabManager) -> Void)? = nil,
+        when shouldClose: @escaping @MainActor (TabManager) -> Bool
     ) {
         guard let window = self.window(for: tabManager) else { return }
         DispatchQueue.main.async { [weak self, weak tabManager, weak window] in
             guard let self, let tabManager, let window,
                   self.window(for: tabManager) === window, shouldClose(tabManager) else { return }
+            beforeClose?(tabManager)
             window.close()
         }
     }
@@ -580,8 +659,14 @@ final class ActiveWindowModel {
     static let shared = ActiveWindowModel()
 
     private(set) var tabManager: TabManager?
+    /// How many windows are open, so commands that need another window update.
+    private(set) var windowCount = 0
 
     private init() {}
+
+    func update(windowCount: Int) {
+        if self.windowCount != windowCount { self.windowCount = windowCount }
+    }
 
     func update(_ tabManager: TabManager?) {
         // Skip a redundant Observation mutation when the frontmost is unchanged,

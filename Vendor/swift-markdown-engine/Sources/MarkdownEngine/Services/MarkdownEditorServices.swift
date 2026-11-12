@@ -172,6 +172,15 @@ public protocol LatexRenderer: Sendable {
     /// - Returns: A rendered result, or `nil` if the renderer cannot produce
     ///   an image (unsupported syntax, missing dependency, …).
     func render(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult?
+
+    /// `render`'s formula, at its size and baseline, as an image that draws
+    /// sharp at whatever scale it is drawn (table cells, drawn scaled under
+    /// zoom). The default is nil: the caller uses `render`'s bitmap.
+    func renderScalable(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult?
+}
+
+extension LatexRenderer {
+    public func renderScalable(latex: String, fontSize: CGFloat, theme: MarkdownEditorTheme) -> LatexRenderResult? { nil }
 }
 
 /// Output of a LaTeX render call.
@@ -281,6 +290,8 @@ public struct MarkdownEditorBus: Sendable {
     /// Posted by the host UI to scroll an in-document find match into view
     /// and highlight all matches. Expected `userInfo["range"] as? NSRange`,
     /// `userInfo["currentIndex"] as? Int`, `userInfo["allRanges"] as? [NSRange]`.
+    /// Optional `userInfo["allSourceSegments"] as? [[NSRange]]` groups precise
+    /// highlight segments by match; `allRanges` remains the navigation envelopes.
     public var findScrollToRange: Notification.Name?
     /// Posted by the host UI to clear all in-document find highlights.
     public var findClearHighlights: Notification.Name?

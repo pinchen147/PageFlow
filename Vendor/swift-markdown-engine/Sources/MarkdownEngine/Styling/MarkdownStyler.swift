@@ -23,6 +23,8 @@ extension MarkdownStyler {
         let tokens: [MarkdownToken]
         let codeTokens: [MarkdownToken]
         let activeTokenIndices: Set<Int>
+        /// The caret, or -1 in a read-only editor: the line it is on is never collapsed.
+        let caretLocation: Int
         let baseFont: NSFont
         let layoutBridge: LayoutBridge?
         let baseDefaultLineHeight: CGFloat
@@ -162,6 +164,7 @@ enum MarkdownStyler {
             tokens: tokens,
             codeTokens: codeTokens,
             activeTokenIndices: activeTokenIndices,
+            caretLocation: caretLocation,
             baseFont: baseFont,
             layoutBridge: layoutBridge,
             baseDefaultLineHeight: baseDefaultLineHeight,

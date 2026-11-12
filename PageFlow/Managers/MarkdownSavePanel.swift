@@ -24,13 +24,16 @@ enum MarkdownSavePanel {
     /// the single authority, so they can't drift from the open gate.
     static func runModal(defaultName: String) -> URL? {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = URL.pageFlowMarkdownExtensions.compactMap {
-            UTType(filenameExtension: $0)
-        }
+        panel.allowedContentTypes = allowedContentTypes
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = markdownFileName(for: defaultName)
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         return url
+    }
+
+    /// What a Markdown file may be saved as, here and in EPUB's highlight export.
+    static var allowedContentTypes: [UTType] {
+        URL.pageFlowMarkdownExtensions.compactMap { UTType(filenameExtension: $0) }
     }
 
     /// Appends a `.md` extension to `name` unless it already ends in any of the

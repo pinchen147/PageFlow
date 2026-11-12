@@ -31,6 +31,7 @@ extension NativeTextViewWrapper.Coordinator {
 
         if let fontIndex = customMenu.items.firstIndex(where: { $0.title == "Font" }) {
             customMenu.removeItem(at: fontIndex)
+            // The note's own items lead, over the system's, as a host's other documents do.
             let formatItem = NSMenuItem(title: "Format", action: nil, keyEquivalent: "")
             let formatSubmenu = NSMenu(title: "Format")
             let boldItem = NSMenuItem(title: "Bold", action: #selector(didMarkdownBold(_:)), keyEquivalent: "")
@@ -43,7 +44,7 @@ extension NativeTextViewWrapper.Coordinator {
             underlineItem.target = self
             formatSubmenu.addItem(underlineItem)
             formatItem.submenu = formatSubmenu
-            customMenu.insertItem(formatItem, at: fontIndex)
+            customMenu.insertItem(formatItem, at: 0)
 
             let headingItem = NSMenuItem(title: "Heading", action: nil, keyEquivalent: "")
             let headingSubmenu = NSMenu(title: "Heading")
@@ -54,7 +55,7 @@ extension NativeTextViewWrapper.Coordinator {
                 headingSubmenu.addItem(item)
             }
             headingItem.submenu = headingSubmenu
-            customMenu.insertItem(headingItem, at: fontIndex + 1)
+            customMenu.insertItem(headingItem, at: 1)
 
             let listItem = NSMenuItem(title: "Lists", action: nil, keyEquivalent: "")
             let listSubmenu = NSMenu(title: "Lists")
@@ -65,8 +66,8 @@ extension NativeTextViewWrapper.Coordinator {
             orderedItem.target = self
             listSubmenu.addItem(orderedItem)
             listItem.submenu = listSubmenu
-            customMenu.insertItem(listItem, at: fontIndex + 2)
-            customMenu.insertItem(NSMenuItem.separator(), at: fontIndex + 3)
+            customMenu.insertItem(listItem, at: 2)
+            customMenu.insertItem(NSMenuItem.separator(), at: 3)
         }
 
         if objectSelection != nil {
@@ -255,6 +256,7 @@ extension NativeTextViewWrapper.Coordinator {
         guard let tv = textView,
               tv.isEditable, !tv.hasMarkedText(), !isWritingToolsActive,
               let textStorage = tv.textStorage else { return }
+        if toggleEmphasis(style, in: tv) { return }
         let nsText = textStorage.mutableString
         let targetRange = inlineFormattingTargetRange(in: tv, text: nsText)
         guard targetRange.location != NSNotFound,
@@ -285,14 +287,9 @@ extension NativeTextViewWrapper.Coordinator {
 
         // ONE enclosing-token index for the whole operation → O(log tokens) per run
         // (was O(tokens) per run — the O(runs × tokens) freeze on ⌘A).
-        let emphasisKinds: Set<MarkdownTokenKind> = [.bold, .italic, .boldItalic, .underline]
-        let index = EnclosingTokenIndex(
-            tokens: scopedTokens.filter {
-                emphasisKinds.contains($0.kind)
-                    && NSIntersectionRange($0.range, targetRange).length > 0
-            },
-            style: style
-        )
+        let affectedLines = nsText.lineRange(for: targetRange)
+        let index = EnclosingTokenIndex(tokens: scopedTokens.filter { NSIntersectionRange($0.range, affectedLines).length > 0 },
+                                        style: style)
         let plans = MarkdownInlineFormatter.plans(text: nsText, targetRanges: runs, style: style, index: index)
         guard !plans.isEmpty else { return }
 
@@ -382,6 +379,10 @@ extension NativeTextViewWrapper.Coordinator {
         var preservesBlockStructure = false
         var commentMove: MarkdownCommentMove? = nil
         var folding: MarkdownFoldTransfer? = nil
+        var emphasisTyping: MarkdownEmphasisTypingState? = nil
+        var tableEmphasisTyping: MarkdownEmphasisTypingState? = nil
+        /// A cell command changes source syntax while retaining its native caret.
+        var tableSelection: MarkdownTableEditingSession.FormattingSelection? = nil
     }
 
     /// Applies `edit` through the same pinned, viewport-first path forwards
@@ -410,6 +411,7 @@ extension NativeTextViewWrapper.Coordinator {
         defer {
             isApplyingSpanEdit = false
             isTransferringFoldState = wasTransferringFolds
+            normalizeCommittedListCaret(in: tv)
         }
         let wasLiteral = isLiteralInsertion
         isLiteralInsertion = true
@@ -447,7 +449,10 @@ extension NativeTextViewWrapper.Coordinator {
             reflowsParagraphChain: edit.reflowsParagraphChain,
             preflighted: edit.preflighted, preservesBlockStructure: edit.preservesBlockStructure,
             commentMove: edit.commentMove,
-            folding: edit.folding.map { _ in foldSession.transfer(in: edit.range) }
+            folding: edit.folding.map { _ in foldSession.transfer(in: edit.range) },
+            emphasisTyping: edit.emphasisTyping.map { _ in emphasisEditor.typing },
+            tableEmphasisTyping: edit.tableEmphasisTyping.map { _ in tableEditingSession.emphasisTypingState },
+            tableSelection: edit.tableSelection?.inverse
         )
         if edit.registersUndo, let undoManager = tv.undoManager {
             undoManager.registerUndo(withTarget: self) { coordinator in
@@ -513,8 +518,14 @@ extension NativeTextViewWrapper.Coordinator {
             }
         }
         }
+        if let typing = edit.emphasisTyping { emphasisEditor.typing = typing }
         tv.breakUndoCoalescing()
         tableEditingSession.sourceDidChange(map: edit.mapLocation)
+        if let selection = edit.tableSelection { tableEditingSession.restoreFormattingSelection(selection) }
+        if let typing = edit.tableEmphasisTyping {
+            tableEditingSession.emphasisTypingState = typing
+            tableEditingSession.updateEmphasisTypingAttributes()
+        }
         // Undo and Redo of a table edit leave the caret in the table's source;
         // no selection handler sees it (`pendingEditedRange` is set), so the
         // cell takes it here.
@@ -560,26 +571,15 @@ extension NativeTextViewWrapper.Coordinator {
     }
 
     private func applyInlineFormattingPlan(_ plan: MarkdownInlineFormatPlan, in tv: NSTextView) -> Bool {
+        guard let storage = tv.textStorage else { return false }
+        let map = Self.paragraphPreservingMap(from: storage.mutableString.substring(with: plan.replacementRange),
+                                              to: plan.replacement, spanStart: plan.replacementRange.location)
+        let edit = SpanEdit(range: plan.replacementRange, replacement: plan.replacement,
+                            selectionAfter: plan.selectionAfter, actionName: plan.actionName,
+                            mapLocation: map, inverseSelection: tv.selectedRange())
         pendingInlineFormattingEdit = true
-        if tv.shouldChangeText(in: plan.replacementRange, replacementString: plan.replacement) {
-            // Same command-layer anchor as the batched path above, following
-            // the pin's paragraph through the plan's own edit.
-            let map = Self.paragraphPreservingMap(
-                from: (tv.string as NSString).substring(with: plan.replacementRange),
-                to: plan.replacement, spanStart: plan.replacementRange.location)
-            restylePreservingViewport(tv, mapPin: map) {
-                tv.breakUndoCoalescing()
-                tv.replaceCharacters(in: plan.replacementRange, with: plan.replacement)
-                tv.setSelectedRange(plan.selectionAfter)
-                tv.didChangeText()
-            }
-            tv.undoManager?.setActionName(plan.actionName)
-            tv.breakUndoCoalescing()
-            return true
-        } else {
-            pendingInlineFormattingEdit = false
-            return false
-        }
+        defer { pendingInlineFormattingEdit = false }
+        return performSpanEdit(edit, in: tv)
     }
 
     func inlineFormattingTargetRange(in textView: NSTextView, text nsText: NSString) -> NSRange {

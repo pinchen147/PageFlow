@@ -32,10 +32,22 @@ struct ShortcutAction: Identifiable, Equatable {
     /// editor handles it before the menus (MarkdownEditorConfiguration.keyBindings).
     var editorCommand: MarkdownEditorKeyCommand?
 
-    enum Scope: Equatable {
-        case app, pdf, markdown
+    enum Scope: Hashable {
+        /// `pages`: any paged document, PDF or EPUB (page turns, bookmarks, fit).
+        case app, pdf, epub, markdown, pages, pdfAndMarkdown
 
-        func overlaps(_ other: Scope) -> Bool { self == .app || other == .app || self == other }
+        func overlaps(_ other: Scope) -> Bool {
+            !contentTypes.isDisjoint(with: other.contentTypes)
+        }
+
+        private var contentTypes: Set<Scope> {
+            switch self {
+            case .app: return [.pdf, .epub, .markdown]
+            case .pages: return [.pdf, .epub]
+            case .pdfAndMarkdown: return [.pdf, .markdown]
+            case .pdf, .epub, .markdown: return [self]
+            }
+        }
     }
 
     /// Settings sections, rendered in declaration order.
@@ -47,7 +59,7 @@ struct ShortcutAction: Identifiable, Equatable {
         case view = "View"
         case zoom = "Zoom"
         case navigation = "Navigation"
-        case annotations = "Annotations (PDF)"
+        case annotations = "Annotations"
         case markdown = "PDF to Markdown"
         case tabs = "Tabs"
     }
@@ -65,7 +77,7 @@ enum ShortcutCatalog {
         ShortcutAction(id: "newWindow", title: "New Window", category: .file, defaultShortcut: ShortcutModel(key: "n", shift: true)),
         ShortcutAction(id: "openFile", title: "Open", category: .file, defaultShortcut: ShortcutModel(key: "o")),
         ShortcutAction(id: "closeTab", title: "Close Tab", category: .file, defaultShortcut: ShortcutModel(key: "w")),
-        ShortcutAction(id: "save", title: "Save", category: .file, defaultShortcut: ShortcutModel(key: "s")),
+        ShortcutAction(id: "save", title: "Save", category: .file, defaultShortcut: ShortcutModel(key: "s"), scope: .pdfAndMarkdown),
         ShortcutAction(id: "saveAs", title: "Save As", category: .file, defaultShortcut: ShortcutModel(key: "s", shift: true)),
         ShortcutAction(id: "print", title: "Print", category: .file, defaultShortcut: ShortcutModel(key: "p")),
 
@@ -74,26 +86,28 @@ enum ShortcutCatalog {
         ShortcutAction(id: "redo", title: "Redo", category: .edit, defaultShortcut: ShortcutModel(key: "z", shift: true)),
         ShortcutAction(id: "search", title: "Find", category: .edit, defaultShortcut: ShortcutModel(key: "f")),
         // ⌥⌘F: the macOS convention (Xcode, Pages).
-        ShortcutAction(id: "findAndReplace", title: "Find and Replace", category: .edit, defaultShortcut: ShortcutModel(key: "f", option: true)),
+        ShortcutAction(id: "findAndReplace", title: "Find and Replace", category: .edit, defaultShortcut: ShortcutModel(key: "f", option: true), scope: .markdown),
         ShortcutAction(id: "findNext", title: "Find Next", category: .edit, defaultShortcut: ShortcutModel(key: "g")),
         ShortcutAction(id: "findPrevious", title: "Find Previous", category: .edit, defaultShortcut: ShortcutModel(key: "g", shift: true)),
         ShortcutAction(id: "copyPage", title: "Copy Page", category: .edit, defaultShortcut: ShortcutModel(key: "c"), scope: .pdf),
         ShortcutAction(id: "cutPage", title: "Cut Page", category: .edit, defaultShortcut: ShortcutModel(key: "x"), scope: .pdf),
         ShortcutAction(id: "pastePage", title: "Paste Page", category: .edit, defaultShortcut: ShortcutModel(key: "v"), scope: .pdf),
         ShortcutAction(id: "deletePage", title: "Delete Page", category: .edit, defaultShortcut: ShortcutModel(key: "⌫"), scope: .pdf),
+        // ⌥⌘N: a new page, beside ⌘N / ⇧⌘N; ⇧ adds the file variant, as ⇧⌘R does for rotation.
+        ShortcutAction(id: "insertBlankPage", title: "Insert Blank Page", category: .edit, defaultShortcut: ShortcutModel(key: "n", option: true), scope: .pdf),
+        ShortcutAction(id: "insertPagesFromFile", title: "Insert Pages from File", category: .edit, defaultShortcut: ShortcutModel(key: "n", shift: true, option: true), scope: .pdf),
         ShortcutAction(id: "rotateClockwise", title: "Rotate Clockwise", category: .edit, defaultShortcut: ShortcutModel(key: "r"), scope: .pdf),
         ShortcutAction(id: "rotateCounterClockwise", title: "Rotate Counter-Clockwise", category: .edit, defaultShortcut: ShortcutModel(key: "r", shift: true), scope: .pdf),
 
         // Format (Markdown): the Format menu and the focused editor share these.
         format("bold", "Bold", ShortcutModel(key: "b"), .bold),
         format("italic", "Italic", ShortcutModel(key: "i"), .italic),
-        format("underline", "Underline", ShortcutModel(key: "u"), .underline),
         format("strikethrough", "Strikethrough", ShortcutModel(key: "x", shift: true), .strikethrough),
-        // ⌘E and ⌘Y stay PageFlow's (Add Comment, Highlight): no default key.
-        format("code", "Code", .none, .inlineCode),
-        format("highlight", "Highlight", .none, .highlight),
+        // ⌘E is Center, so Code takes ⇧⌘C.
+        format("code", "Code", ShortcutModel(key: "c", shift: true), .inlineCode),
         format("link", "Link", ShortcutModel(key: "k"), .link),
-        format("text", "Normal Text", ShortcutModel(key: "0", option: true), .paragraph),
+        // ⌥⌘7 after the heading run: the ⌘0 family is zoom in every tab (⌥⌘0 is Zoom to Fit).
+        format("text", "Normal Text", ShortcutModel(key: "7", option: true), .paragraph),
         format("heading", "Heading 1", ShortcutModel(key: "1", option: true), .heading1),
         format("heading2", "Heading 2", ShortcutModel(key: "2", option: true), .heading2),
         format("heading3", "Heading 3", ShortcutModel(key: "3", option: true), .heading3),
@@ -103,11 +117,19 @@ enum ShortcutCatalog {
         // ⇧⌘8 / ⇧⌘7: the word processor list chords.
         format("bulletedList", "Bulleted List", ShortcutModel(key: "8", shift: true), .bulletedList),
         format("numberedList", "Numbered List", ShortcutModel(key: "7", shift: true), .numberedList),
-        format("checklist", "Checklist", .none, .checklist),
+        format("checklist", "Checklist", ShortcutModel(key: "l", shift: true), .checklist),
         format("quote", "Quote", ShortcutModel(key: "9", shift: true), .quote),
         format("codeBlock", "Code Block", ShortcutModel(key: "c", option: true), .codeBlock),
-        format("table", "Table", .none, nil),
+        format("table", "Table", ShortcutModel(key: "t", option: true), .insertTable),
         format("divider", "Divider", .none, nil),
+        // Word-processor alignment; ⌘E / ⌘R keep their PDF meanings in PDF tabs.
+        format("alignLeft", "Align Left", ShortcutModel(key: "l"), .alignLeft),
+        format("alignCenter", "Center", ShortcutModel(key: "e"), .alignCenter),
+        format("alignRight", "Align Right", ShortcutModel(key: "r"), .alignRight),
+        format("alignJustify", "Justify", ShortcutModel(key: "j"), .alignJustify),
+        format("clearFormatting", "Clear Formatting", ShortcutModel(key: "\\"), .clearFormatting),
+        format("moveLineUp", "Move Line Up", ShortcutModel(key: "↑", control: true), .moveLinesUp),
+        format("moveLineDown", "Move Line Down", ShortcutModel(key: "↓", control: true), .moveLinesDown),
         format("toggleChecked", "Check or Uncheck Item", ShortcutModel(key: "↩"), .toggleChecked),
         ShortcutAction(id: "format.focusSelectionBar", title: "Move to the Selection Bar", category: .format,
                        defaultShortcut: ShortcutModel(key: "F6", command: false), scope: .markdown, allowsPlainKeys: true,
@@ -116,20 +138,22 @@ enum ShortcutCatalog {
                        defaultShortcut: ShortcutModel(key: "F10", command: false, shift: true), scope: .markdown,
                        allowsPlainKeys: true, editorCommand: .tableCellActions),
 
-        // Comments (Markdown), handled by the focused editor.
-        ShortcutAction(id: "markdownComment", title: "Comment on Selection", category: .comments,
-                       defaultShortcut: ShortcutModel(key: "m", option: true), scope: .markdown, editorCommand: .comment),
-        // Outside the text only, so ⌥⇧C still types Ç in the note.
-        ShortcutAction(id: "markdownToggleComments", title: "Hide or Show Comments", category: .comments,
-                       defaultShortcut: ShortcutModel(key: "c", command: false, shift: true, option: true), scope: .markdown,
-                       allowsPlainKeys: true, editorCommand: .toggleComments),
-
         // View
         ShortcutAction(id: "toggleSidebar", title: "Toggle Sidebar", category: .view, defaultShortcut: ShortcutModel(key: "s", option: true)),
-        ShortcutAction(id: "toggleComments", title: "Toggle Comments", category: .view, defaultShortcut: ShortcutModel(key: "e", option: true)),
+        // One key for every tab: PDF's comments panel, a book's notes and Markdown's comments
+        // (the editor takes it too, so it also works from a comment card).
+        // Upgrades retain a custom Markdown panel key until the shared row is edited.
+        ShortcutAction(id: "toggleComments", title: "Toggle Comments or Notes", category: .view, defaultShortcut: ShortcutModel(key: "e", option: true),
+                       editorCommand: .toggleComments),
         ShortcutAction(id: "toggleTopBar", title: "Toggle Top Bar", category: .view, defaultShortcut: ShortcutModel(key: "b", shift: true)),
-        ShortcutAction(id: "toggleToolbar", title: "Toggle Toolbar", category: .view, defaultShortcut: ShortcutModel(key: "t", shift: true)),
+        // ⌃⌘T: ⇧⌘T went to Reopen Closed Tab, and ⌥⌘T is Table in a note.
+        ShortcutAction(id: "toggleToolbar", title: "Toggle Toolbar", category: .view, defaultShortcut: ShortcutModel(key: "t", control: true)),
         ShortcutAction(id: "togglePageIndicator", title: "Toggle Page Number", category: .view, defaultShortcut: ShortcutModel(key: "p", shift: true)),
+        // A book's Read Aloud (View ▸ Start Speaking, Pause Speaking).
+        ShortcutAction(id: "readAloud", title: "Start or Stop Speaking", category: .view,
+                       defaultShortcut: ShortcutModel(key: "r", option: true), scope: .epub),
+        ShortcutAction(id: "pauseReadAloud", title: "Pause or Resume Speaking", category: .view,
+                       defaultShortcut: ShortcutModel(key: "p", option: true), scope: .epub),
 
         ShortcutAction(id: "markdown.toggleFold", title: "Toggle Section", category: .view,
                        defaultShortcut: ShortcutModel(key: "↩", option: true), scope: .markdown, editorCommand: .toggleFold),
@@ -142,22 +166,26 @@ enum ShortcutCatalog {
         ShortcutAction(id: "zoomIn", title: "Zoom In", category: .zoom, defaultShortcut: ShortcutModel(key: "+")),
         ShortcutAction(id: "zoomOut", title: "Zoom Out", category: .zoom, defaultShortcut: ShortcutModel(key: "-")),
         ShortcutAction(id: "actualSize", title: "Actual Size", category: .zoom, defaultShortcut: ShortcutModel(key: "0")),
-        ShortcutAction(id: "zoomToFit", title: "Zoom to Fit", category: .zoom, defaultShortcut: ShortcutModel(key: "0", option: true), scope: .pdf),
+        ShortcutAction(id: "zoomToFit", title: "Zoom to Fit", category: .zoom, defaultShortcut: ShortcutModel(key: "0", option: true), scope: .app),
 
         // Navigation
         ShortcutAction(id: "goBack", title: "Back", category: .navigation, defaultShortcut: ShortcutModel(key: "[")),
         ShortcutAction(id: "goForward", title: "Forward", category: .navigation, defaultShortcut: ShortcutModel(key: "]")),
-        ShortcutAction(id: "nextPage", title: "Next Page", category: .navigation, defaultShortcut: ShortcutModel(key: "↓"), scope: .pdf),
-        ShortcutAction(id: "previousPage", title: "Previous Page", category: .navigation, defaultShortcut: ShortcutModel(key: "↑"), scope: .pdf),
-        ShortcutAction(id: "firstPage", title: "First Page", category: .navigation, defaultShortcut: ShortcutModel(key: "←", option: true), scope: .pdf),
-        ShortcutAction(id: "lastPage", title: "Last Page", category: .navigation, defaultShortcut: ShortcutModel(key: "→", option: true), scope: .pdf),
+        ShortcutAction(id: "nextPage", title: "Next Page", category: .navigation, defaultShortcut: ShortcutModel(key: "↓"), scope: .pages),
+        ShortcutAction(id: "previousPage", title: "Previous Page", category: .navigation, defaultShortcut: ShortcutModel(key: "↑"), scope: .pages),
+        ShortcutAction(id: "firstPage", title: "First Page", category: .navigation, defaultShortcut: ShortcutModel(key: "←", option: true), scope: .pages),
+        ShortcutAction(id: "lastPage", title: "Last Page", category: .navigation, defaultShortcut: ShortcutModel(key: "→", option: true), scope: .pages),
+        ShortcutAction(id: "bookmark", title: "Toggle Bookmark", category: .navigation, defaultShortcut: ShortcutModel(key: "d"), scope: .pages),
         ShortcutAction(id: "goToPage", title: "Go to Page or Line", category: .navigation, defaultShortcut: ShortcutModel(key: "g", option: true)),
 
-        // Annotations (PDF)
-        ShortcutAction(id: "highlight", title: "Highlight", category: .annotations, defaultShortcut: ShortcutModel(key: "y"), scope: .pdf),
-        ShortcutAction(id: "underline", title: "Underline", category: .annotations, defaultShortcut: ShortcutModel(key: "u"), scope: .pdf),
-        ShortcutAction(id: "comment", title: "Add Comment", category: .annotations, defaultShortcut: ShortcutModel(key: "e"), scope: .pdf),
-        ShortcutAction(id: "bookmark", title: "Toggle Bookmark", category: .annotations, defaultShortcut: ShortcutModel(key: "d"), scope: .pdf),
+        // One Settings row across readers and the focused Markdown editor.
+        ShortcutAction(id: "highlight", title: "Highlight", category: .annotations,
+                       defaultShortcut: ShortcutModel(key: "h", shift: true), editorCommand: .highlight),
+        ShortcutAction(id: "underline", title: "Underline", category: .annotations,
+                       defaultShortcut: ShortcutModel(key: "u"), editorCommand: .underline),
+        ShortcutAction(id: "comment", title: "Add Comment or Note", category: .annotations,
+                       defaultShortcut: ShortcutModel(key: "k", shift: true), editorCommand: .comment),
+
 
         // PDF to Markdown
         ShortcutAction(id: "copyPageAsMarkdown", title: "Copy Page as Markdown", category: .markdown, defaultShortcut: ShortcutModel(key: "m", shift: true), scope: .pdf),
@@ -165,8 +193,16 @@ enum ShortcutCatalog {
 
         // Tabs
         ShortcutAction(id: "searchTabs", title: "Search Tabs", category: .tabs, defaultShortcut: ShortcutModel(key: "a", shift: true)),
+        ShortcutAction(id: "reopenClosedTab", title: "Reopen Closed Tab", category: .tabs, defaultShortcut: ShortcutModel(key: "t", shift: true)),
+        ShortcutAction(id: "moveTabToNewWindow", title: "Move Tab to New Window", category: .tabs, defaultShortcut: .none),
+        ShortcutAction(id: "mergeAllWindows", title: "Merge All Windows", category: .tabs, defaultShortcut: .none),
         ShortcutAction(id: "selectNextTab", title: "Select Next Tab", category: .tabs, defaultShortcut: ShortcutModel(key: "]", shift: true)),
         ShortcutAction(id: "selectPreviousTab", title: "Select Previous Tab", category: .tabs, defaultShortcut: ShortcutModel(key: "[", shift: true)),
+        // Handled ahead of the focused view (TabCycleKeyboard), so an editor never types them.
+        ShortcutAction(id: "selectRecentTab", title: "Select Previously Used Tab", category: .tabs,
+                       defaultShortcut: ShortcutModel(key: "⇥", command: false, control: true)),
+        ShortcutAction(id: "selectRecentTabReversed", title: "Select Previously Used Tab, Reversed", category: .tabs,
+                       defaultShortcut: ShortcutModel(key: "⇥", command: false, shift: true, control: true)),
     ] + (1...9).map { number in
         ShortcutAction(id: selectTabID(number), title: "Select Tab \(number)", category: .tabs, defaultShortcut: ShortcutModel(key: "\(number)"))
     }
@@ -180,13 +216,42 @@ enum ShortcutCatalog {
 
     static func selectTabID(_ number: Int) -> String { "selectTab\(number)" }
 
+    /// These IDs may still be present in saved preferences. They are lookup
+    /// aliases, never a second visible Settings registration.
+    static let legacyMarkdownIDs = ["comment": "markdownComment", "highlight": "format.highlight",
+                                    "underline": "format.underline", "toggleComments": "markdownToggleComments"]
+
+    static func canonicalID(for id: String) -> String {
+        legacyMarkdownIDs.first { $0.value == id }?.key ?? id
+    }
+
+    /// Reading an old preference must not rewrite it. If two explicit values
+    /// differ, each original context keeps its value until a common save.
+    static func shortcut(for id: String, saved: [String: ShortcutModel]) -> ShortcutModel {
+        if let own = saved[id] { return own }
+        let canonical = canonicalID(for: id)
+        if let common = saved[canonical] { return common }
+        // The old Markdown panel accepted typing keys outside prose. Keep that
+        // override in its editor so upgrading cannot install it as an app-wide key.
+        if canonical != "toggleComments", let legacyID = legacyMarkdownIDs[canonical], let legacy = saved[legacyID] { return legacy }
+        let fallback = defaults[canonical] ?? .none
+        if newDefaultIDs.contains(canonical), let owner = action(for: canonical), saved.contains(where: { otherID, shortcut in
+            canonicalID(for: otherID) != canonical && shortcut.hasSameChord(as: fallback)
+                && (action(for: otherID)?.scope.overlaps(owner.scope) ?? false)
+        }) { return .none }
+        return fallback
+    }
+
+    /// Commands that gained or changed a default after people had saved bindings.
+    private static let newDefaultIDs = ["reopenClosedTab", "toggleToolbar", "selectRecentTab", "selectRecentTabReversed"]
+
     /// id → default binding, consumed by `ShortcutModel.current(for:)`.
     static let defaults: [String: ShortcutModel] = Dictionary(
         uniqueKeysWithValues: all.map { ($0.id, $0.defaultShortcut) }
     )
 
     static func action(for id: String) -> ShortcutAction? {
-        all.first { $0.id == id }
+        all.first { $0.id == canonicalID(for: id) }
     }
 
     /// Actions grouped by category in declaration order — drives the Settings list.
@@ -222,50 +287,80 @@ enum ShortcutCatalog {
             if !keys.isEmpty { rest.append(String(keys)) }
         }
         guard wanted.hasModifier, rest.count <= 1 else { return false }
-        let shortcut = lookup(action.id)
-        guard !shortcut.isNone else { return false }
-        // With a key, the whole chord; modifiers alone find every key that has them.
-        if let key = rest.first {
-            return key == shortcut.key.lowercased() && wanted.command == shortcut.command && wanted.shift == shortcut.shift
-                && wanted.option == shortcut.option && wanted.control == shortcut.control
+        return effectiveBindings(for: action, current: lookup).contains { binding in
+            let shortcut = binding.shortcut
+            guard !shortcut.isNone else { return false }
+            if let key = rest.first {
+                return key == shortcut.key.lowercased() && wanted.command == shortcut.command && wanted.shift == shortcut.shift
+                    && wanted.option == shortcut.option && wanted.control == shortcut.control
+            }
+            return (!wanted.command || shortcut.command) && (!wanted.shift || shortcut.shift)
+                && (!wanted.option || shortcut.option) && (!wanted.control || shortcut.control)
         }
-        return (!wanted.command || shortcut.command) && (!wanted.shift || shortcut.shift)
-            && (!wanted.option || shortcut.option) && (!wanted.control || shortcut.control)
     }
 
     // MARK: - The Markdown editor's chords
 
-    /// The editor's key bindings from the current shortcuts. ⌃⌥M (Comment) and
-    /// ⌘F6 (selection bar) stay as second chords while those keep their defaults.
-    static func editorKeyBindings(current lookup: (String) -> ShortcutModel = ShortcutModel.current(for:)) -> MarkdownKeyBindings {
+    /// The focused Markdown editor prefers its retained legacy value only when
+    /// an older build saved different values for the two content contexts.
+    static func editorKeyBindings(current lookup: (String) -> ShortcutModel = ShortcutModel.currentForMarkdown(for:)) -> MarkdownKeyBindings {
         var bindings = MarkdownKeyBindings([:])
         for action in all {
             guard let command = action.editorCommand else { continue }
             let current = lookup(action.id)
-            var chords = current.editorChord.map { [$0] } ?? []
-            if current == action.defaultShortcut {
-                switch command {
-                case .comment: chords.append(MarkdownKeyChord("m", option: true, control: true))
-                case .focusSelectionBar: chords.append(MarkdownKeyChord("f6", command: true))
-                default: break
-                }
-            }
-            bindings[command] = chords
+            bindings[command] = ([current] + alternateShortcuts(for: action, current: current)).compactMap(\.editorChord)
         }
         return bindings
     }
 
     // MARK: - Validation
 
-    /// The action currently bound to the same combo as `shortcut` where both
-    /// can act, excluding `actionID` — used to warn before a dead shortcut.
-    static func conflictingAction(forCombo shortcut: ShortcutModel, excluding actionID: String) -> ShortcutAction? {
-        guard !shortcut.isNone else { return nil }
-        let scope = action(for: actionID)?.scope ?? .app
-        let combo = shortcut.displayString
-        return all.first {
-            $0.id != actionID && $0.scope.overlaps(scope) && ShortcutModel.current(for: $0.id).displayString == combo
+    /// Alternate keys are live only while the primary retains its default.
+    /// Both the editor and conflict validation consume this derivation.
+    static func alternateShortcuts(for action: ShortcutAction, current: ShortcutModel) -> [ShortcutModel] {
+        guard action.editorCommand == .focusSelectionBar, current.hasSameChord(as: action.defaultShortcut) else { return [] }
+        return [ShortcutModel(key: "F6"), ShortcutModel(key: "F10", command: false, option: true)]
+    }
+
+    struct EffectiveBinding {
+        let id: String
+        let scope: ShortcutAction.Scope
+        let shortcut: ShortcutModel
+    }
+
+    /// Legacy annotation values can differ across content types. Each retains
+    /// its scope, so replacement never removes a disjoint context's choice.
+    private static func effectiveBindings(for action: ShortcutAction, current lookup: (String) -> ShortcutModel) -> [EffectiveBinding] {
+        if let legacy = legacyMarkdownIDs[action.id] {
+            return [EffectiveBinding(id: action.id, scope: .pages, shortcut: lookup(action.id)),
+                    EffectiveBinding(id: legacy, scope: .markdown, shortcut: lookup(legacy))]
         }
+        let current = lookup(action.id)
+        return ([current] + alternateShortcuts(for: action, current: current)).map {
+            EffectiveBinding(id: action.id, scope: action.scope, shortcut: $0)
+        }
+    }
+
+    static func conflictingBindings(forCombo shortcut: ShortcutModel, excluding actionID: String,
+                                    saved: [String: ShortcutModel]) -> [(action: ShortcutAction, binding: EffectiveBinding)] {
+        guard !shortcut.isNone else { return [] }
+        let canonical = canonicalID(for: actionID)
+        let scope = action(for: canonical)?.scope ?? .app
+        return all.filter { $0.id != canonical }.flatMap { action in
+            effectiveBindings(for: action, current: { self.shortcut(for: $0, saved: saved) }).filter {
+                $0.scope.overlaps(scope) && $0.shortcut.hasSameChord(as: shortcut)
+            }.map { (action: action, binding: $0) }
+        }
+    }
+
+    static func conflictingActions(forCombo shortcut: ShortcutModel, excluding actionID: String) -> [ShortcutAction] {
+        let conflicts = conflictingBindings(forCombo: shortcut, excluding: actionID, saved: SettingsManager.shared.customShortcuts)
+        return all.filter { action in conflicts.contains { $0.action.id == action.id } }
+    }
+
+    /// The first owner supplies the inline warning; confirmation lists all owners.
+    static func conflictingAction(forCombo shortcut: ShortcutModel, excluding actionID: String) -> ShortcutAction? {
+        conflictingActions(forCombo: shortcut, excluding: actionID).first
     }
 
     /// Whether a candidate shortcut may be assigned to `actionID`.
@@ -284,8 +379,7 @@ enum ShortcutCatalog {
 }
 
 /// Result of vetting a candidate shortcut. `reserved` and `needsCommand`
-/// block assignment; `conflict` only warns (the user may deliberately
-/// reassign the other command).
+/// block assignment; `conflict` requires a deliberate Replace confirmation.
 enum ShortcutValidation: Equatable {
     case ok
     case reserved

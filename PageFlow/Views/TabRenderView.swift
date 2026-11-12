@@ -54,6 +54,16 @@ struct TabRenderView: View {
                 searchFocusRequest: searchFocusRequest,
                 tabManager: tabManager
             )
+        case .epub(let runtime):
+            EPUBTabView(
+                tabID: runtime.tabID,
+                content: runtime.content,
+                isActive: isActive,
+                isDisplayed: isDisplayed,
+                showingSearch: $showingSearch,
+                searchFocusRequest: searchFocusRequest,
+                tabManager: tabManager
+            )
         }
     }
 }

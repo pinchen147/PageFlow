@@ -38,17 +38,20 @@ struct TabContainerView: View {
     /// This window's TabManager, stable for the view's lifetime.
     private var tabManager: TabManager { holder.manager }
 
-    /// A Markdown tab can be forced light or dark (Settings); the drop indicator
-    /// follows the page it is drawn over, else the Mac's appearance.
+    /// The drop indicator follows the active document's requested chrome palette;
+    /// PDF and unforced Markdown retain the Mac's appearance.
     private var dropIndicatorColorScheme: ColorScheme {
+        if let epub = tabManager.activeSession?.content.epub {
+            return epub.requestedPalette == .dark ? .dark : .light
+        }
         guard let id = tabManager.activeTabID, tabManager.contentKind(for: id) == .markdown else {
             return systemColorScheme
         }
         return settingsManager.markdownColorScheme.forcedColorScheme ?? systemColorScheme
     }
 
-    private var showingSearch: Binding<Bool> {
-        Binding(get: { tabManager.showingSearch }, set: { tabManager.showingSearch = $0 })
+    private func showingSearch(for tabID: UUID) -> Binding<Bool> {
+        Binding(get: { tabManager.showingSearch(for: tabID) }, set: { tabManager.setShowingSearch($0, for: tabID) })
     }
 
     private var activeWindowTitle: String {
@@ -67,7 +70,7 @@ struct TabContainerView: View {
             render: render,
             isActive: isActiveTab,
             isDisplayed: isActiveTab,
-            showingSearch: showingSearch,
+            showingSearch: showingSearch(for: render.id),
             searchFocusRequest: tabManager.searchFocusRequest,
             tabManager: tabManager
         )
@@ -115,7 +118,7 @@ struct TabContainerView: View {
         .background(WindowConfigurator(isAlwaysOnTop: tabManager.isAlwaysOnTop))
         .background(WindowTitleUpdater(title: activeWindowTitle))
         .background(WindowRegistrar(tabManager: tabManager))
-        .focusedSceneValue(\.tabManager, tabManager)
+        .focusedSceneValue(\.tabManagerReference, FocusedTabManagerReference(manager: tabManager))
         .onAppear {
             tabManager.documentOpenedHandler = { [recentFilesManager] url, isSecurityScoped in
                 recentFilesManager.addRecentFile(url, isSecurityScoped: isSecurityScoped)
@@ -155,6 +158,7 @@ struct TabContainerView: View {
     static func passwordDialog(for request: TabManager.PasswordPrompt, in tabManager: TabManager) -> PasswordDialogView {
         PasswordDialogView(
             fileName: request.url.lastPathComponent,
+            submitTitle: request.purpose == .insertPages ? "Insert" : "Open",
             onSubmit: { password in
                 tabManager.submitPassword(password, for: request)
             },

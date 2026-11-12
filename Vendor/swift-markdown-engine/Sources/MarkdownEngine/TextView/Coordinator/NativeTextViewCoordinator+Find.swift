@@ -10,6 +10,18 @@ extension NativeTextViewCoordinator {
     struct FindRequest {
         let range: NSRange
         let highlights: [FindHighlight]
+        let expectedSource: String?
+        let navigation: FindNavigation?
+    }
+
+    /// A bus receipt captures native ownership at intake, independently of source
+    /// bytes: editing and undoing to equal text still retires the old request.
+    struct FindNavigation {
+        let document: Int
+        let source: Int
+        weak var controller: MarkdownEditorController?
+        let whileValid: () -> Bool
+        let didNavigate: (ReadingPosition) -> Void
     }
 
     enum PendingFindCommand {
@@ -51,40 +63,64 @@ extension NativeTextViewCoordinator {
                 if self.activeFindHighlights[middle].prefixMaximumEnd <= start { low = middle + 1 }
                 else { high = middle }
             }
-            var currentHighlight: (FindHighlight, NSRange)?
+            var currentHighlights: [(FindHighlight, NSRange)] = []
             for highlight in self.activeFindHighlights[low...] {
                 if highlight.range.location >= end { break }
                 let intersection = NSIntersectionRange(highlight.range, span)
                 if intersection.length > 0 {
-                    if highlight.isCurrent { currentHighlight = (highlight, intersection) }
+                    if highlight.isCurrent { currentHighlights.append((highlight, intersection)) }
                     else { self.paintFindHighlight(highlight, range: intersection, in: layout) }
                 }
             }
-            if let (highlight, intersection) = currentHighlight {
+            for (highlight, intersection) in currentHighlights {
                 self.paintFindHighlight(highlight, range: intersection, in: layout)
             }
         }
     }
 
     /// Empty `allRanges` is navigate-only: reveal and scroll without coloring.
+    /// `paintsOnly` is the reverse, for an editor built anew under a live search:
+    /// color the matches, leaving the selection and the scroll where they are.
     @objc func handleFindScrollToRange(_ notification: Notification) {
         guard busNotificationIsForThisInstance(notification), let view = textView,
               let info = notification.userInfo,
               let range = info["range"] as? NSRange,
               let current = info["currentIndex"] as? Int,
               let ranges = info["allRanges"] as? [NSRange] else { return }
+        let expectedSource = info["expectedSource"] as? String
+        guard expectedSource.map({ (view.string as NSString).isEqual(to: $0) }) ?? true else { return }
         let length = (view.string as NSString).length
         guard Self.validFindRange(range, length: length) else { return }
-        var highlights = ranges.enumerated().compactMap { index, range -> FindHighlight? in
-            guard range.length > 0, Self.validFindRange(range, length: length) else { return nil }
-            return FindHighlight(range: range, isCurrent: index == current)
+        let sourceSegments = info["allSourceSegments"] as? [[NSRange]]
+        guard sourceSegments == nil || sourceSegments?.count == ranges.count else { return }
+        var highlights = ranges.enumerated().flatMap { index, envelope -> [FindHighlight] in
+            guard envelope.length > 0, Self.validFindRange(envelope, length: length) else { return [] }
+            let segments = sourceSegments?[index] ?? [envelope]
+            return segments.compactMap { segment in
+                guard segment.length > 0, Self.validFindRange(segment, length: length),
+                      NSIntersectionRange(segment, envelope) == segment else { return nil }
+                return FindHighlight(range: segment, isCurrent: index == current)
+            }
         }.sorted { $0.range.location < $1.range.location }
         var prefixMaximumEnd = 0
         for index in highlights.indices {
             prefixMaximumEnd = max(prefixMaximumEnd, NSMaxRange(highlights[index].range))
             highlights[index].prefixMaximumEnd = prefixMaximumEnd
         }
-        let request = FindRequest(range: range, highlights: highlights)
+        if info["paintsOnly"] as? Bool == true {
+            activeFindHighlights = highlights
+            refreshFindRendering(in: view)
+            return
+        }
+        let navigation: FindNavigation?
+        if let didNavigate = info["didNavigate"] as? (ReadingPosition) -> Void {
+            guard let whileValid = info["whileValid"] as? () -> Bool, let controller = editorController else { return }
+            navigation = FindNavigation(document: documentGeneration, source: nativeSourceGeneration,
+                controller: controller, whileValid: whileValid, didNavigate: didNavigate)
+        } else {
+            navigation = nil
+        }
+        let request = FindRequest(range: range, highlights: highlights, expectedSource: expectedSource, navigation: navigation)
         if isComposing(in: view) || isWritingToolsActive {
             pendingFindCommand = .show(request, source: view.string, generation: documentGeneration)
             return
@@ -157,7 +193,7 @@ extension NativeTextViewCoordinator {
         for highlight in activeFindHighlights where !highlight.isCurrent {
             paintFindHighlight(highlight, range: highlight.range, in: layout)
         }
-        if let current = activeFindHighlights.first(where: \.isCurrent) {
+        for current in activeFindHighlights where current.isCurrent {
             paintFindHighlight(current, range: current.range, in: layout)
         }
         view.needsDisplay = true
@@ -173,9 +209,35 @@ extension NativeTextViewCoordinator {
         layout.addRenderingAttribute(.backgroundColor, value: color, for: textRange)
     }
 
+    /// Host code may synchronously change source, bindings, or presentation. Keep
+    /// native checks on both sides of that call, including the final receipt.
+    private func admitsFind(_ request: FindRequest, in view: NSTextView) -> Bool {
+        func ownsRequest() -> Bool {
+            guard textView === view,
+                  request.expectedSource.map({ (view.string as NSString).isEqual(to: $0) }) ?? true else { return false }
+            guard let navigation = request.navigation else { return true }
+            guard let controller = navigation.controller else { return false }
+            return documentGeneration == navigation.document && nativeSourceGeneration == navigation.source
+                && editorController === controller && MainActor.assumeIsolated { controller.coordinator === self }
+                && lastDisplayed && view.window != nil && view.enclosingScrollView?.isHidden == false
+        }
+        guard ownsRequest() else { return false }
+        return request.navigation.map { $0.whileValid() && ownsRequest() } ?? true
+    }
+
     private func applyFind(_ request: FindRequest, in tv: NSTextView) {
+        guard admitsFind(request, in: tv) else { return }
         tableEditingSession.finishInput()
         tableEditingSession.retire()
+        guard admitsFind(request, in: tv), !isComposing(in: tv), !isWritingToolsActive,
+              Self.validFindRange(request.range, length: (tv.string as NSString).length) else { return }
+        let native = tv as? NativeTextView
+        let scroll = tv.enclosingScrollView
+        let positionBeforeLayout = native?.readingPosition()
+        let departure = request.navigation == nil ? nil : positionBeforeLayout
+        if request.navigation != nil {
+            guard native != nil, scroll != nil, departure != nil else { return }
+        }
         let range = request.range
         _ = revealFoldedSource(range)
         if tv.isEditable, tv.selectedRange() != range { tv.setSelectedRange(range) }
@@ -185,21 +247,39 @@ extension NativeTextViewCoordinator {
         // the estimated chain TextKit draws from (ADR-0020), since a whole-note
         // layout per match froze the editor (D12).
         tv.ensureWholeNoteLayoutUnlessLong()
-        // Scroll the current match into view.
-        // Default (text view IS documentView): native reveal — unchanged for non-readingWidth embedders.
-        guard configuration.readingWidth != nil, let native = tv as? NativeTextView,
-              let scrollView = tv.enclosingScrollView else {
-            tv.scrollRangeToVisible(range)
-            return
+        if let native, let scroll, !native.prefersEstimatedLayoutChain,
+           (scroll as? ClampedScrollView)?.isZoomInProgress != true {
+            // Exact layout can move every fragment above this viewport. Reconcile
+            // its extent and source position before deciding whether the target is visible.
+            native.recalcOverscroll(for: scroll, debugTag: "findRevealLayout")
+            if let positionBeforeLayout { native.restore(positionBeforeLayout) }
+            else { tv.textLayoutManager?.textViewportLayoutController.layoutViewport() }
         }
-        // Reading column: only scroll when the match is off-screen; reveal it a
-        // little below the top.
-        guard let line = native.lineFrame(at: range.location) else { return }
-        let visible = native.visibleRect
-        let top = visible.minY + scrollView.contentInsets.top
-        guard line.minY < top || line.maxY > visible.maxY else { return }
-        MainActor.assumeIsolated { ScrollTrace.stamp("findReveal") }
-        native.scroll(by: line.minY - top - scrollView.contentView.bounds.height * 0.2, landing: range.location)
+        let oldY = scroll?.contentView.bounds.minY
+        // EOF after a trailing newline has no text fragment of its own. Use
+        // the final source character for geometry, retaining the exact selection.
+        let landing = min(range.location, max(0, (tv.string as NSString).length - 1))
+        // Every placement path reaches the same landing receipt. A visible
+        // reading-column line is a no-op unless fold reveal changed geometry.
+        if configuration.readingWidth != nil, let native, let scroll {
+            guard let line = native.lineFrame(at: landing) else { return }
+            let visible = native.visibleRect
+            let top = visible.minY + scroll.contentInsets.top
+            if line.minY < top || line.maxY > visible.maxY {
+                MainActor.assumeIsolated { ScrollTrace.stamp("findReveal") }
+                native.scroll(by: line.minY - top - scroll.contentView.bounds.height * 0.2, landing: landing)
+            }
+        } else {
+            if request.navigation != nil, native?.lineFrame(at: landing) == nil { return }
+            tv.scrollRangeToVisible(range)
+        }
+        guard let navigation = request.navigation, let departure, let oldY, let scroll,
+              let arrival = native?.readingPosition() else { return }
+        let changed = abs(scroll.contentView.bounds.minY - oldY) > 0.5
+            || arrival.anchorOffset != departure.anchorOffset
+            || abs(arrival.offsetInViewport - departure.offsetInViewport) > 0.5
+        guard changed, admitsFind(request, in: tv) else { return }
+        navigation.didNavigate(departure)
     }
 
 }

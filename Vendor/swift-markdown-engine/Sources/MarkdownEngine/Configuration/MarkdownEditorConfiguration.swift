@@ -548,17 +548,21 @@ public struct CheckboxStyle: Sendable, Equatable {
 
 // MARK: - Links
 
-/// Foreground alpha values applied to link content in different states.
+/// How link content is drawn in different states.
 public struct LinkStyle: Sendable, Equatable {
     /// Foreground alpha for the visible label of an active markdown link.
     public var activeLinkAlpha: CGFloat
     /// Foreground alpha applied to "incomplete" link content (e.g. `[text]`
     /// without a target).
     public var incompleteLinkAlpha: CGFloat
+    /// Reads `[[Target|Alias]]` the Obsidian way: the text after the pipe is
+    /// the label shown and the target is hidden, instead of an opaque id.
+    public var wikiLinkAliases: Bool
 
-    public init(activeLinkAlpha: CGFloat = 0.55, incompleteLinkAlpha: CGFloat = 0.7) {
+    public init(activeLinkAlpha: CGFloat = 0.55, incompleteLinkAlpha: CGFloat = 0.7, wikiLinkAliases: Bool = false) {
         self.activeLinkAlpha = activeLinkAlpha
         self.incompleteLinkAlpha = incompleteLinkAlpha
+        self.wikiLinkAliases = wikiLinkAliases
     }
 
     public static let `default` = LinkStyle()

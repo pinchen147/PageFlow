@@ -20,6 +20,10 @@ public struct MarkdownSectionNavigationSnapshot: Equatable, Sendable {
     public let targets: [MarkdownSectionTarget]
     /// Ranks whose actual laid-out content is visible, excluding folded source.
     public let visibleRanks: Set<Int>
+    /// Whether native magnification keeps the configured reading row, including
+    /// its reserved comment lane, within the live viewport width. False until
+    /// finite positive viewport and row geometry are available.
+    public let fitsViewportWidth: Bool
 }
 
 /// Bounded source text for a section's transient preview.

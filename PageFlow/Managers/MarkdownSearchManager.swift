@@ -29,8 +29,8 @@ final class MarkdownSearchManager: FindReplacing {
     var showsReplacement = false
     @ObservationIgnored private let editorController: MarkdownEditorController?
 
-    /// Character ranges of every match for the current query, in document order.
-    /// Computed over the live editor's exact source (`textProvider`).
+    /// Canonical UTF-16 navigation envelopes for visible matches, in document order.
+    /// Highlight segments exclude recognized emphasis delimiters within each envelope.
     private(set) var searchResults: [NSRange] = []
 
     /// Index of the focused match within `searchResults`; 0 when there are none.
@@ -40,6 +40,7 @@ final class MarkdownSearchManager: FindReplacing {
     /// reference) so the manager owns no retain cycle with its owner and so a test
     /// can drive find headlessly over a plain `String`.
     private let textProvider: () -> String
+    private let navigationContext: (() -> MarkdownFindNavigation?)?
 
     /// The tab's scoped bus (fork P2) and stable documentId (= tab id). Posts are
     /// stamped with `documentId` as `object` so only this tab's mounted editor
@@ -47,8 +48,17 @@ final class MarkdownSearchManager: FindReplacing {
     private let bus: MarkdownEditorBus
     private let documentId: String
 
+    nonisolated private struct Match: Sendable {
+        let visibleRange: NSRange
+        let sourceRange: NSRange
+        let sourceSegments: [NSRange]
+    }
+
+    @ObservationIgnored private var matches: [Match] = []
+    @ObservationIgnored private var projectionSource: String?
+    @ObservationIgnored private var cachedProjection: MarkdownEmphasisProjection?
     @ObservationIgnored private var searchedSource: String?
-    @ObservationIgnored private var searchedQuery: String?
+    private var searchedQuery: String?
     @ObservationIgnored private var pendingSearch: Task<Void, Never>?
     @ObservationIgnored private var searchGeneration: UInt64 = 0
 
@@ -56,19 +66,30 @@ final class MarkdownSearchManager: FindReplacing {
         bus: MarkdownEditorBus,
         documentId: String,
         textProvider: @escaping () -> String,
-        editorController: MarkdownEditorController? = nil
+        editorController: MarkdownEditorController? = nil,
+        navigationContext: (() -> MarkdownFindNavigation?)? = nil
     ) {
         self.bus = bus
         self.documentId = documentId
         self.textProvider = textProvider
         self.editorController = editorController
+        self.navigationContext = navigationContext
     }
 
     // MARK: - Pure range finding (headless-testable)
 
-    /// All ranges of `query` in `text`, case-insensitive, non-overlapping, in
-    /// document order. Empty for an empty query or no match. Pure: no editor, no
-    /// notifications — the unit-test seam for result count + ordering.
+    nonisolated private static func matches(of query: String, projection: MarkdownEmphasisProjection) -> [Match] {
+        matchRanges(of: query, in: projection.visibleText).compactMap { visibleRange in
+            let segments = projection.sourceSegments(forVisibleRange: visibleRange)
+            guard let first = segments.first, let last = segments.last else { return nil }
+            return Match(visibleRange: visibleRange,
+                         sourceRange: NSRange(location: first.location, length: NSMaxRange(last) - first.location),
+                         sourceSegments: segments)
+        }
+    }
+
+    /// Case-insensitive, nonoverlapping UTF-16 occurrences in the supplied text.
+    /// Production passes the cached emphasis projection's visible text here.
     nonisolated static func matchRanges(of query: String, in text: String) -> [NSRange] {
         guard !query.isEmpty else { return [] }
         let haystack = text as NSString
@@ -93,7 +114,8 @@ final class MarkdownSearchManager: FindReplacing {
 
     func setQuery(_ query: String) { searchQuery = query }
 
-    var resultCount: Int { searchResults.count }
+    var isSearching: Bool { !searchQuery.isEmpty && searchedQuery?.hasSameSource(as: searchQuery) != true }
+    var resultCount: Int { isSearching || searchQuery.isEmpty ? 0 : searchResults.count }
 
     /// 1-based focused match number; 0 when there are no results. (`hasResults`
     /// comes from the `FindDriving` default.)
@@ -110,11 +132,10 @@ final class MarkdownSearchManager: FindReplacing {
         let source = textProvider()
         refreshResultsIfNeeded(force: false, source: source)
         guard hasResults else { postCurrentMatch(); return false }
-        let range = searchResults[currentResultIndex]
-        guard editorController.replaceCharacters(
-            in: [range], with: replacementText, expectedSource: source
+        guard let selection = editorController.replaceEmphasisMatches(
+            in: [matches[currentResultIndex].visibleRange], with: replacementText, expectedSource: source
         ) else { return false }
-        let nextLocation = range.location + replacementText.utf16.count
+        let nextLocation = NSMaxRange(selection)
         refreshResultsIfNeeded(force: true)
         currentResultIndex = searchResults.firstIndex { $0.location >= nextLocation } ?? 0
         postCurrentMatch()
@@ -130,9 +151,9 @@ final class MarkdownSearchManager: FindReplacing {
         refreshResultsIfNeeded(force: false, source: source)
         guard hasResults else { postCurrentMatch(); return 0 }
         let count = searchResults.count
-        guard editorController.replaceCharacters(
-            in: searchResults, with: replacementText, expectedSource: source, actionName: "Replace All"
-        ) else { return 0 }
+        guard editorController.replaceEmphasisMatches(
+            in: matches.map(\.visibleRange), with: replacementText, expectedSource: source, actionName: "Replace All"
+        ) != nil else { return 0 }
         refreshResultsIfNeeded(force: true)
         postCurrentMatch()
         return count
@@ -155,14 +176,19 @@ final class MarkdownSearchManager: FindReplacing {
     /// Query typing never scans on the main actor. Coalesce bursts, cancel
     /// obsolete scans and accept only ranges for the current exact source.
     func scheduleSearch() {
+        // The bar reports every change of the query, its own included: a query already
+        // answered over this text keeps its matches and the reader's place in them.
+        if pendingSearch == nil, !searchQuery.isEmpty, searchedQuery?.hasSameSource(as: searchQuery) == true,
+           searchedSource?.hasSameSource(as: textProvider()) == true { return }
         cancelPendingSearch()
+        searchedQuery = nil
         let hadResults = !searchResults.isEmpty
         searchResults = []
+        matches = []
         currentResultIndex = 0
         if hadResults { clearHighlights() }
         guard !searchQuery.isEmpty else {
             searchedSource = nil
-            searchedQuery = nil
             return
         }
         let generation = searchGeneration
@@ -172,10 +198,18 @@ final class MarkdownSearchManager: FindReplacing {
             catch { return }
             guard !Task.isCancelled, self?.searchGeneration == generation,
                   let source = self?.textProvider() else { return }
+            let cached = self?.projectionSource?.hasSameSource(as: source) == true ? self?.cachedProjection : nil
+            let semantic = self?.editorController?.usesSemanticStorage == true
             let worker = Task.detached(priority: .userInitiated) {
-                Self.matchRanges(of: query, in: source)
+                if semantic {
+                    return (nil as MarkdownEmphasisProjection?, Self.matchRanges(of: query, in: source).map {
+                        Match(visibleRange: $0, sourceRange: $0, sourceSegments: [$0])
+                    })
+                }
+                let projection = cached ?? MarkdownEmphasisProjection(source: source)
+                return (Optional(projection), Self.matches(of: query, projection: projection))
             }
-            let ranges = await withTaskCancellationHandler {
+            let (projection, matches) = await withTaskCancellationHandler {
                 await worker.value
             } onCancel: {
                 worker.cancel()
@@ -188,7 +222,10 @@ final class MarkdownSearchManager: FindReplacing {
                 self.scheduleSearch()
                 return
             }
-            self.searchResults = ranges
+            self.cachedProjection = projection
+            self.projectionSource = source
+            self.matches = matches
+            self.searchResults = matches.map(\.sourceRange)
             self.currentResultIndex = 0
             self.searchedSource = source
             self.searchedQuery = query
@@ -202,6 +239,12 @@ final class MarkdownSearchManager: FindReplacing {
         pendingSearch = nil
     }
 
+    var currentMatchText: String? {
+        guard hasResults, let source = searchedSource as NSString?, searchResults.indices.contains(currentResultIndex),
+              NSMaxRange(searchResults[currentResultIndex]) <= source.length else { return nil }
+        return source.substring(with: searchResults[currentResultIndex])
+    }
+
     func next() { move(by: 1) }
 
     func previous() { move(by: -1) }
@@ -213,7 +256,7 @@ final class MarkdownSearchManager: FindReplacing {
             let count = searchResults.count
             currentResultIndex = (currentResultIndex + step + count) % count
         }
-        postCurrentMatch()
+        postCurrentMatch(explicitNavigation: true)
     }
 
     /// Changed source starts a fresh search; unchanged source retains navigation.
@@ -223,7 +266,26 @@ final class MarkdownSearchManager: FindReplacing {
         let source = source ?? textProvider()
         guard force || searchedSource?.hasSameSource(as: source) != true
                 || searchedQuery?.hasSameSource(as: searchQuery) != true else { return false }
-        searchResults = Self.matchRanges(of: searchQuery, in: source)
+        if editorController?.usesSemanticStorage == true {
+            matches = Self.matchRanges(of: searchQuery, in: source).map {
+                Match(visibleRange: $0, sourceRange: $0, sourceSegments: [$0])
+            }
+            searchResults = matches.map(\.sourceRange)
+            currentResultIndex = 0
+            searchedSource = source
+            searchedQuery = searchQuery
+            return true
+        }
+        let projection: MarkdownEmphasisProjection
+        if projectionSource?.hasSameSource(as: source) == true, let cachedProjection {
+            projection = cachedProjection
+        } else {
+            projection = MarkdownEmphasisProjection(source: source)
+            cachedProjection = projection
+            projectionSource = source
+        }
+        matches = Self.matches(of: searchQuery, projection: projection)
+        searchResults = matches.map(\.sourceRange)
         currentResultIndex = 0
         searchedSource = source
         searchedQuery = searchQuery
@@ -235,6 +297,7 @@ final class MarkdownSearchManager: FindReplacing {
         cancelPendingSearch()
         searchQuery = ""
         searchResults = []
+        matches = []
         currentResultIndex = 0
         searchedSource = nil
         searchedQuery = nil
@@ -249,20 +312,47 @@ final class MarkdownSearchManager: FindReplacing {
 
     // MARK: - Bus
 
+    /// A note's editor built anew (it left the warm set with nothing to undo) has
+    /// no paint of the search the bar still shows. Colors the matches again without
+    /// moving the reader. A note changed meanwhile waits for its next search.
+    func repaintHighlights() {
+        guard hasResults, searchedSource?.hasSameSource(as: textProvider()) == true else { return }
+        bus.postFindScroll(
+            documentId: documentId,
+            range: searchResults[currentResultIndex],
+            currentIndex: currentResultIndex,
+            allRanges: searchResults,
+            allSourceSegments: matches.map(\.sourceSegments),
+            paintsOnly: true,
+            expectedSource: searchedSource
+        )
+    }
+
     /// Post the focused match to the engine so it highlights every match, reveals
     /// the focused one's collapsed source (P3), and scrolls it into view. Stamped
     /// with `documentId` (P2) so only this tab's editor reacts. No matches clear
     /// the previous highlights while retaining the query.
-    private func postCurrentMatch() {
+    private func postCurrentMatch(explicitNavigation: Bool = false) {
         guard hasResults else {
             clearHighlights()
             return
+        }
+        var navigation: MarkdownFindNavigation?
+        if explicitNavigation, let navigationContext {
+            guard let context = navigationContext() else { return }
+            let generation = searchGeneration
+            navigation = MarkdownFindNavigation(whileValid: { [weak self] in
+                self?.searchGeneration == generation && context.whileValid()
+            }, didNavigate: context.didNavigate)
         }
         bus.postFindScroll(
             documentId: documentId,
             range: searchResults[currentResultIndex],
             currentIndex: currentResultIndex,
-            allRanges: searchResults
+            allRanges: searchResults,
+            allSourceSegments: matches.map(\.sourceSegments),
+            navigation: navigation,
+            expectedSource: searchedSource
         )
     }
 }

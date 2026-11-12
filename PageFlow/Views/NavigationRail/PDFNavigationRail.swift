@@ -9,11 +9,23 @@ struct PDFNavigationRail: NSViewRepresentable {
     let eligible: Bool
     let topInset: CGFloat
     let onShowSidebar: () -> Void
+    var pageRects: [NSRect] = []
 
     func makeNSView(context: Context) -> NavigationRailView { NavigationRailView() }
 
     func updateNSView(_ rail: NavigationRailView, context: Context) {
         rail.onShowSidebar = onShowSidebar
+        let pageRects = self.pageRects
+        rail.paintExclusions = { [weak rail] in
+            guard let rail else { return [] }
+            return pageRects.map {
+                var rect = rail.convert($0, from: nil)
+                // A right-hand fragment travels left during exit. Reserve its
+                // full travel so cached ink cannot cross back over paper.
+                if !rail.eligible { rect.size.width += DesignTokens.navigationRailSlideDistance }
+                return rect
+            }
+        }
         rail.makePreview = { [weak pdfManager, weak bookmarkManager, weak rail] target in
             guard let pdfManager, let bookmarkManager, case let .page(index) = target else { return nil }
             let position = ThumbnailRailPreviewPosition(pageIndex: index)
@@ -30,10 +42,8 @@ struct PDFNavigationRail: NSViewRepresentable {
             guard let pdfManager, let document, let rail,
                   pdfManager.document === document, !pdfManager.suppressesNavigationRail,
                   rail.eligible, rail.generation == generation,
-                  case let .page(index) = target, index >= 0, index < document.pageCount,
-                  pdfManager.currentPageIndex != index || pdfManager.currentPage !== document.page(at: index) else { return }
-            pdfManager.pushNavigationState()
-            pdfManager.goToPage(index)
+                  case let .page(index) = target else { return }
+            pdfManager.jump(toPage: index)
         }
         rail.configure(kind: .pdf, count: pdfManager.pageCount, visible: [pdfManager.currentPageIndex],
             identity: pdfManager.document.map(ObjectIdentifier.init) as AnyHashable,

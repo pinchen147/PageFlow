@@ -16,6 +16,13 @@ import AppKit
 
 final class GlassScroller: NSScroller {
     private let glassKnob = GlassScrollerKnobView()
+    /// The reader took hold of the scroller.
+    var onTrack: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onTrack?()
+        super.mouseDown(with: event)
+    }
 
     override class var isCompatibleWithOverlayScrollers: Bool {
         true

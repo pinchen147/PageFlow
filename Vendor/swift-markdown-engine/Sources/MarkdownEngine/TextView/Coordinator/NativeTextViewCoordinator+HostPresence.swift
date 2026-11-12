@@ -25,15 +25,24 @@ extension NativeTextViewCoordinator {
         lastDisplayed = displayed
         invalidateSectionNavigation()
         if displayed {
+            let positionBeforeShowing = pendingReadingPositionRequest == nil ? lastReadingPosition : nil
             scrollView.isHidden = false
             installViewObservers(scrollView: scrollView, textView: textView)
             viewportFrameDidChange(scrollView: scrollView, textView: textView)
             textView.resumeDeferredLayoutWork(for: scrollView)
             enqueueDeferredRestyle([])
+            resumeAppearanceRefresh()
+            finishOwedFullMeasure()
+            // Hidden styling can revise the layout above this source line without
+            // changing the viewport width. Land the banked line after that geometry.
+            if let positionBeforeShowing, !scrollView.isZoomInProgress {
+                textView.restore(positionBeforeShowing)
+            }
             applyPendingReadingPosition(scrollView: scrollView, textView: textView)
         } else {
             tableEditingSession.finishInput()
             commitTextSync(for: textView)
+            lastReadingPosition = textView.readingPosition() ?? lastReadingPosition
             if textView.window?.firstResponder === textView
                 || textView.window?.firstResponder === tableEditingSession.editor {
                 textView.window?.makeFirstResponder(nil)
@@ -46,7 +55,8 @@ extension NativeTextViewCoordinator {
 
     /// The keyboard follows the host's active tab: the editor takes first
     /// responder one turn after it is asked to (a responder change inside a
-    /// SwiftUI update re-enters AppKit), and only while it is displayed.
+    /// SwiftUI update re-enters AppKit), and only while it is displayed and no
+    /// comment field is being typed in.
     func applyFocused(_ focused: Bool, textView: NativeTextView) {
         guard focused != lastFocused else { return }
         lastFocused = focused
@@ -54,7 +64,8 @@ extension NativeTextViewCoordinator {
         DispatchQueue.main.async { [weak self, weak textView] in
             guard let self, self.lastFocused, let textView, let window = textView.window,
                   textView.enclosingScrollView?.isHidden == false,
-                  window.firstResponder !== textView else { return }
+                  window.firstResponder !== textView,
+                  self.comments?.ownsAnnotationResponder(window.firstResponder) != true else { return }
             window.makeFirstResponder(self.tableEditingSession.preferredResponder ?? textView)
         }
     }
@@ -64,10 +75,16 @@ extension NativeTextViewCoordinator {
     /// Lands the pending request once the editor is styled, displayed and has
     /// a viewport to land in. A request handed over before that waits here.
     func applyPendingReadingPosition(scrollView: ClampedScrollView, textView: NativeTextView) {
-        guard let request = pendingReadingPositionRequest, didInitialFormatting,
+        // In a window: AppKit lays a zoomed clip out again as it gets a size there, and
+        // moves what landed before that (-80 to -63.75 at 80%).
+        guard let request = pendingReadingPositionRequest, didInitialFormatting, scrollView.window != nil,
               !scrollView.isHidden, scrollView.contentView.bounds.height > 1 else { return }
+        // A reopened fitted note first measures its row in the destination window.
+        // Keep the saved line until that measurement has set the final clip scale.
+        if isWidthFitted && lastWidthFitGeometry == nil { return }
         pendingReadingPositionRequest = nil
         appliedReadingPositionToken = request.token
+        scrollView.settleClipScale()
         textView.restore(request.position)
     }
 
@@ -78,14 +95,17 @@ extension NativeTextViewCoordinator {
     func viewportFrameDidChange(scrollView: ClampedScrollView, textView: NativeTextView) {
         // Refresh code-block overlays only on real viewport width changes, not
         // on TextKit height-only echoes during typing.
-        let newWidth = scrollView.contentView.bounds.width
+        // Measured in the clip's frame, what the window gave it: a zoom changes its
+        // bounds' width and re-wraps nothing here (it has its own settle), and taking
+        // that for a resize landed a warm tab on where it was before the zoom.
+        let newWidth = scrollView.contentView.frame.width
         let widthChanged = abs(newWidth - lastObservedViewportWidth) > 0.5
         let positionBeforeResize = lastReadingPosition
         if widthChanged {
             lastObservedViewportWidth = newWidth
             // Re-center the column by position (no redraw) so it stays smooth during live resize.
             if configuration.readingWidth != nil {
-                textView.centerReadingColumn(forClipWidth: newWidth)
+                textView.centerReadingColumn(forClipWidth: scrollView.contentView.bounds.width)
             } else if !scrollView.isZoomInProgress {
                 // A zoomed document can keep its wider frame after the clip
                 // view shrinks, so its normal width propagation never runs.
@@ -112,6 +132,7 @@ extension NativeTextViewCoordinator {
             textView.restore(position)
         }
         applyPendingReadingPosition(scrollView: scrollView, textView: textView)
+        scheduleWidthFit()
         foldControls?.refresh()
         scheduleSectionNavigationRefresh()
     }
@@ -139,6 +160,9 @@ extension NativeTextViewCoordinator {
         ) { [weak scrollView, weak textView, weak coordinator = self] _ in
             guard let scrollView, let textView, let coordinator else { return }
             MainActor.assumeIsolated { ScrollTrace.observe(scrollView) }
+            // Geometry-only policy must publish during zoom, even while layout
+            // work stays frozen and heading membership remains unchanged.
+            coordinator.scheduleSectionNavigationRefresh()
             // ZOOM frames are frozen (ADR-0019): during a pinch / zoom-tick
             // burst / AppKit's past-the-limit magnification bounce, the clip
             // bounds change on every frame, and each ensureVisibleLayout /
@@ -172,6 +196,14 @@ extension NativeTextViewCoordinator {
             // scrolling — heals any frame that went stale through a missed
             // reconcile trigger (see realignWideTableOverlays).
             textView.realignWideTableOverlays()
+            if coordinator.tableEditingSession.isActive {
+                // The bounds notification can precede TextKit's returning viewport.
+                // Cached fragments need no draw, so reconcile the retained narrow
+                // editor once the pending layout pass has had a chance to finish.
+                DispatchQueue.main.async { [weak textView] in
+                    textView?.refreshInlineTableEditor()
+                }
+            }
             coordinator.selectionBar?.reposition()
             coordinator.foldControls?.refresh()
             coordinator.scheduleSectionNavigationRefresh()

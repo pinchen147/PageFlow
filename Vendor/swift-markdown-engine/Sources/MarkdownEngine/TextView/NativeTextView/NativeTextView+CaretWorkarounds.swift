@@ -109,9 +109,17 @@ extension NativeTextView {
             desiredY = lineMaxY + (style?.paragraphSpacing ?? 0) + self.textContainerInset.height
             return false
         }
-        guard let desiredY, abs(indicator.frame.origin.y - desiredY) >= 0.5 else { return }
+        // A note that ends in an image collapses its trailing empty line (Q24A):
+        // the caret there is drawn one body line tall, just under the image.
+        var desiredHeight = indicator.frame.height
+        if ts.attribute(.collapsesTrailingLine, at: ns.length - 1, effectiveRange: nil) as? Bool == true {
+            desiredHeight = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
+        }
+        guard let desiredY, abs(indicator.frame.origin.y - desiredY) >= 0.5
+            || abs(indicator.frame.height - desiredHeight) >= 0.5 else { return }
         isApplyingCaretShift = true
         indicator.frame.origin.y = desiredY
+        indicator.frame.size.height = desiredHeight
         isApplyingCaretShift = false
     }
 }

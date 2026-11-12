@@ -6,7 +6,7 @@ import AppKit
 /// one Undo step; the widths follow the table through its own edits.
 extension MarkdownTableEditingSession {
     static let widthPresets: [(title: String, width: CGFloat)] = [
-        ("Narrow", 112), ("Medium", 224), ("Wide", 336), ("Extra wide", 672),
+        ("Narrow", 112), ("Medium", 224), ("Wide", 336), ("Extra Wide", 672),
     ]
 
     private var widthsController: MarkdownEditorController? { coordinator?.editorController }
@@ -23,6 +23,26 @@ extension MarkdownTableEditingSession {
     func resolveWidthKey() -> String? {
         if widthKey == nil, let table { widthKey = coordinator?.tableKey(forTableAt: table.range) }
         return widthKey
+    }
+
+    // MARK: - A new table
+
+    /// A new table's column width (doc 24 §5.1.5): max(48, floor(min(W, 672) / 3))
+    /// for an editor `W` wide, and 160 when the editor has no width yet.
+    static func newTableColumnWidth(editorWidth: CGFloat) -> CGFloat {
+        guard editorWidth > 0 else { return 160 }
+        return max(MarkdownTableLayout.minimumColumnWidth, floor(min(editorWidth, 672) / 3))
+    }
+
+    /// Gives every column of the table just inserted the new-table width,
+    /// view-only (deviation a), in the insertion's Undo group.
+    func applyNewTableWidths(toTableAt range: NSRange, editorWidth: CGFloat) {
+        guard let coordinator, let main = coordinator.textView, NSMaxRange(range) <= (main.string as NSString).length,
+              let table = MarkdownTableSource(source: main.string, range: range),
+              let key = coordinator.tableKey(forTableAt: range) else { return }
+        let width = Self.newTableColumnWidth(editorWidth: editorWidth)
+        applyColumnWidths(Array(repeating: width, count: table.columnCount), key: key,
+                          tableLocation: range.location, actionName: "Insert Table")
     }
 
     // MARK: - Set column width
@@ -120,13 +140,16 @@ extension MarkdownTableEditingSession {
 
     /// After an edit of this table: its widths move to the key its header now
     /// gives (the table keeps its ordinal), reshaped by `transform` for
-    /// inserted, deleted or moved columns.
-    func followWidths(_ transform: (inout [CGFloat?]) -> Void = { _ in }) {
+    /// inserted, deleted or moved columns. `registersUndo` puts the old widths
+    /// back in the Undo group of the table rewrite that called it.
+    func followWidths(registersUndo: Bool = false, _ transform: (inout [CGFloat?]) -> Void = { _ in }) {
         guard let table, let key = widthKey, let ordinal = key.split(separator: "-").last,
               let main = coordinator?.textView, let controller = widthsController else { return }
         let text = main.string as NSString
         guard NSMaxRange(table.range) <= text.length else { return }
         let newKey = String(NativeTextViewCoordinator.headerHash(ofTableAt: table.range, in: text), radix: 16) + "-" + ordinal
+        let keys: Set = [key, newKey]
+        let before = controller.tableWidthsStore.widths.filter { keys.contains($0.key) }
         MainActor.assumeIsolated {
             var all = controller.tableColumnWidths
             if var widths = all[key] {
@@ -137,6 +160,31 @@ extension MarkdownTableEditingSession {
             }
         }
         widthKey = newKey
+        let after = controller.tableWidthsStore.widths.filter { keys.contains($0.key) }
+        if registersUndo, before != after, let undo = main.undoManager, !undo.isUndoing, !undo.isRedoing {
+            registerFollowUndo(restoring: before, key: key, replacing: after, key: newKey, keys: keys,
+                               tableLocation: table.range.location, undo: undo)
+        }
+    }
+
+    /// Undo of a followed edit: the widths `keys` held before it, and the key
+    /// the table's header gives again.
+    private func registerFollowUndo(restoring old: [String: [CGFloat?]], key oldKey: String,
+                                    replacing new: [String: [CGFloat?]], key newKey: String, keys: Set<String>,
+                                    tableLocation: Int, undo: UndoManager) {
+        guard let coordinator else { return }
+        undo.registerUndo(withTarget: coordinator) { [weak self] _ in
+            guard let self, let controller = self.widthsController else { return }
+            MainActor.assumeIsolated {
+                var all = controller.tableColumnWidths
+                for key in keys { all[key] = old[key] }
+                controller.tableColumnWidths = all
+            }
+            self.widthKey = oldKey
+            self.storeWidths(old[oldKey], key: oldKey, tableLocation: tableLocation)
+            self.registerFollowUndo(restoring: new, key: newKey, replacing: old, key: oldKey, keys: keys,
+                                    tableLocation: tableLocation, undo: undo)
+        }
     }
 }
 

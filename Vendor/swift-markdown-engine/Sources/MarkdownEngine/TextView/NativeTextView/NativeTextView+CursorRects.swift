@@ -14,11 +14,12 @@ extension NativeTextView {
 
     override func mouseMoved(with event: NSEvent) {
         (delegate as? NativeTextViewCoordinator)?.blockMover.hover(at: convert(event.locationInWindow, from: nil))
+        guard let hit = frontmostCursorHit(for: event) else { return }
         // Images and their handles are not text hit targets. AppKit's text
         // hover path can synchronously lay out the note before we replace its
         // cursor, so let the rendered object consume the event first.
-        guard !applyControlCursor(for: event),
-              !applyImageCursor(for: event) else { return }
+        guard !applyControlCursor(for: event, hit: hit),
+              ownsTextOrTableCursorHit(hit), !applyImageCursor(for: event) else { return }
 #if DEBUG
         let hoverStart = CFAbsoluteTimeGetCurrent()
 #endif
@@ -31,24 +32,37 @@ extension NativeTextView {
 
     override func mouseEntered(with event: NSEvent) {
         (delegate as? NativeTextViewCoordinator)?.blockMover.hover(at: convert(event.locationInWindow, from: nil))
-        guard !applyControlCursor(for: event),
-              !applyImageCursor(for: event) else { return }
+        guard let hit = frontmostCursorHit(for: event) else { return }
+        guard !applyControlCursor(for: event, hit: hit),
+              ownsTextOrTableCursorHit(hit), !applyImageCursor(for: event) else { return }
         super.mouseEntered(with: event)
         applyReadOnlyCursor(for: event)
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        guard !applyControlCursor(for: event),
-              !applyImageCursor(for: event) else { return }
+        guard let hit = frontmostCursorHit(for: event) else { return }
+        guard !applyControlCursor(for: event, hit: hit),
+              ownsTextOrTableCursorHit(hit), !applyImageCursor(for: event) else { return }
         super.cursorUpdate(with: event)
+        applyReadOnlyCursor(for: event)
     }
 
     /// Native text callbacks must not replace a visible control's cursor with an I-beam.
-    private func applyControlCursor(for event: NSEvent) -> Bool {
+    private func applyControlCursor(for event: NSEvent, hit: NSView) -> Bool {
         guard let coordinator = delegate as? NativeTextViewCoordinator else { return false }
+        let ownsText = ownsTextOrTableCursorHit(hit)
         return coordinator.blockMover.applyCursor(for: event)
-            || coordinator.tableChrome?.applyCursor(for: event) == true
-            || coordinator.foldControls?.applyCursor(for: event) == true
+            || ((ownsText || hit === coordinator.tableChrome?.view)
+                && coordinator.tableChrome?.applyCursor(for: event) == true)
+            || ((ownsText || coordinator.foldControls?.accessibilityControls.contains(where: { $0 === hit }) == true)
+                && coordinator.foldControls?.applyCursor(for: event) == true)
+            || (ownsText && coordinator.applyTableLinkCursor(for: event))
+    }
+
+    private func ownsTextOrTableCursorHit(_ hit: NSView) -> Bool {
+        ownsTextCursorHit(hit)
+            || (hit as? WideTableImageView)?.ownerOverlay?.ownerTextView === self
+            || hit === (delegate as? NativeTextViewCoordinator)?.tableEditingSession.grid
     }
 
     /// In read-only mode, override NSTextView's I-beam: pointing hand over a

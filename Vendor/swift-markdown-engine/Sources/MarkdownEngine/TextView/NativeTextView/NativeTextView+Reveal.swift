@@ -100,20 +100,30 @@ extension NativeTextView {
     /// estimates can need more).
     func scroll(by delta: CGFloat, landing offset: Int) {
         guard let scrollView = enclosingScrollView, let tlm = textLayoutManager,
-              var landed = lineFrame(at: offset)?.minY else { return }
+              let initialLineY = lineFrame(at: offset)?.minY else { return }
         let clip = scrollView.contentView
-        var correction = delta
+        let desiredLineInset = initialLineY - clip.bounds.minY - delta
+        var lineY = initialLineY
         for pass in 0..<6 {
             ScrollTrace.stamp(pass == 0 ? "land(offset=\(offset))" : "land(offset=\(offset), reland)")
-            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clip.bounds.origin.y + correction))
+            // Never above where the clip rests: a clamp stands down during a zoom's settle,
+            // and AppKit would take a landing past the rest back with the next scroll.
+            let rest = (scrollView as? ClampedScrollView)?.restingOriginY ?? -CGFloat.greatestFiniteMagnitude
+            let before = clip.bounds.minY
+            let target = max(rest, lineY - desiredLineInset)
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: target))
             scrollView.reflectScrolledClipView(clip)
             (scrollView as? ClampedScrollView)?.clampToInsets()
             tlm.textViewportLayoutController.layoutViewport()
             ensureVisibleLayout()
             guard let now = lineFrame(at: offset)?.minY else { return }
-            correction = now - landed
-            landed = now
-            guard correction.isFinite, abs(correction) > 0.5 else { return }
+            // AppKit can move the clip while TextKit lays out a newly mounted
+            // document. Compare the line with the clip's actual landing.
+            let after = clip.bounds.minY
+            let remaining = max(rest, now - desiredLineInset) - after
+            guard remaining.isFinite, abs(remaining) > 0.5 else { return }
+            if pass > 0, abs(after - before) < 0.5, abs(now - lineY) < 0.5 { return }
+            lineY = now
         }
     }
 
@@ -128,7 +138,7 @@ extension NativeTextView {
     /// final fallback. The `fr.maxY < visTop` skip is kept as a cheap safety net for
     /// the one fragment that may straddle the top edge.
     func ensureVisibleLayout() {
-        guard let tlm = textLayoutManager else { return }
+        guard !isHiddenOrHasHiddenAncestor, let tlm = textLayoutManager else { return }
         let visTop = visibleRect.minY
         let visBot = visibleRect.maxY
         let viewport = tlm.textViewportLayoutController

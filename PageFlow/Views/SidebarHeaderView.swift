@@ -18,12 +18,12 @@ struct SidebarHeaderView: View {
 
             Spacer()
 
-            if mode == .thumbnails && isEditingPages {
-                doneButton
+            if mode == .thumbnails {
+                editPagesButton
             }
 
             modeToggle
-            GlassSidebarCloseButton {
+            GlassSidebarCloseButton(label: "Close Sidebar") {
                 isEditingPages = false
                 onClose()
             }
@@ -38,13 +38,13 @@ struct SidebarHeaderView: View {
         }
     }
 
-    private var doneButton: some View {
+    private var editPagesButton: some View {
         Button {
             withAnimation(.easeInOut(duration: DesignTokens.animationFast)) {
-                isEditingPages = false
+                isEditingPages.toggle()
             }
         } label: {
-            Text("Done")
+            Text(isEditingPages ? "Done" : "Edit")
                 .font(.system(size: 12))
                 .padding(.horizontal, DesignTokens.spacingSM)
                 .padding(.vertical, DesignTokens.spacingXS)
@@ -52,6 +52,7 @@ struct SidebarHeaderView: View {
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()
+        .accessibilityLabel(isEditingPages ? "Done" : "Edit Pages")
     }
 
     private var modeToggle: some View {
@@ -73,6 +74,7 @@ struct SidebarHeaderView: View {
         .buttonStyle(.plain)
         .pageFlowClickCursor()
         .help(modeHelpText)
+        .accessibilityLabel(modeHelpText)
     }
 
     private var nextMode: SidebarMode {

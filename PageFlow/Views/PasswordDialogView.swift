@@ -9,6 +9,8 @@ import SwiftUI
 
 struct PasswordDialogView: View {
     let fileName: String
+    /// The default button: Open, or Insert when the PDF's pages are being inserted.
+    var submitTitle = "Open"
     let onSubmit: (String) -> Bool
     let onCancel: () -> Void
 
@@ -50,7 +52,7 @@ struct PasswordDialogView: View {
                 .pageFlowClickCursor()
                 .keyboardShortcut(.cancelAction)
 
-                Button("Open") {
+                Button(submitTitle) {
                     submitPassword()
                 }
                 .pageFlowClickCursor()

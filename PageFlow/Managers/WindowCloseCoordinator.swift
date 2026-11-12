@@ -58,6 +58,8 @@ struct DocumentCloseSnapshot {
                 return !manager.isClosed && (allowingSavedURL || manager.documentURL == url) &&
                     (allowingImageAdoption || (manager.text.hasSameSource(as: text) && manager.commentBlock.hasSameSource(as: comments)))
             }
+        case .epub:
+            unchanged = { _, _ in true }
         }
     }
 
@@ -117,12 +119,17 @@ extension TabManager {
         flushMarkdownEditors()
         flushActiveTabViewState()
         closeFilePicker()
-        for tab in tabs { ClosedTabStore.shared.record(tab) }
+        for tab in tabs { recordClosedTab(tab) }
         for id in Array(sessions.keys) { closeSession(for: id) }
         tabs.removeAll()
         activeTabID = nil
         unlockQueue.removeAll()
     }
+}
+
+extension Notification.Name {
+    /// Posted for a registered window: `NSWindow` has no notification of its own for this.
+    static let pageFlowWindowDidFailToEnterFullScreen = Notification.Name("PageFlowWindowDidFailToEnterFullScreen")
 }
 
 /// Preserves the delegate installed by SwiftUI (or NSWindowController). AppKit
@@ -183,6 +190,12 @@ final class WindowCloseCoordinator: NSObject, NSWindowDelegate {
             sender.close()
         }
         return false
+    }
+
+    /// AppKit tells only the delegate that a window didn't enter full screen.
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        NotificationCenter.default.post(name: .pageFlowWindowDidFailToEnterFullScreen, object: window)
+        original?.windowDidFailToEnterFullScreen?(window)
     }
 
     func windowWillClose(_ notification: Notification) {

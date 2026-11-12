@@ -16,7 +16,16 @@ extension MarkdownCommentsController {
     /// The selection a comment would anchor to: a cell range, text in the
     /// focused cell, or document text with something besides space in it.
     var commentTarget: CommentTarget? {
-        guard let main = textView, let session = coordinator?.tableEditingSession else { return nil }
+        guard let main = textView else { return nil }
+        if semanticOwner != nil {
+            if let range = semanticAnchors?.selectedCellTarget() { return CommentTarget(range: range, cells: true) }
+            if main.window?.firstResponder === main { semanticAnchors?.pendingCells = [] }
+            let range = main.selectedRange()
+            guard range.length > 0, NSMaxRange(range) <= main.string.utf16.count,
+                  !(main.string as NSString).substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return CommentTarget(range: range)
+        }
+        guard let session = coordinator?.tableEditingSession else { return nil }
         let text = main.string as NSString
         if session.isRangeMode, let selection = session.cellSelection, let table = session.table {
             return cellRangeTarget(rows: selection.rows, columns: selection.columns, in: table)
@@ -51,7 +60,7 @@ extension MarkdownCommentsController {
     // MARK: - Painting inside a table
 
     /// The rendered table holding `range`, if any.
-    func table(holding range: NSRange, in main: NativeTextView) -> MarkdownTableSource? {
+    func table(holding range: NSRange, in main: NSTextView) -> MarkdownTableSource? {
         guard let coordinator, let parsed = coordinator.parsedDocumentIfCached(for: main.string),
               let token = parsed.tokens.first(where: {
                   $0.kind == .table && range.location >= $0.range.location && NSMaxRange(range) <= NSMaxRange($0.range)
@@ -74,15 +83,15 @@ extension MarkdownCommentsController {
     /// What a thread inside a table paints, in the text view: each cell of a
     /// cell range, or the line boxes of text in a cell. Nil when `range` is
     /// not inside a rendered table.
-    func tableInteriorRects(for range: NSRange, cells: Bool, in main: NativeTextView) -> [NSRect]? {
+    func tableInteriorRects(for range: NSRange, cells: Bool, in main: NSTextView) -> [NSRect]? {
         guard let table = table(holding: range, in: main), let geometry = geometry(for: table),
-              let canvas = main.tableCanvas(forTableAt: table.range) else { return nil }
+              let canvas = main.comments_tableCanvas(forTableAt: table.range) else { return nil }
         var clip = NSRect.infinite
         if canvas.view !== main, let overlay = canvas.view.enclosingScrollView {
             clip = overlay.contentView.convert(overlay.contentView.bounds, to: main)
         }
         func toMain(_ rect: NSRect) -> NSRect? {
-            let converted = main.convertTableRect(rect, canvas: canvas).intersection(clip)
+            let converted = main.comments_convertTableRect(rect, canvas: canvas).intersection(clip)
             return converted.isEmpty ? nil : converted
         }
         let covered = table.cells(coveredBy: range)
@@ -158,7 +167,7 @@ extension MarkdownCommentsController {
     // MARK: - The blended layer over tables
 
     /// Keeps the layer over tables at the top of the document, blending as the appearance asks.
-    func placeTableHighlights(in container: NSView, main: NativeTextView) {
+    func placeTableHighlights(in container: NSView, main: NSTextView) {
         if let container = container as? NativeTextViewContainer {
             container.keepAboveWideTables(tableHighlights)
         } else if tableHighlights.superview !== container {

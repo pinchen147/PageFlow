@@ -85,10 +85,12 @@ extension NativeTextViewCoordinator {
             sectionNavigationState.revision = receipt
         }
         let visible = visibleSectionRanks(in: view)
+        let fits = view.readingRowFitsViewportWidth
         guard changed || sectionNavigationState.snapshot == nil
-                || sectionNavigationState.snapshot?.visibleRanks != visible else { return }
-        publishSectionSnapshot(MarkdownSectionNavigationSnapshot(
-            targets: sectionNavigationState.targets, visibleRanks: visible))
+                || sectionNavigationState.snapshot?.visibleRanks != visible
+                || sectionNavigationState.snapshot?.fitsViewportWidth != fits else { return }
+        publishSectionSnapshot(MarkdownSectionNavigationSnapshot(targets: sectionNavigationState.targets,
+            visibleRanks: visible, fitsViewportWidth: fits))
     }
 
     private func publishSectionSnapshot(_ snapshot: MarkdownSectionNavigationSnapshot?) {

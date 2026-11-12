@@ -25,6 +25,8 @@ enum MarkdownExternalChangeChoice {
 /// the user's choice; the caller performs the reload/keep action.
 @MainActor
 func presentMarkdownExternalChangePrompt(title: String, isDirty: Bool) -> MarkdownExternalChangeChoice {
+    // A modal in the test host would hold every test behind it.
+    guard !TestEnvironment.isRunningTests else { return .cancel }
     let alert = NSAlert()
     alert.icon = NSApp.applicationIconImage
     alert.messageText = "\"\(title)\" has changed on disk."
@@ -53,6 +55,8 @@ enum MarkdownMissingFileChoice {
 /// Presents the Keep Open / Close prompt for a note whose file disappeared.
 @MainActor
 func presentMarkdownMissingFilePrompt(title: String, isDirty: Bool) -> MarkdownMissingFileChoice {
+    // A modal in the test host would hold every test behind it.
+    guard !TestEnvironment.isRunningTests else { return .keepOpen }
     let alert = NSAlert()
     alert.icon = NSApp.applicationIconImage
     alert.messageText = "\"\(title)\" was deleted or moved."

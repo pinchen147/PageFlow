@@ -106,7 +106,7 @@ final class CommentIconChip: NSView {
             CommentPalette.alpha1.setFill()
             pill.fill()
         }
-        SelectionBarButton.drawSymbol("bubble.left", size: 14, in: NSRect(x: 8, y: 6, width: 14, height: 14),
+        SelectionBarButton.drawSymbol("bubble.right", size: 14, in: NSRect(x: 8, y: 6, width: 14, height: 14),
                                       color: CommentPalette.secondaryText)
         let label = "\(cluster?.count ?? 0)" as NSString
         let attributes: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: CommentPalette.secondaryText]

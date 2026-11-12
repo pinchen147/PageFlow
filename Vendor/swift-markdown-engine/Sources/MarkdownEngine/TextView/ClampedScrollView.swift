@@ -10,6 +10,45 @@ import AppKit
 import QuartzCore
 
 final class ClampedScrollView: NSScrollView {
+    /// Native setters can call one another and publish intermediate clip bounds.
+    /// Reconcile column geometry only after the outer native operation returns.
+    private var nativeMagnificationDepth = 0
+    var isApplyingNativeMagnification: Bool { nativeMagnificationDepth > 0 }
+
+    private func applyingNativeMagnification(_ change: () -> Void) {
+        nativeMagnificationDepth += 1
+        change()
+        nativeMagnificationDepth -= 1
+        guard nativeMagnificationDepth == 0,
+              abs(contentView.bounds.width * magnification - contentView.frame.width) < 0.5 else { return }
+        nativeTextView?.centerReadingColumn(forClipWidth: contentView.bounds.width, preservingViewport: true)
+    }
+
+    override var magnification: CGFloat {
+        get { super.magnification }
+        set { applyingNativeMagnification { super.magnification = newValue } }
+    }
+
+    override func setMagnification(_ magnification: CGFloat, centeredAt point: NSPoint) {
+        applyingNativeMagnification { super.setMagnification(magnification, centeredAt: point) }
+    }
+
+    private var isHandlingMagnifyGesture = false
+
+    private func beginUserMagnification(at anchor: NSPoint?) {
+        guard !isHandlingMagnifyGesture else { return }
+        isHandlingMagnifyGesture = true
+        _ = onUserMagnificationBegan?(anchor)
+    }
+
+    override func magnify(with event: NSEvent) {
+        beginUserMagnification(at: contentView.convert(event.locationInWindow, from: nil))
+        applyingNativeMagnification { super.magnify(with: event) }
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            isHandlingMagnifyGesture = false
+        }
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         // NSClipView rejects hits in contentInsets even when scrolling has
@@ -28,6 +67,7 @@ final class ClampedScrollView: NSScrollView {
     /// host-projected magnification (⌘±, ⌘0, restore), which the host already
     /// knows. `nil` when visual zoom is disabled.
     var onMagnificationChanged: ((CGFloat) -> Void)?
+    var onUserMagnificationBegan: ((NSPoint?) -> Bool)?
     /// Per-Ctrl-scroll-tick zoom factor (PDF parity).
     var ctrlScrollZoomFactor: CGFloat = 1.1
     private var liveMagnifyObservers: [NSObjectProtocol] = []
@@ -86,6 +126,7 @@ final class ClampedScrollView: NSScrollView {
             liveMagnifyObservers.append(NotificationCenter.default.addObserver(
                 forName: NSScrollView.willStartLiveMagnifyNotification, object: self, queue: .main
             ) { [weak self] _ in
+                self?.beginUserMagnification(at: nil)
                 self?.isLiveMagnifying = true
                 MainActor.assumeIsolated { ScrollTrace.beginLiveGesture("magnify") }
             })
@@ -94,6 +135,7 @@ final class ClampedScrollView: NSScrollView {
                 forName: NSScrollView.didEndLiveMagnifyNotification, object: self, queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
+                self.isHandlingMagnifyGesture = false
                 self.isLiveMagnifying = false
                 MainActor.assumeIsolated { ScrollTrace.endLiveGesture("magnify") }
                 self.noteMagnificationChanged()
@@ -125,6 +167,7 @@ final class ClampedScrollView: NSScrollView {
         ScrollTrace.noteUserGesture("wheel")
         // Ctrl+scroll = zoom around the cursor (PDF parity), when visual zoom is on.
         if allowsMagnification, event.modifierFlags.contains(.control), event.scrollingDeltaY != 0 {
+            let leftFit = onUserMagnificationBegan?(contentView.convert(event.locationInWindow, from: nil)) ?? false
             let factor = event.scrollingDeltaY > 0 ? ctrlScrollZoomFactor : 1 / ctrlScrollZoomFactor
             let target = min(max(magnification * factor, minMagnification), maxMagnification)
             if target != magnification {
@@ -136,6 +179,12 @@ final class ClampedScrollView: NSScrollView {
                 onMagnificationChanged?(magnification)
                 clampToInsets()
                 // Debounced inside the text view — a tick burst re-fits once.
+                nativeTextView?.magnificationDidSettle()
+            } else if leftFit {
+                // Leaving Fit is a manual intent even when its restored normal
+                // minimum makes a downward tick numerically unchanged.
+                noteMagnificationChanged()
+                onMagnificationChanged?(magnification)
                 nativeTextView?.magnificationDidSettle()
             }
             return
@@ -157,13 +206,38 @@ final class ClampedScrollView: NSScrollView {
         let container = doc as? NativeTextViewContainer
         let realHeight = container?.scrollableContentHeight ?? doc.bounds.height
         let bounds = contentView.bounds
-        let maxY = max(-contentInsets.top, realHeight - bounds.height)
+        let maxY = max(restingOriginY, realHeight - bounds.height)
         guard bounds.origin.y >= maxY - 1, let textView = container?.textView,
               CACurrentMediaTime() - lastClampRescue > 0.25 else { return }
         lastClampRescue = CACurrentMediaTime()
         ScrollTrace.stamp("heightRescue")
         textView.pendingFullLayoutMeasure = true
         textView.recalcOverscroll(for: self)
+    }
+
+    /// Where the clip rests at the top of the note: the bars' height in the note's
+    /// points, as a zoom leaves it (-64 / 1.5625 = -40.96 at 156%, -80 at 80%).
+    /// Clamping to -64 at every zoom held a zoomed-out note under the bars and left a
+    /// zoomed-in one past its rest for the next scroll to take up.
+    var restingOriginY: CGFloat { -contentInsets.top / max(magnification, 0.01) }
+
+    /// Laying out in a new window, AppKit constrains a zoomed-out clip to the insets at
+    /// full size (-63.75 at 80%), moving a note at its top down under the bars.
+    override func tile() {
+        let before = contentView.bounds.minY
+        super.tile()
+        guard magnification < 1, before < 0, before >= restingOriginY - 1,
+              contentView.bounds.minY > before + 0.5 else { return }
+        contentView.scroll(to: NSPoint(x: contentView.bounds.minX, y: before))
+    }
+
+    /// A magnification set before the clip had its size leaves its bounds at scale 1
+    /// until AppKit's next layout, which then rescales the origin too: a landing made
+    /// in between ends at 1/zoom of the way down. So a landing brings the scale in first.
+    func settleClipScale() {
+        let clip = contentView
+        guard magnification > 0, abs(clip.bounds.width * magnification - clip.frame.width) > 0.5 else { return }
+        clip.setBoundsSize(NSSize(width: clip.frame.width / magnification, height: clip.frame.height / magnification))
     }
 
     func clampToInsets() {
@@ -174,7 +248,7 @@ final class ClampedScrollView: NSScrollView {
         // around"). The zoom settle re-clamps once, after the window closes.
         guard !isZoomInProgress else { return }
         guard let doc = documentView else { return }
-        let minY = -contentInsets.top
+        let minY = restingOriginY
         // Use the real content height (not the inflated frame) so small
         // documents can't scroll past their actual content. The document view is
         // always a `NativeTextViewContainer` (header band + text column).

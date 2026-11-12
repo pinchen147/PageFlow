@@ -33,11 +33,12 @@ final class RecentFilesManager {
     private let logger = Logger(subsystem: "com.pageflow", category: "RecentFilesManager")
     private let maxRecentFiles = 10
     private let recentFilesKey = "recentFiles"
-    private let defaults: UserDefaults
+    /// Internal so a test can check where this writes without writing there.
+    let defaults: UserDefaults
 
     var recentFiles: [RecentFile] = []
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = AppDefaults.store) {
         self.defaults = defaults
         loadRecentFiles()
     }
@@ -78,8 +79,11 @@ final class RecentFilesManager {
                     bookmarkDataIsStale: &isStale
                 ).pageFlowCanonicalDocumentURL
 
+                // In the sandbox a path answers only inside its scope.
+                let scoped = resolvedURL.startAccessingSecurityScopedResource()
+                defer { if scoped { resolvedURL.stopAccessingSecurityScopedResource() } }
                 guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
-                    removeRecentFile(recentFile)
+                    removeIfGone(recentFile)
                     return nil
                 }
 
@@ -90,18 +94,23 @@ final class RecentFilesManager {
                 return ResolvedRecentFile(url: resolvedURL, isSecurityScoped: true)
             } catch {
                 logger.error("Failed to resolve recent file bookmark: \(error.localizedDescription)")
-                removeRecentFile(recentFile)
+                removeIfGone(recentFile)
                 return nil
             }
         }
 
         let resolvedURL = recentFile.url.pageFlowCanonicalDocumentURL
         guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
-            removeRecentFile(recentFile)
+            removeIfGone(recentFile)
             return nil
         }
 
         return ResolvedRecentFile(url: resolvedURL, isSecurityScoped: false)
+    }
+
+    /// A file on a volume that isn't mounted now may be back: it keeps its entry.
+    private func removeIfGone(_ recentFile: RecentFile) {
+        if !recentFile.url.pageFlowVolumeIsOffline { removeRecentFile(recentFile) }
     }
 
     private func loadRecentFiles() {

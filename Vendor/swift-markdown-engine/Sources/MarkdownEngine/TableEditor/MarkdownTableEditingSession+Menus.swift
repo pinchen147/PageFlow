@@ -94,32 +94,32 @@ extension MarkdownTableEditingSession {
         let headerReason = "Header rows stay at the top."
         typealias Item = TableMenuView.Item
         var items: [Item] = [
-            Item("Insert row above", symbol: "arrow.up.to.line", disabledReason: target.rows.lowerBound == 0 ? headerReason : nil) { [weak self] in
+            Item("Insert Row Above", symbol: "arrow.up.to.line", disabledReason: target.rows.lowerBound == 0 ? headerReason : nil) { [weak self] in
                 self?.insertAround(target, edit: .insertRow(below: false), announce: fromKeyboard ? "Row inserted above" : nil)
             },
-            Item("Insert row below", symbol: "arrow.down.to.line") { [weak self] in
+            Item("Insert Row Below", symbol: "arrow.down.to.line") { [weak self] in
                 self?.insertAround(target, edit: .insertRow(below: true), announce: fromKeyboard ? "Row inserted below" : nil)
             },
-            Item("Insert column left", symbol: "arrow.left.to.line") { [weak self] in
+            Item("Insert Column Left", symbol: "arrow.left.to.line") { [weak self] in
                 self?.insertAround(target, edit: .insertColumn(right: false), announce: fromKeyboard ? "Column inserted left" : nil)
             },
-            Item("Insert column right", symbol: "arrow.right.to.line") { [weak self] in
+            Item("Insert Column Right", symbol: "arrow.right.to.line") { [weak self] in
                 self?.insertAround(target, edit: .insertColumn(right: true), announce: fromKeyboard ? "Column inserted right" : nil)
             },
-            Item("Move row or column", symbol: "arrow.up.and.down.and.arrow.left.and.right") { [weak self] in
+            Item("Move Row or Column", symbol: "arrow.up.and.down.and.arrow.left.and.right") { [weak self] in
                 self?.showMoveMenu(fromKeyboard: fromKeyboard)
             },
-            Item("Set column width", symbol: "arrow.left.and.right") { [weak self] in
+            Item("Set Column Width", symbol: "arrow.left.and.right") { [weak self] in
                 self?.showWidthMenu(fromKeyboard: fromKeyboard)
             },
             .separator,
-            Item("Delete row", symbol: "xmark.rectangle") { [weak self] in
+            Item("Delete Row", symbol: "xmark.rectangle", disabledReason: deleteRowsDisabledReason(target)) { [weak self] in
                 self?.deleteRows(of: target, announce: fromKeyboard)
             },
-            Item("Delete column", symbol: "xmark.rectangle.portrait") { [weak self] in
+            Item("Delete Column", symbol: "xmark.rectangle.portrait", disabledReason: deleteColumnsDisabledReason(target)) { [weak self] in
                 self?.deleteColumns(of: target, announce: fromKeyboard)
             },
-            Item("Delete table", symbol: nil, isDanger: true) { [weak self] in
+            Item("Delete Table", symbol: nil, isDanger: true) { [weak self] in
                 guard let self else { return }
                 self.setCellSelection(nil)
                 if self.deleteTable(), fromKeyboard { Self.announce("Table deleted") }
@@ -128,21 +128,60 @@ extension MarkdownTableEditingSession {
         if table.rowCount - 1 >= 2 {
             items += [
                 .separator,
-                Item("Sort column ascending", symbol: "arrow.up") { [weak self] in
+                Item("Sort Column Ascending", symbol: "arrow.up") { [weak self] in
                     self?.sortColumn(target.columns.lowerBound, ascending: true, announce: fromKeyboard)
                 },
-                Item("Sort column descending", symbol: "arrow.down") { [weak self] in
+                Item("Sort Column Descending", symbol: "arrow.down") { [weak self] in
                     self?.sortColumn(target.columns.lowerBound, ascending: false, announce: fromKeyboard)
                 },
             ]
         }
         items += [
             .separator,
-            Item("Align left", symbol: "text.alignleft") { [weak self] in self?.align(target.columns, .left, announce: fromKeyboard ? "Aligned left" : nil) },
-            Item("Align center", symbol: "text.aligncenter") { [weak self] in self?.align(target.columns, .center, announce: fromKeyboard ? "Aligned center" : nil) },
-            Item("Align right", symbol: "text.alignright") { [weak self] in self?.align(target.columns, .right, announce: fromKeyboard ? "Aligned right" : nil) },
+            Item("Align Column Left", symbol: "text.alignleft") { [weak self] in self?.align(target.columns, .left, announce: fromKeyboard) },
+            Item("Align Column Center", symbol: "text.aligncenter") { [weak self] in self?.align(target.columns, .center, announce: fromKeyboard) },
+            Item("Align Column Right", symbol: "text.alignright") { [weak self] in self?.align(target.columns, .right, announce: fromKeyboard) },
         ]
         return items
+    }
+
+    // MARK: - Host commands (Format ▸ Table)
+
+    /// Whether `command` can act now: a table is being edited and its Cell
+    /// actions row would be enabled.
+    func canPerform(_ command: MarkdownTableCommand) -> Bool {
+        guard isActive, coordinator?.textView?.isEditable == true, !isComposing else { return false }
+        let target = commandTarget
+        switch command {
+        case .insertRowAbove: return target.rows.lowerBound > 0
+        case .deleteRow: return deleteRowsDisabledReason(target) == nil
+        case .deleteColumn: return deleteColumnsDisabledReason(target) == nil
+        default: return true
+        }
+    }
+
+    /// Runs `command` as its Cell actions row does. False when it cannot act.
+    @discardableResult
+    func performCommand(_ command: MarkdownTableCommand) -> Bool {
+        guard canPerform(command) else { return false }
+        openMenu?.close(.dismissed)
+        let target = commandTarget
+        switch command {
+        case .insertRowAbove: insertAround(target, edit: .insertRow(below: false), announce: nil)
+        case .insertRowBelow: insertAround(target, edit: .insertRow(below: true), announce: nil)
+        case .insertColumnLeft: insertAround(target, edit: .insertColumn(right: false), announce: nil)
+        case .insertColumnRight: insertAround(target, edit: .insertColumn(right: true), announce: nil)
+        case .deleteRow: deleteRows(of: target, announce: false)
+        case .deleteColumn: deleteColumns(of: target, announce: false)
+        case .deleteTable:
+            setCellSelection(nil)
+            return deleteTable()
+        case .alignColumnLeft: return alignColumns(.left)
+        case .alignColumnCenter: return alignColumns(.center)
+        case .alignColumnRight: return alignColumns(.right)
+        case .editTableSource: editTableSource(nil)
+        }
+        return true
     }
 
     /// Insert one row or column at the target's edge (the reference editor: the
@@ -157,13 +196,20 @@ extension MarkdownTableEditingSession {
         if perform(edit), let announce { Self.announce(announce) }
     }
 
+    /// Every row or every column cannot go: that is Delete table (doc 24 §5.9.4).
+    func deleteRowsDisabledReason(_ target: TableCellSelection) -> String? {
+        guard let table, target.isFullColumns(rowCount: table.rowCount) else { return nil }
+        return "Use Delete Table to remove every row."
+    }
+
+    func deleteColumnsDisabledReason(_ target: TableCellSelection) -> String? {
+        guard let table, target.isFullRows(columnCount: table.columnCount) else { return nil }
+        return "Use Delete Table to remove every column."
+    }
+
     func deleteRows(of target: TableCellSelection, announce: Bool) {
-        guard let table else { return }
+        guard let table, deleteRowsDisabledReason(target) == nil else { return }
         setCellSelection(nil)
-        if target.isFullColumns(rowCount: table.rowCount) {
-            if deleteTable(), announce { Self.announce("Table deleted") }
-            return
-        }
         guard let text = MarkdownTableEditPlan.deletingRows(target.rows, in: table),
               let refreshed = rewriteTable(text, actionName: target.rows.count > 1 ? "Delete Rows" : "Delete Row") else { return }
         select(row: min(target.rows.lowerBound, refreshed.rowCount - 1), column: min(column, refreshed.columnCount - 1))
@@ -173,12 +219,8 @@ extension MarkdownTableEditingSession {
     }
 
     func deleteColumns(of target: TableCellSelection, announce: Bool) {
-        guard let table else { return }
+        guard let table, deleteColumnsDisabledReason(target) == nil else { return }
         setCellSelection(nil)
-        if target.isFullRows(columnCount: table.columnCount) {
-            if deleteTable(), announce { Self.announce("Table deleted") }
-            return
-        }
         guard let text = MarkdownTableEditPlan.deletingColumns(target.columns, in: table),
               let refreshed = rewriteTable(text, actionName: target.columns.count > 1 ? "Delete Columns" : "Delete Column", columns: { widths in
                   widths.removeSubrange(min(target.columns.lowerBound, widths.count)..<min(target.columns.upperBound + 1, widths.count))
@@ -207,21 +249,47 @@ extension MarkdownTableEditingSession {
         if announce { Self.announce(ascending ? "Column sorted ascending" : "Column sorted descending") }
     }
 
-    /// Align every target column (Align left writes plain dashes).
-    private func align(_ columns: ClosedRange<Int>, _ alignment: MarkdownTableAlignment, announce: String?) {
-        guard var current = table else { return }
+    /// ⌘L, ⌘E, ⌘R and Format ▸ Align in a cell: the target columns take the
+    /// alignment. GFM has no justified column, so Justify does nothing.
+    @discardableResult
+    func alignColumns(_ alignment: MarkdownTextAlignment, announce: Bool = false) -> Bool {
+        let column: MarkdownTableAlignment
+        switch alignment {
+        case .left: column = .left
+        case .center: column = .center
+        case .right: column = .right
+        case .justify: return false
+        }
+        guard isActive else { return false }
+        return align(commandTarget.columns, column, announce: announce)
+    }
+
+    /// The undo name of Align Column Left, Center or Right.
+    static func alignActionName(_ alignment: MarkdownTableAlignment) -> String {
+        switch alignment {
+        case .left: "Align Column Left"
+        case .center: "Align Column Center"
+        case .right: "Align Column Right"
+        }
+    }
+
+    /// Align every target column (Align Column Left writes plain dashes).
+    @discardableResult
+    private func align(_ columns: ClosedRange<Int>, _ alignment: MarkdownTableAlignment, announce: Bool) -> Bool {
+        guard var current = table else { return false }
         setCellSelection(nil)
         var text = (current.source as NSString).substring(with: current.range)
         for column in columns {
             guard let plan = MarkdownTableEditPlan(.align(alignment), table: current, row: 0, column: column),
                   let next = MarkdownTableSource(source: plan.replacement, range: NSRange(location: 0, length: (plan.replacement as NSString).length))
-            else { return }
+            else { return false }
             text = plan.replacement
             current = next
         }
-        guard rewriteTable(text, actionName: "Align Column") != nil else { return }
+        guard rewriteTable(text, actionName: Self.alignActionName(alignment)) != nil else { return false }
         remount()
-        if let announce { Self.announce(announce) }
+        if announce { Self.announce("Aligned \(alignment)") }
+        return true
     }
 
     // MARK: - Move row or column
@@ -235,18 +303,18 @@ extension MarkdownTableEditingSession {
         let header = "Header rows stay at the top."
         typealias Item = TableMenuView.Item
         let items: [Item] = [
-            Item("Move row up", symbol: "arrow.up", disabledReason: cell.row <= 1 ? header : nil) { [weak self] in
+            Item("Move Row Up", symbol: "arrow.up", disabledReason: cell.row <= 1 ? header : nil) { [weak self] in
                 self?.moveRow(by: -1, announce: fromKeyboard)
             },
-            Item("Move row down", symbol: "arrow.down",
+            Item("Move Row Down", symbol: "arrow.down",
                  disabledReason: cell.row == 0 ? header : cell.row == last ? "This row is already at the bottom." : nil) { [weak self] in
                 self?.moveRow(by: 1, announce: fromKeyboard)
             },
-            Item("Move column left", symbol: "arrow.left",
+            Item("Move Column Left", symbol: "arrow.left",
                  disabledReason: cell.column == 0 ? "This column is already at the far left." : nil) { [weak self] in
                 self?.moveColumn(by: -1, announce: fromKeyboard)
             },
-            Item("Move column right", symbol: "arrow.right",
+            Item("Move Column Right", symbol: "arrow.right",
                  disabledReason: cell.column == table.columnCount - 1 ? "This column is already at the far right." : nil) { [weak self] in
                 self?.moveColumn(by: 1, announce: fromKeyboard)
             },
@@ -321,6 +389,8 @@ extension MarkdownTableEditingSession {
     }
 
     nonisolated(unsafe) private static var pendingAnnouncement: (text: String?, work: DispatchWorkItem?) = (nil, nil)
+    /// The message waiting out the 150 ms coalescing window (tests).
+    static var pendingAnnouncementText: String? { pendingAnnouncement.text }
     /// The last message posted (tests).
     nonisolated(unsafe) static var lastAnnouncement: String?
 }

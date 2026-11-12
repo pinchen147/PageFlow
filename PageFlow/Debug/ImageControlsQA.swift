@@ -23,6 +23,13 @@ enum ImageControlsQA {
         ]
     }
 
+    /// Validate the live target synchronously before sending an activation key.
+    static func isAltTextMenuReady(_ menu: NSView, in window: NSWindow) -> Bool {
+        menu.window === window && window.firstResponder === menu
+            && menu.accessibilityRole() == .menu
+            && menu.accessibilityValue() as? String == "Edit alt text"
+    }
+
     /// One bounded pass through native controls. Never repeats gestures for timing.
     static func run(textView: NSTextView, window: NSWindow, lineY _: (Int) -> Double?) async -> Result {
         var result = Result()
@@ -376,8 +383,8 @@ enum ImageControlsQA {
             }
             guard requireImageOnlyEdit("Alignment"), await undoExactly("alignment") else { return result }
         }
-        // Traverse the real menu with its native keyboard route; the first
-        // row is Copy image for this resolved raster, the second Edit alt text.
+        // Traverse the native keyboard route, then verify the live semantic
+        // action before Return: menu order alone cannot authorize activation.
         guard press("More actions") else { return result }
         do {
             guard let menu = findView("ChromeMenuView", in: scroll), window.firstResponder === menu else {
@@ -387,6 +394,10 @@ enum ImageControlsQA {
             if !matchesOriginalSource() { result.failures.append("Opening image menu edited source") }
             key(125, characters: "\u{f701}")
             key(125, characters: "\u{f701}")
+            guard isAltTextMenuReady(menu, in: window) else {
+                result.failures.append("Image menu focus is not Edit alt text; activation refused")
+                return result
+            }
             key(36, characters: "\r")
             guard let popover = findView("ImageAltTextPopover", in: scroll),
                   let editor = window.firstResponder as? NSTextView, editor !== textView,

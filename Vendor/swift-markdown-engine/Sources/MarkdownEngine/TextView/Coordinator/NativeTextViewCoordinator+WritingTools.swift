@@ -34,7 +34,11 @@ extension NativeTextViewCoordinator {
     @available(macOS 15.0, *)
     public func textViewWritingToolsDidEnd(_ textView: NSTextView) {
         guard isWritingToolsActive else { return }
-        defer { (textView as? NativeTextView)?.resumeCompletedImageImports() }
+        defer {
+            (textView as? NativeTextView)?.resumeCompletedImageImports()
+            resumeAppearanceRefresh()
+            scheduleWidthFit()
+        }
         textSyncGeneration &+= 1
         isWritingToolsActive = false
         wtChildWindow = nil

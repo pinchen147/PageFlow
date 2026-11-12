@@ -39,8 +39,7 @@ enum MarkdownInlineFormattingRuns {
                     let inSelection = NSIntersectionRange(line, targetRange)
                     guard inSelection.length > 0 else { continue }
                     let clipped = clipOutOfProtected(inSelection, clipsTouching(line, in: sortedClips), within: line)
-                    let trimmed = MarkdownInlineFormatter.trimmedRange(clipped, in: nsText)
-                    if trimmed.length > 0 { runs.append(trimmed) }
+                    if clipped.length > 0 { runs.append(clipped) }
                 }
             }
         }
