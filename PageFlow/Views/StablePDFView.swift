@@ -55,8 +55,31 @@ final class StablePDFView: PDFView {
         return false
     }
 
+    var onLayoutGeometryChange: (() -> Void)?
+    private weak var observedGeometryHost: NSView?
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        if let observedGeometryHost {
+            NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification,
+                                                      object: observedGeometryHost)
+        }
+        observedGeometryHost = superview
+        if let superview {
+            superview.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(self, selector: #selector(hostGeometryChanged(_:)),
+                name: NSView.frameDidChangeNotification, object: superview)
+        }
+        onLayoutGeometryChange?()
+    }
+
+    @objc private func hostGeometryChanged(_ notification: Notification) {
+        onLayoutGeometryChange?()
+    }
+
     override func layout() {
         super.layout()
+        defer { onLayoutGeometryChange?() }
 
         if let scrollView = documentScrollView {
             if configuredScrollView !== scrollView {
@@ -95,13 +118,48 @@ final class StablePDFView: PDFView {
     var onControlScroll: ((NSEvent) -> Bool)?
     /// Returns false when this native view no longer owns the displayed document.
     var onUserZoom: ((PDFUserZoomIntent) -> Bool)?
-    var onLinkNavigation: (() -> Void)?
+    var onLinkNavigation: ((PDFPage) -> Void)?
     var onCopyPageAsMarkdown: (() -> Void)?
     var onCopyDocumentAsMarkdown: (() -> Void)?
     var onToggleBookmark: (() -> Void)?
     var onRequestFocus: (() -> Void)?
+    /// The reader moved the view: a pan, the scrollers, or the keys. The wheel reaches
+    /// the scroll view first, so the coordinator's monitor reports that.
+    var onReaderScroll: (() -> Void)?
 
     private var rightClickMonitor: Any?
+
+    // MARK: - Keyboard
+
+    /// The stable per-document annotation identity, retained by the backend.
+    weak var annotationOwner: AnyObject?
+
+    /// This view is what's being read and holds the keyboard. A new view gets told
+    /// before it has a window, which SwiftUI gives it some turns later, so the claim
+    /// waits for one: asked once and given up on, the keyboard stayed in the window.
+    var wantsKeyboard = false {
+        didSet { if wantsKeyboard, !oldValue { claimKeyboard() } }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if wantsKeyboard { claimKeyboard() }
+    }
+
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        if wantsKeyboard { claimKeyboard() }
+    }
+
+    /// Deferred a turn: responder changes inside a SwiftUI update re-enter AppKit.
+    private func claimKeyboard() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.wantsKeyboard, let window = self.window, !self.isHiddenOrHasHiddenAncestor,
+                  // Closing Find mid-comment leaves the keyboard in the comment.
+                  self.annotationOwner.map({ CommentTextView.owns(window.firstResponder, owner: $0) }) != true else { return }
+            window.makeFirstResponder(self)
+        }
+    }
 
     deinit {
         pendingScrollRestore?.cancel()
@@ -177,6 +235,9 @@ final class StablePDFView: PDFView {
             let hScroller = GlassScroller()
             scrollView.horizontalScroller = hScroller
         }
+        for scroller in [scrollView.verticalScroller, scrollView.horizontalScroller] {
+            (scroller as? GlassScroller)?.onTrack = { [weak self] in self?.onReaderScroll?() }
+        }
 
         // Enforce visibility state
         syncScrollerVisibility(in: scrollView)
@@ -205,6 +266,7 @@ final class StablePDFView: PDFView {
     }
 
     @objc private func handleScrollChanged(_ notification: Notification) {
+        onLayoutGeometryChange?()
         guard let scrollView = documentScrollView else { return }
         // Enforce visibility state during scroll to prevent system override
         // We use animator() proxy to match the active animation state if any,
@@ -331,9 +393,59 @@ final class StablePDFView: PDFView {
         scroller.alphaValue = alpha
     }
 
+    /// Where the reader is. Resting in the gap above a page, as a view does just
+    /// after going to one, `currentDestination` names the page before it, and going
+    /// back there would land on the wrong page. The point stays exact, above the top
+    /// of the page it now names.
+    var readerDestination: PDFDestination? {
+        guard let destination = currentDestination, let page = destination.page, let document,
+              destination.point.y < page.bounds(for: displayBox).minY else { return currentDestination }
+        let next = firstPageOfRow(after: document.index(for: page))
+        guard next < document.pageCount, let nextPage = document.page(at: next) else { return destination }
+        let inNext = convert(convert(destination.point, from: page), to: nextPage)
+        return PDFDestination(page: nextPage, at: CGPoint(x: destination.point.x, y: inNext.y))
+    }
+
+    /// `readerDestination`, on the page the view is said to be on when that's another
+    /// one on screen: PDFKit names the page with the most in view, not the one under
+    /// the top edge, and a landing should leave the same page named as well as the
+    /// same line at the top.
+    func readerDestination(namedBy page: PDFPage?) -> PDFDestination? {
+        guard let destination = readerDestination, let from = destination.page, let page, page !== from,
+              visiblePages.contains(where: { $0 === page }) else { return readerDestination }
+        return PDFDestination(page: page, at: convert(convert(destination.point, from: from), to: page))
+    }
+
+    /// Puts the view's top edge exactly on `destination`. `go(to:)` won't go past a
+    /// page's own top, which a view at rest in the gap above it is, by as much as the
+    /// gap: the same place read 8 pt off after every landing.
+    func land(on destination: PDFDestination) {
+        go(to: destination)
+        guard let page = destination.page, let scrollView = documentScrollView, let documentView = scrollView.documentView else { return }
+        let clip = scrollView.contentView
+        let wanted = clip.convert(convert(destination.point, from: page), from: self).y
+        let origin = clip.isFlipped ? wanted : wanted - clip.bounds.height
+        // The clip's own scroll runs on past the document's ends. A document shorter
+        // than the clip, one row of pages centered in it, rests anywhere between them.
+        let frame = documentView.frame
+        let ends = (frame.minY, frame.maxY - clip.bounds.height)
+        let clamped = min(max(origin, min(ends.0, ends.1)), max(ends.0, ends.1))
+        guard abs(clamped - clip.bounds.minY) > 0.01 else { return }
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: clamped))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// In two-up, the page after a row's left page is that row's right page. A book's
+    /// first page is a row of its own.
+    private func firstPageOfRow(after index: Int) -> Int {
+        guard displayMode == .twoUp || displayMode == .twoUpContinuous else { return index + 1 }
+        let isLeftPage = (index % 2 == 0) != displaysAsBook
+        return index + (isLeftPage ? 2 : 1)
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         let oldWidth = bounds.width
-        let savedDestination = currentDestination
+        let savedDestination = readerDestination
         let widthChanged = oldWidth > 0 && abs(oldWidth - newSize.width) > widthChangeTolerance
 
         super.setFrameSize(newSize)
@@ -344,7 +456,7 @@ final class StablePDFView: PDFView {
 
     override func resize(withOldSuperviewSize oldSize: NSSize) {
         let oldWidth = bounds.width
-        let savedDestination = currentDestination
+        let savedDestination = readerDestination
 
         super.resize(withOldSuperviewSize: oldSize)
 
@@ -357,7 +469,7 @@ final class StablePDFView: PDFView {
         super.viewWillStartLiveResize()
         pendingScrollRestore?.cancel()
         pendingScrollRestore = nil
-        pendingScrollRestoreDestination = currentDestination
+        pendingScrollRestoreDestination = readerDestination
     }
 
     override func viewDidEndLiveResize() {
@@ -377,7 +489,7 @@ final class StablePDFView: PDFView {
             guard let self, let destination = self.pendingScrollRestoreDestination else { return }
             self.pendingScrollRestoreDestination = nil
             self.pendingScrollRestore = nil
-            self.go(to: destination)
+            self.land(on: destination)
         }
 
         pendingScrollRestore = work
@@ -390,7 +502,7 @@ final class StablePDFView: PDFView {
 
         guard let destination = pendingScrollRestoreDestination else { return }
         pendingScrollRestoreDestination = nil
-        go(to: destination)
+        land(on: destination)
     }
 
     var documentScrollView: NSScrollView? {
@@ -448,9 +560,10 @@ final class StablePDFView: PDFView {
         if let annotation = page.annotation(at: pagePoint),
            annotation.type == "Link",
            let action = annotation.action {
-            // Check if this is a GoTo action (internal navigation)
-            if action is PDFActionGoTo {
-                onLinkNavigation?()
+            // An internal link is a jump Back may return from. What it is judged
+            // against is the page being read, not the visible page holding the link.
+            if let target = (action as? PDFActionGoTo)?.destination.page {
+                onLinkNavigation?(target)
             }
             // Let PDFView handle the actual navigation
             super.mouseDown(with: event)
@@ -495,6 +608,14 @@ final class StablePDFView: PDFView {
         }
     }
 
+    override func keyDown(with event: NSEvent) {
+        if Self.scrollingKeys.contains(event.keyCode) { onReaderScroll?() }
+        super.keyDown(with: event)
+    }
+
+    /// Arrows, Page Up and Down, Home and End, and Space, which scroll PDFView.
+    private static let scrollingKeys: Set<UInt16> = [123, 124, 125, 126, 116, 121, 115, 119, 49]
+
     override func scrollWheel(with event: NSEvent) {
         // Give control-scroll zoom handler a chance to consume the event
         if event.modifierFlags.contains(.control),
@@ -512,6 +633,7 @@ final class StablePDFView: PDFView {
         }
 
         guard let scrollView = documentScrollView, let documentView = scrollView.documentView else { return }
+        onReaderScroll?()
 
         let currentLocation = convert(event.locationInWindow, from: nil)
         // The page follows the hand, in the document's own coordinates.

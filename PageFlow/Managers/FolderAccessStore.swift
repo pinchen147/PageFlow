@@ -12,7 +12,7 @@
 import AppKit
 import Foundation
 
-final class FolderAccessStore: @unchecked Sendable {
+nonisolated final class FolderAccessStore: @unchecked Sendable {
     static let shared = FolderAccessStore()
 
     private static let storageKey = "folderAccessBookmarks.v1"
@@ -22,7 +22,7 @@ final class FolderAccessStore: @unchecked Sendable {
     /// Folder path → app-scoped security bookmark.
     private var bookmarks: [String: Data]
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = AppDefaults.store) {
         self.defaults = defaults
         bookmarks = defaults.dictionary(forKey: Self.storageKey) as? [String: Data] ?? [:]
     }
@@ -41,21 +41,34 @@ final class FolderAccessStore: @unchecked Sendable {
         return body()
     }
 
+    /// A security-scoped URL for a file the sandbox only lets through an
+    /// allowed folder, so a tab can keep reading it; nil without a grant.
+    func scopedURL(for file: URL) -> URL? {
+        guard hasAccess(to: file) else { return nil }
+        return withAccess(to: file) {
+            guard let bookmark = try? file.bookmarkData(options: .withSecurityScope,
+                                                        includingResourceValuesForKeys: nil, relativeTo: nil) else { return nil }
+            var stale = false
+            return try? URL(resolvingBookmarkData: bookmark, options: .withSecurityScope,
+                            relativeTo: nil, bookmarkDataIsStale: &stale)
+        }
+    }
+
     /// Whether a stored grant covers `url`.
     func hasAccess(to url: URL) -> Bool { grant(covering: url) != nil }
 
-    /// Asks the user to allow `folder` through an open panel pointed at it
-    /// (they confirm with Allow). Returns whether a grant is now stored.
-    /// Never shown in the test host.
+    /// Asks the user to allow `folder` through an open panel pointed at it,
+    /// or at `start` (they confirm with Allow). Returns whether a grant
+    /// covering `folder` is now stored. Never shown in the test host.
     @MainActor
-    func requestAccess(to folder: URL, message: String) -> Bool {
+    func requestAccess(to folder: URL, startingAt start: URL? = nil, message: String) -> Bool {
         if hasAccess(to: folder) { return true }
         guard !TestEnvironment.isRunningTests else { return false }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.directoryURL = folder
+        panel.directoryURL = start ?? folder
         panel.message = message
         panel.prompt = "Allow"
         guard panel.runModal() == .OK, let chosen = panel.url else { return false }

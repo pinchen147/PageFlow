@@ -424,8 +424,10 @@ extension NativeTextView {
         let pending = PendingImageImport(slot: slot, documentId: (delegate as? NativeTextViewCoordinator)?.documentId)
         pending.observer = NotificationCenter.default.addObserver(
             forName: NSTextStorage.didProcessEditingNotification, object: textStorage, queue: nil
-        ) { [weak pending] note in
-            guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+        ) { [weak pending, weak observed = textStorage] note in
+            // Matched by address: see MarkdownCommentsController.observeStorage.
+            guard let storage = note.object as? NSTextStorage, storage === observed,
+                  storage.editedMask.contains(.editedCharacters) else { return }
             let editedRange = storage.editedRange
             let change = storage.changeInLength
             MainActor.assumeIsolated { pending?.map(editedRange: editedRange, changeInLength: change) }

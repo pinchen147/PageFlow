@@ -445,6 +445,10 @@ final class MarkdownSelectionBarController {
 
     // MARK: - Dropdowns
 
+    private func shortcut(_ command: MarkdownEditorKeyCommand) -> String? {
+        coordinator?.keyBindings[command].first?.displayString
+    }
+
     private func showTextStyleMenu(from button: SelectionBarButton) {
         let checked: Int? = {
             switch state.textStyle {
@@ -454,23 +458,23 @@ final class MarkdownSelectionBarController {
             }
         }()
         let rows: [ChromeMenuView.Row] = [
-            .init(title: "Text", glyph: "Aa", shortcut: "⌥⌘0", checked: checked == 0) { [weak self] in self?.coordinator?.apply(.paragraph) },
-            .init(title: "Heading 1", glyph: "H1", shortcut: "⌥⌘1", checked: checked == 1) { [weak self] in self?.coordinator?.apply(.heading(level: 1)) },
-            .init(title: "Heading 2", glyph: "H2", shortcut: "⌥⌘2", checked: checked == 2) { [weak self] in self?.coordinator?.apply(.heading(level: 2)) },
-            .init(title: "Heading 3", glyph: "H3", shortcut: "⌥⌘3", checked: checked == 3) { [weak self] in self?.coordinator?.apply(.heading(level: 3)) },
+            .init(title: "Text", glyph: "Aa", shortcut: shortcut(.paragraph), checked: checked == 0) { [weak self] in self?.coordinator?.apply(.paragraph) },
+            .init(title: "Heading 1", glyph: "H1", shortcut: shortcut(.heading1), checked: checked == 1) { [weak self] in self?.coordinator?.apply(.heading(level: 1)) },
+            .init(title: "Heading 2", glyph: "H2", shortcut: shortcut(.heading2), checked: checked == 2) { [weak self] in self?.coordinator?.apply(.heading(level: 2)) },
+            .init(title: "Heading 3", glyph: "H3", shortcut: shortcut(.heading3), checked: checked == 3) { [weak self] in self?.coordinator?.apply(.heading(level: 3)) },
         ]
         openMenu(rows, from: button)
     }
 
     private func showListMenu(from button: SelectionBarButton) {
         var rows: [ChromeMenuView.Row] = [
-            .init(title: "Bulleted list", symbol: "list.bullet", shortcut: "⇧⌘8", checked: state.listChecked == .bulleted) { [weak self] in
+            .init(title: "Bulleted list", symbol: "list.bullet", shortcut: shortcut(.bulletedList), checked: state.listChecked == .bulleted) { [weak self] in
                 self?.coordinator?.apply(.bulletedList)
             },
-            .init(title: "Numbered list", symbol: "list.number", shortcut: "⇧⌘7", checked: state.listChecked == .numbered) { [weak self] in
+            .init(title: "Numbered list", symbol: "list.number", shortcut: shortcut(.numberedList), checked: state.listChecked == .numbered) { [weak self] in
                 self?.coordinator?.apply(.numberedList)
             },
-            .init(title: "Checklist", symbol: "checklist", checked: state.listChecked == .checklist) { [weak self] in
+            .init(title: "Checklist", symbol: "checklist", shortcut: shortcut(.checklist), checked: state.listChecked == .checklist) { [weak self] in
                 self?.coordinator?.apply(.checklist)
             },
         ]
@@ -488,18 +492,18 @@ final class MarkdownSelectionBarController {
 
     /// "More formatting": the folded controls, each with its chord.
     private func showMoreMenu(from button: SelectionBarButton) {
-        let names: [MarkdownSelectionBarView.Item: (String, String, String?)] = [
-            .alignLeft: ("Align left", "text.alignleft", nil), .alignCenter: ("Align center", "text.aligncenter", nil),
-            .alignRight: ("Align right", "text.alignright", nil), .crop: ("Crop image", "crop", nil),
+        let names: [MarkdownSelectionBarView.Item: (String, String, MarkdownEditorKeyCommand?)] = [
+            .alignLeft: ("Align left", "text.alignleft", .alignLeft), .alignCenter: ("Align center", "text.aligncenter", .alignCenter),
+            .alignRight: ("Align right", "text.alignright", .alignRight), .crop: ("Crop image", "crop", nil),
             .imageMore: ("More actions", "ellipsis", nil),
-            .textStyle: ("Text style", "textformat", nil), .bold: ("Bold", "bold", "⌘B"), .italic: ("Italic", "italic", "⌘I"),
-            .underline: ("Underline", "underline", "⌘U"), .strikethrough: ("Strikethrough", "strikethrough", "⇧⌘X"),
-            .code: ("Code", "chevron.left.forwardslash.chevron.right", nil), .highlight: ("Highlight", "highlighter", nil),
-            .list: ("List", "list.bullet", nil), .link: ("Link", "link", "⌘K"),
+            .textStyle: ("Text style", "textformat", nil), .bold: ("Bold", "bold", .bold), .italic: ("Italic", "italic", .italic),
+            .underline: ("Underline", "underline", .underline), .strikethrough: ("Strikethrough", "strikethrough", .strikethrough),
+            .code: ("Code", "chevron.left.forwardslash.chevron.right", .inlineCode), .highlight: ("Highlight", "highlighter", .highlight),
+            .list: ("List", "list.bullet", nil), .link: ("Link", "link", .link),
         ]
         let rows = bar.folded.compactMap { item -> ChromeMenuView.Row? in
-            guard let (title, symbol, chord) = names[item], let control = bar.buttons[item] else { return nil }
-            return .init(title: title, symbol: symbol, shortcut: chord, checked: control.isPressed) { [weak self, weak control] in
+            guard let (title, symbol, command) = names[item], let control = bar.buttons[item] else { return nil }
+            return .init(title: title, symbol: symbol, shortcut: command.flatMap(shortcut), checked: control.isPressed) { [weak self, weak control] in
                 guard let self, let control else { return }
                 self.perform(item, from: control.isHidden ? self.bar.moreButton : control)
             }

@@ -49,11 +49,25 @@ extension View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
         if #available(macOS 26.0, *) {
+            // Behind the content, not around it: glass around a view picks that view's
+            // foreground from what it samples, so labels stopped following the scheme
+            // the tint came from. A new appearance also left the old tint drawn, so the
+            // tint is the glass's identity. Small glass still adapts to its backdrop
+            // whatever its tint, so legible chrome gets a plain fill above it.
             self
-                .glassEffect(
-                    pageFlowGlass(variant: variant, tint: tint, tintOpacity: tintOpacity, interactive: interactive),
-                    in: shape
-                )
+                .background {
+                    ZStack {
+                        Color.clear
+                            .glassEffect(
+                                pageFlowGlass(variant: variant, tint: tint, tintOpacity: tintOpacity, interactive: interactive),
+                                in: shape
+                            )
+                        if tintOpacity >= DesignTokens.legibleGlassBaseTint {
+                            shape.fill(tint.color(opacity: DesignTokens.legibleGlassBaseTint))
+                        }
+                    }
+                    .id(tint)
+                }
                 .overlay(
                     shape
                         .strokeBorder(.white.opacity(strokeOpacity))
@@ -129,11 +143,9 @@ struct GlassStyle {
     var strokeOpacity: Double = 0.22
     var shadowRadius: CGFloat = 10
     var shadowY: CGFloat = 5
-    /// In dark mode, draw on the tab cards' porcelain (the opaque content-card
-    /// white, at this opacity) instead of glass; nil keeps glass. Glass samples
-    /// the dark window behind it and turns grey under the chrome's fixed dark
-    /// glyphs, while the chrome is meant to look the same in either mode.
-    var porcelainInDark: Double? = nil
+    /// Floating chrome that labels must stay readable on over any page; see
+    /// `LegibleGlass`.
+    var legible = false
 
     /// Returns a copy with the given fields overridden — an escape hatch for the
     /// one or two call sites that differ from a preset by a single value, without
@@ -162,24 +174,21 @@ struct GlassStyle {
 }
 
 extension GlassStyle {
-    // Chrome panels (carry their own elevation shadow).
-    static let toolbar = GlassStyle(
-        cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-        tint: .light, tintOpacity: 0.14, variant: .clear,
-        strokeOpacity: 0.22, shadowRadius: 4, shadowY: -2,
-        porcelainInDark: DesignTokens.chromePorcelainOpacity
-    )
-    /// Shared by the outline sidebar and the comments sidebar (identical tuple).
+    // Chrome panels (carry their own elevation shadow). The toolbar, tabs and
+    // chrome glyph buttons share the sidebar's glass in both appearances, so
+    // all floating chrome reads as one material.
+    /// Shared by the outline sidebar and the comments sidebar.
     static let sidebar = GlassStyle(
         cornerRadius: DesignTokens.floatingToolbarCornerRadius,
         tint: .light, tintOpacity: DesignTokens.sidebarGlassTintOpacity, variant: .regular,
-        strokeOpacity: 0.22, shadowRadius: 4, shadowY: -2
+        strokeOpacity: 0.22, shadowRadius: 4, shadowY: -2, legible: true
     )
+    static let toolbar = sidebar
     /// Shared by the search bar and the toast (identical after defaults).
     static let glassPanel = GlassStyle(
         cornerRadius: DesignTokens.floatingToolbarCornerRadius,
         tint: .light, tintOpacity: DesignTokens.glassPanelTintOpacity, variant: .regular,
-        strokeOpacity: 0.22, shadowRadius: 10, shadowY: 5
+        strokeOpacity: 0.22, shadowRadius: 10, shadowY: 5, legible: true
     )
     /// Regular material supplies contrast for the native foreground hierarchy.
     static let tabSwitcher = GlassStyle(
@@ -197,82 +206,62 @@ extension GlassStyle {
     // Chrome surfaces (no built-in shadow; an external .shadow stays at the call site).
     static let pageIndicator = GlassStyle(
         cornerRadius: DesignTokens.floatingToolbarCornerRadius,
-        tint: .light, tintOpacity: DesignTokens.sidebarControlGlassTintOpacity, variant: .regular
+        tint: .light, tintOpacity: DesignTokens.sidebarControlGlassTintOpacity, variant: .regular,
+        legible: true
     )
-    static let newTabButton = GlassStyle(
-        cornerRadius: DesignTokens.tabCornerRadius,
-        tint: .light, tintOpacity: 0.14, variant: .clear, strokeOpacity: 0.22,
-        porcelainInDark: DesignTokens.chromePorcelainOpacity
-    )
+    static let newTabButton = tab(active: true).with(strokeOpacity: 0.22)
     static let dragHandle = GlassStyle(
         cornerRadius: 4,
         tint: .light, tintOpacity: 0.10, interactive: true, variant: .clear, strokeOpacity: 0.12
     )
 
-    /// Settings-tab rows omit `tint` (so they keep the default `.dark`).
-    static let settingsRow = GlassStyle(
-        cornerRadius: DesignTokens.spacingSM,
-        tintOpacity: 0.08, interactive: true, variant: .clear, strokeOpacity: 0.16
-    )
-
-    /// A tab pill; `active` drives tint and stroke. The pill's drop shadow is
-    /// also state-dependent and stays as an external `.shadow` at the call site.
+    /// A tab pill on the sidebar's glass; the focused tab is a step stronger
+    /// in tint and stroke. The pill's drop shadow is state-dependent and stays
+    /// as an external `.shadow` at the call site.
     static func tab(active: Bool) -> GlassStyle {
         GlassStyle(
             cornerRadius: DesignTokens.tabCornerRadius,
             tint: .light,
-            tintOpacity: active ? 0.22 : 0.14,
-            variant: .clear,
+            tintOpacity: active ? DesignTokens.sidebarGlassTintOpacity : DesignTokens.sidebarControlGlassTintOpacity,
+            variant: .regular,
             strokeOpacity: active ? 0.3 : 0.18,
-            // The Deck's cards: opaque when focused, the rest a touch lighter.
-            porcelainInDark: active ? 1.0 : DesignTokens.chromePorcelainOpacity
+            legible: true
         )
     }
 
-    /// A settings action button whose emphasis depends on `enabled`. `activeTint`
-    /// is the enabled tint opacity (0.08 for General's Reset, 0.10 for Shortcuts).
-    static func settingsAction(enabled: Bool, activeTint: CGFloat) -> GlassStyle {
-        GlassStyle(
-            cornerRadius: DesignTokens.spacingSM,
-            tintOpacity: enabled ? activeTint : 0.04,
-            interactive: enabled,
-            variant: .clear,
-            strokeOpacity: enabled ? 0.16 : 0.08
-        )
-    }
 }
 
 extension View {
-    /// Applies a named glass surface. Forwards every field to the parameterized
-    /// `pageFlowLiquidGlassSurface`, so it is behavior-identical to spelling the
-    /// tuple out. `shadowRadius` / `shadowY` are intentionally unused here.
+    /// Applies a named glass surface. `shadowRadius` / `shadowY` are unused here.
     func pageFlowLiquidGlassSurface(_ style: GlassStyle) -> some View {
-        modifier(PorcelainInDark(style: style, panel: false))
+        modifier(LegibleGlass(style: style, panel: false))
     }
 
-    /// Applies a named glass panel (surface + elevation shadow). Forwards every
-    /// field to the parameterized `pageFlowLiquidGlassPanel`.
+    /// Applies a named glass panel (surface + elevation shadow).
     func pageFlowLiquidGlassPanel(_ style: GlassStyle) -> some View {
-        modifier(PorcelainInDark(style: style, panel: true))
+        modifier(LegibleGlass(style: style, panel: true))
     }
 }
 
-/// A named style's surface: glass, or in dark mode the porcelain the style
-/// asks for (`GlassStyle.porcelainInDark`), the same card the Deck's tabs sit on.
-private struct PorcelainInDark: ViewModifier {
+/// Glass samples whatever sits behind it: a white PDF page turns light glass
+/// white under dark mode's white labels, and a dark image does the reverse in
+/// light mode. Legible chrome (sidebar, toolbar, tabs, search, page indicator)
+/// therefore takes a tint matching the appearance, strong enough that its
+/// labels stay readable over any page.
+private struct LegibleGlass: ViewModifier {
     let style: GlassStyle
     let panel: Bool
     @Environment(\.colorScheme) private var colorScheme
 
+    private var resolved: GlassStyle {
+        guard style.legible, style.tint == .light else { return style }
+        let opacity = min(DesignTokens.legibleGlassMaxTint, DesignTokens.legibleGlassBaseTint + style.tintOpacity)
+        return style.with(tint: colorScheme == .dark ? .dark : .light, tintOpacity: opacity)
+    }
+
     func body(content: Content) -> some View {
-        if colorScheme == .dark, let opacity = style.porcelainInDark {
-            let shape = RoundedRectangle(cornerRadius: style.cornerRadius, style: .continuous)
-            content
-                .background(shape.fill(DesignTokens.contentCardSurface.opacity(opacity)))
-                .overlay(shape.strokeBorder(.white.opacity(style.strokeOpacity)).allowsHitTesting(false))
-                .shadow(color: .black.opacity(panel ? DesignTokens.glassElevationShadowOpacity : 0),
-                        radius: style.shadowRadius, y: style.shadowY)
-        } else if panel {
+        let style = resolved
+        if panel {
             content.pageFlowLiquidGlassPanel(
                 cornerRadius: style.cornerRadius, tint: style.tint, tintOpacity: style.tintOpacity,
                 interactive: style.interactive, variant: style.variant, strokeOpacity: style.strokeOpacity,
@@ -299,7 +288,7 @@ struct ChromeGlassIcon: View {
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: pointSize, weight: .semibold))
-            .foregroundStyle(DesignTokens.glassTextPrimary.opacity(0.78))
+            .foregroundStyle(.primary.opacity(0.78))
             .frame(width: DesignTokens.chromeIconSize, height: DesignTokens.chromeIconSize)
             .pageFlowLiquidGlassSurface(.newTabButton)
             .shadow(color: .black.opacity(DesignTokens.glassElevationShadowOpacity), radius: 4, y: -2)

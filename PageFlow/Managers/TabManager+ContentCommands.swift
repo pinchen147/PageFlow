@@ -2,11 +2,11 @@
 //  TabManager+ContentCommands.swift
 //  PageFlow
 //
-//  The menu layer's ONE routing authority for content-aware commands: every
-//  gate and action here is an exhaustive switch over the active tab's content
-//  (`activeRender` / `TabSession` forwarders), so menu items stay one-liners
-//  and never re-derive content routing by hand — and a future content type is
-//  a compile error at every command, never a silent no-op.
+//  The menu layer's content-aware commands. `activeCommands` is the one switch
+//  over the active tab's content; every gate and action forwards to that
+//  content's `ContentCommands` conformance, so menu items stay one-liners and
+//  never re-derive content routing by hand. Commands only one content type has
+//  (the Markdown format bus) match that type directly.
 //
 
 import Foundation
@@ -31,14 +31,7 @@ extension TabManager {
     /// exactly `TabSession.hasContent`.
     var canFind: Bool { activeSession?.hasContent ?? false }
 
-    var activeFindDriver: (any FindDriving)? {
-        switch activeRender {
-        case .pdf(let runtime):
-            return PDFFindDriver(searchManager: runtime.searchManager, pdfManager: runtime.pdfManager)
-        case .markdown(let runtime): return runtime.content.searchManager
-        case nil: return nil
-        }
-    }
+    var activeFindDriver: (any FindDriving)? { activeCommands?.findDriver }
 
     var canReplace: Bool { canFind && activeFindDriver is any FindReplacing }
     var canNavigateFind: Bool { canFind && activeFindDriver?.query.isEmpty == false }
@@ -52,82 +45,73 @@ extension TabManager {
         searchFocusRequest += 1
     }
 
-    /// Whether Print (⌘P) applies. PDF: a document is open. Markdown: the tab has
-    /// content (a file URL or any typed text) — ⌘P prints the styled Live-Preview
-    /// text (S9). An empty untitled buffer is the only no-op case (nothing to print).
-    /// This is exactly `TabSession.hasContent`.
+    /// Whether Print (⌘P) applies: the tab has content (a loaded PDF, or a note
+    /// with a file URL or any typed text) and its type prints it — a PDF its
+    /// permissions allow, any note's styled Live-Preview text, a book once ready.
     var canPrint: Bool {
-        guard activeSession?.hasContent == true else { return false }
-        if case .pdf(let runtime) = activeRender { return runtime.pdfManager.permissions.print }
-        return true
+        activeSession?.hasContent == true && activeCommands?.allowsPrinting == true
     }
 
     /// Whether markdown formatting commands (⌘B/⌘I/heading/list/link) apply: the
     /// active tab is a Markdown tab with content (a file URL or any typed text).
     /// An empty untitled buffer is the only no-op case — there is nothing to format.
     var canFormatMarkdown: Bool {
-        guard let content = activeSession?.content else { return false }
-        switch content {
-        case .pdf: return false
-        case .markdown(let c):
-            return c.documentManager.hasDocumentURL || !c.documentManager.text.isEmpty
+        guard let content = activeMarkdownContent else { return false }
+        return content.documentManager.hasDocumentURL || !content.documentManager.text.isEmpty
+    }
+
+    /// The active tab's command surface. `nil` when no tab is active.
+    var activeCommands: (any ContentCommands)? { activeTabID.flatMap(commands(for:)) }
+
+    /// A tab's command surface: the one content switch commands route through.
+    func commands(for tabID: UUID) -> (any ContentCommands)? {
+        guard let session = sessions[tabID] else { return nil }
+        switch renderModel(for: tabID) {
+        case .pdf(let runtime): return PDFTabCommands(runtime: runtime, session: session)
+        case .markdown(let runtime): return runtime
+        case .epub(let runtime): return runtime
+        case nil: return nil
         }
     }
 
     /// The active tab accepts view-level chrome commands (zoom, sidebar): a PDF
-    /// with a loaded document, or any Markdown tab (its editor is always a surface).
-    var activeContentAcceptsViewCommands: Bool {
-        switch activeRender {
-        case .pdf(let runtime): return runtime.pdfManager.hasDocument
-        case .markdown: return true
-        case nil: return false
-        }
-    }
+    /// with a loaded document, any Markdown tab, or an opened book.
+    var activeContentAcceptsViewCommands: Bool { activeCommands?.acceptsViewCommands ?? false }
 
-    /// ⌘U: PDF underlines the selection as an annotation; Markdown wraps the
-    /// selection in `<u>…</u>` via the format bus.
-    var canUnderline: Bool {
-        switch activeRender {
-        case .pdf(let runtime): return runtime.pdfManager.permissions.annotate
-        // Markdown's Underline is the Format menu's, under its own shortcut.
-        case .markdown, nil: return false
-        }
-    }
+    var canUnderline: Bool { activeCommands?.canUnderline ?? false }
 
-    /// The Go menu's jump dialog, content-routed: pages for PDF, lines for
-    /// Markdown (both bind the same per-tab `uiState.showingGoToPage` slot).
-    var goToDialogTitle: String {
-        switch activeRender {
-        case .markdown: return "Go to Line…"
-        case .pdf, nil: return "Go to Page…"
-        }
-    }
+    /// The Go menu's jump dialog, content-routed: pages for PDF and EPUB, lines
+    /// for Markdown (all bind the same per-tab `uiState.showingGoToPage` slot).
+    var goToDialogTitle: String { activeCommands?.goToDialogTitle ?? "Go to Page…" }
+    var canShowGoToDialog: Bool { activeCommands?.canShowGoToDialog ?? false }
 
-    var canShowGoToDialog: Bool {
-        switch activeRender {
-        case .pdf(let runtime): return runtime.pdfManager.hasDocument
-        case .markdown: return true
-        case nil: return false
-        }
-    }
+    /// View ▸ Show Comments, content-routed: PDF's comments panel, or whether
+    /// a Markdown note's comments show (in the margin or the list).
+    var isShowingComments: Bool { activeCommands?.isShowingComments ?? false }
+    /// "Comments", or a book's "Notes", for the View menu's Show/Hide item.
+    var commentsTitle: String { activeCommands?.commentsTitle ?? "Comments" }
+    var canToggleComments: Bool { activeCommands?.canToggleComments ?? false }
 
-    /// Content-routed Go Back/Forward: PDF navigates its page-view history;
-    /// Markdown navigates the tab's scroll-jump trail (outline / go-to-line).
-    var canGoBack: Bool {
-        switch activeRender {
-        case .pdf(let runtime): return runtime.pdfManager.canGoBack
-        case .markdown(let runtime): return runtime.content.canGoBack
-        case nil: return false
-        }
-    }
+    // MARK: - Pages (Go menu, Toggle Bookmark)
 
-    var canGoForward: Bool {
-        switch activeRender {
-        case .pdf(let runtime): return runtime.pdfManager.canGoForward
-        case .markdown(let runtime): return runtime.content.canGoForward
-        case nil: return false
-        }
-    }
+    /// Paged documents (PDF, EPUB) turn pages and carry bookmarks; a note has neither.
+    var canGoToNextPage: Bool { activeCommands?.canGoToNextPage ?? false }
+    var canGoToPreviousPage: Bool { activeCommands?.canGoToPreviousPage ?? false }
+    /// First Page, Last Page and Toggle Bookmark: any paged document with pages.
+    var hasPages: Bool { activeCommands?.hasPages ?? false }
+
+    func goToNextPage() { activeCommands?.goToNextPage() }
+    func goToPreviousPage() { activeCommands?.goToPreviousPage() }
+    func goToFirstPage() { activeCommands?.goToFirstPage() }
+    func goToLastPage() { activeCommands?.goToLastPage() }
+    func toggleBookmark() { activeCommands?.toggleBookmark() }
+
+    /// Content-routed Go Back/Forward: PDF navigates its page-view history,
+    /// Markdown the tab's scroll-jump trail (outline / go-to-line), EPUB its jumps.
+    var canGoBack: Bool { activeCommands?.canGoBack ?? false }
+    var canGoForward: Bool { activeCommands?.canGoForward ?? false }
+    func goBack() { activeCommands?.goBack() }
+    func goForward() { activeCommands?.goForward() }
 
     // MARK: - Command actions
 
@@ -137,53 +121,38 @@ extension TabManager {
         activeMarkdownContent?.requestFormat(command)
     }
 
-    /// Content-routed zoom: both PDF and Markdown visually magnify the document
+    /// Content-routed zoom: every type visually magnifies the document
     /// (Markdown per-document, persisted — PDF parity), not a font-size change.
-    func zoomIn() {
-        switch activeRender {
-        case .pdf(let runtime): runtime.pdfManager.zoomIn()
-        case .markdown: activeMarkdownContent?.zoomIn()
-        case nil: break
-        }
-    }
+    /// The gates are off at the zoom limits, and the reset off once it would
+    /// change nothing.
+    func zoomIn() { activeCommands?.zoomIn() }
+    func zoomOut() { activeCommands?.zoomOut() }
+    func resetZoom() { activeCommands?.resetZoom() }
+    var canZoomIn: Bool { activeCommands?.canZoomIn ?? false }
+    var canZoomOut: Bool { activeCommands?.canZoomOut ?? false }
+    var canResetZoom: Bool { activeCommands?.canResetZoom ?? false }
 
-    func zoomOut() {
-        switch activeRender {
-        case .pdf(let runtime): runtime.pdfManager.zoomOut()
-        case .markdown: activeMarkdownContent?.zoomOut()
-        case nil: break
-        }
-    }
+    /// The reset zoom command's name: EPUB reflows instead of showing 100%.
+    var resetZoomTitle: String { activeCommands?.resetZoomTitle ?? "Actual Size" }
 
-    func resetZoom() {
-        switch activeRender {
-        case .pdf(let runtime): runtime.pdfManager.resetZoom()
-        case .markdown: activeMarkdownContent?.resetZoom()
-        case nil: break
-        }
-    }
+    /// Fit the active document's pages or Markdown reading row.
+    var zoomToFitTitle: String { activeCommands?.zoomToFitTitle ?? "Zoom to Fit" }
+    func zoomToFit() { activeCommands?.zoomToFit() }
+    var canZoomToFit: Bool { activeCommands?.canZoomToFit ?? false }
 
-    func underlineActiveSelection() {
-        switch activeRender {
-        case .pdf(let runtime): runtime.annotationManager.underlineSelection()
-        case .markdown: requestMarkdownFormat(.underline)
-        case nil: break
-        }
-    }
+    /// ⌘U: PDF underlines the selection as an annotation; Markdown wraps the
+    /// selection in `<u>…</u>` via the format bus; a book underlines it as a
+    /// highlight.
+    func underlineActiveSelection() { activeCommands?.underlineSelection() }
 
-    func goBack() {
-        switch activeRender {
-        case .pdf(let runtime): runtime.pdfManager.goBack()
-        case .markdown(let runtime): runtime.content.goBack()
-        case nil: break
-        }
-    }
+    func toggleComments() { activeCommands?.toggleComments() }
 
-    func goForward() {
-        switch activeRender {
-        case .pdf(let runtime): runtime.pdfManager.goForward()
-        case .markdown(let runtime): runtime.content.goForward()
-        case nil: break
-        }
-    }
+    /// Tools ▸ Highlight Selection and Add Comment, content-routed: PDF
+    /// annotations, or a book's highlights and notes.
+    var canHighlightSelection: Bool { activeCommands?.canHighlightSelection ?? false }
+    func highlightSelection() { activeCommands?.highlightSelection() }
+    var addCommentTitle: String { activeCommands?.addCommentTitle ?? "Add Comment" }
+    var addCommentShortcutID: String { activeCommands?.addCommentShortcutID ?? "comment" }
+    var canAddComment: Bool { activeCommands?.canAddComment ?? false }
+    func addComment() { activeCommands?.addComment() }
 }

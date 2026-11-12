@@ -82,27 +82,25 @@ enum MarkdownInlineFormatter {
     /// each run independently, so a document with one bold line never reached
     /// "all bold" or "all plain" — every press flipped the bold line the other way.
     /// Runs must be disjoint; the plans come back in the runs' order, at most one
-    /// per run (an empty or whitespace-only run, or one already styled in apply
-    /// mode, yields none).
+    /// per run. Empty runs and unchanged rewrites yield no plan; selected
+    /// whitespace participates in the same formatting decision.
     static func plans(
         text nsText: NSString,
         targetRanges: [NSRange],
         style: MarkdownInlineStyle,
         index: EnclosingTokenIndex
     ) -> [MarkdownInlineFormatPlan] {
-        // Nothing to format → no plan. `trimmedRange` collapses both empty cases —
-        // a bare caret (length 0) and an all-whitespace selection — to a length-0
-        // core, so this single filter catches them. We deliberately do NOT spawn
-        // empty `****` / `*` / `<u></u>` markers: the caller already expands a
-        // caret to its current word, so this is reached only when there is no word.
+        // Empty carets have no selection to format. Explicitly selected spaces
+        // remain content: native formatting must retain their styles and selection.
         let runs: [Run] = targetRanges.compactMap { target in
             guard target.location != NSNotFound, target.location >= 0,
                   NSMaxRange(target) <= nsText.length else { return nil }
-            let core = trimmedRange(target, in: nsText)
-            guard core.length > 0 else { return nil }
+            guard target.length > 0 else { return nil }
+            let trimmed = trimmedRange(target, in: nsText)
+            let core = trimmed.length > 0 ? trimmed : target
             return Run(target: target, core: core, enclosing: index.smallestEnclosing(core))
         }
-        let removeAll = !runs.isEmpty && runs.allSatisfy { $0.enclosing != nil }
+        let removeAll = !runs.isEmpty && runs.allSatisfy { index.coversStyle(in: $0.target) }
 
         // Disjoint by construction except when one token straddles two runs (a span
         // crossing a table cell's pipe): both would replace the same token range, so
@@ -110,10 +108,43 @@ enum MarkdownInlineFormatter {
         var claimedEnd = 0
         return runs.compactMap { run -> MarkdownInlineFormatPlan? in
             guard let plan = plan(for: run, style: style, removeAll: removeAll, index: index, text: nsText),
-                  plan.replacementRange.location >= claimedEnd else { return nil }
+                  plan.replacementRange.location >= claimedEnd,
+                  nsText.substring(with: plan.replacementRange) != plan.replacement else { return nil }
             claimedEnd = NSMaxRange(plan.replacementRange)
-            return plan
+            return completingBoundaryMarkers(in: plan)
         }
+    }
+
+    private static func completingBoundaryMarkers(in plan: MarkdownInlineFormatPlan) -> MarkdownInlineFormatPlan {
+        let text = plan.replacement as NSString
+        var start = plan.selectionAfter.location - plan.replacementRange.location
+        var end = start + plan.selectionAfter.length
+        guard start >= 0, end <= text.length, start < end else { return plan }
+        let punctuation = "*_~=<>/".utf16
+        guard punctuation.contains(text.character(at: start)) || punctuation.contains(text.character(at: end - 1)) else { return plan }
+        let kinds: Set<MarkdownTokenKind> = [.bold, .italic, .boldItalic, .underline, .highlight, .strikethrough]
+        let tokens = InlineASTAdapter.tokens(from: InlineParser.parse(plan.replacement))
+        for marker in tokens.filter({ kinds.contains($0.kind) }).flatMap(\.markerRanges) {
+            if marker.location < start && start < NSMaxRange(marker) { start = marker.location }
+            if marker.location < end && end < NSMaxRange(marker) { end = NSMaxRange(marker) }
+        }
+        return MarkdownInlineFormatPlan(replacementRange: plan.replacementRange, replacement: plan.replacement,
+            selectionAfter: NSRange(location: plan.replacementRange.location + start, length: end - start),
+            actionName: plan.actionName)
+    }
+
+    private static func selectingVisibleContent(in plan: MarkdownInlineFormatPlan, style: MarkdownInlineStyle) -> MarkdownInlineFormatPlan {
+        guard plan.replacement.contains("==") || plan.replacement.contains("~~") || plan.replacement.contains("<u>") else { return plan }
+        let tokens = InlineASTAdapter.tokens(from: InlineParser.parse(plan.replacement))
+        let markers = EnclosingTokenIndex(tokens: tokens, style: style)
+        var start = plan.selectionAfter.location - plan.replacementRange.location
+        var end = start + plan.selectionAfter.length
+        guard start >= 0, end <= plan.replacement.utf16.count else { return plan }
+        while start < end, markers.isMarker(at: start) { start += 1 }
+        while end > start, markers.isMarker(at: end - 1) { end -= 1 }
+        return MarkdownInlineFormatPlan(replacementRange: plan.replacementRange, replacement: plan.replacement,
+            selectionAfter: NSRange(location: plan.replacementRange.location + start, length: end - start),
+            actionName: plan.actionName)
     }
 
     /// One formatting run: the selected range, its whitespace-trimmed core, and the
@@ -131,6 +162,18 @@ enum MarkdownInlineFormatter {
         index: EnclosingTokenIndex,
         text nsText: NSString
     ) -> MarkdownInlineFormatPlan? {
+        if let canonical = MarkdownInlineSelectionFormatting.plan(text: nsText, selection: run.target,
+                style: style, tokens: index.styleTokens, removeStyle: removeAll,
+                normalizeFragments: removeAll && run.enclosing == nil) { return canonical }
+        guard let compact = compactPlan(for: run, style: style, removeAll: removeAll, index: index, text: nsText) else {
+            return nil
+        }
+        return MarkdownInlineSelectionFormatting.validating(compact, text: nsText, selection: run.target,
+            style: style, tokens: index.styleTokens, removeStyle: removeAll)
+    }
+
+    private static func compactPlan(for run: Run, style: MarkdownInlineStyle, removeAll: Bool,
+                                    index: EnclosingTokenIndex, text nsText: NSString) -> MarkdownInlineFormatPlan? {
         if let token = run.enclosing {
             // Already styled. In remove mode `core` either sits INSIDE the token's
             // content (partial toggle: unbold the selected slice) or IS the whole
@@ -141,7 +184,7 @@ enum MarkdownInlineFormatter {
             guard removeAll else { return nil }
             let removeCore = NSIntersectionRange(run.core, token.contentRange)
             return remove(style: style, from: removeCore, in: token,
-                          innerToClean: index.matchingTokensInside(removeCore), text: nsText)
+                          innerToClean: index.matchingTokensInside(removeCore), index: index, text: nsText)
         }
 
         // No single same-style span encloses `core`. If `core` nonetheless CONTAINS
@@ -190,15 +233,17 @@ enum MarkdownInlineFormatter {
             + coreText
             + markers.close
             + nsText.substring(with: trailing)
-        return MarkdownInlineFormatPlan(
+        let ordered = orderedBoundaryWrappers(replacement)
+        let plan = MarkdownInlineFormatPlan(
             replacementRange: originalSelection,
-            replacement: replacement,
+            replacement: ordered,
             selectionAfter: NSRange(
                 location: core.location + markers.open.utf16.count,
                 length: (coreText as NSString).length
             ),
             actionName: style.actionName
         )
+        return ordered == replacement ? plan : selectingVisibleContent(in: plan, style: style)
     }
 
     /// The marker pair that makes `coreText` ONE `style` span to the parser. `**`/`*`
@@ -261,6 +306,7 @@ enum MarkdownInlineFormatter {
         from core: NSRange,
         in token: MarkdownToken,
         innerToClean: [MarkdownToken] = [],
+        index: EnclosingTokenIndex,
         text nsText: NSString
     ) -> MarkdownInlineFormatPlan {
         // `core` is `NSIntersectionRange(selection, token.contentRange)` from `plan`, so it
@@ -279,14 +325,14 @@ enum MarkdownInlineFormatter {
         // compounded the soup instead of toggling (field report 2026-07-03).
         var core = core
         let beforeCandidate = NSRange(location: contentStart, length: core.location - contentStart)
-        if beforeCandidate.length > 0, isMarkerOnly(nsText.substring(with: beforeCandidate)) {
+        if beforeCandidate.length > 0, index.containsOnlyMarkersAndWhitespace(in: beforeCandidate, text: nsText) {
             core = NSRange(location: contentStart, length: NSMaxRange(core) - contentStart)
         }
         let afterCandidate = NSRange(
             location: NSMaxRange(core),
             length: NSMaxRange(token.contentRange) - NSMaxRange(core)
         )
-        if afterCandidate.length > 0, isMarkerOnly(nsText.substring(with: afterCandidate)) {
+        if afterCandidate.length > 0, index.containsOnlyMarkersAndWhitespace(in: afterCandidate, text: nsText) {
             core = NSRange(location: core.location, length: NSMaxRange(token.contentRange) - core.location)
         }
 
@@ -309,8 +355,9 @@ enum MarkdownInlineFormatter {
             preferUnderscoreMarkers: sidePreferUnderscoreMarkers
         )
         let corePreservingStyle = stylePreservedOnRemovedCore(style: style, tokenKind: token.kind)
-        let coreReplacement = demoted(coreText, removing: style, from: token.kind,
+        let originalCoreReplacement = demoted(coreText, removing: style, from: token.kind,
                                       preferUnderscore: corePreferUnderscoreMarkers)
+        let coreReplacement = orderedBoundaryWrappers(originalCoreReplacement)
         let afterReplacement = wrappedSegment(
             afterText,
             preserving: token.kind,
@@ -322,12 +369,40 @@ enum MarkdownInlineFormatter {
             + beforeReplacement.utf16.count
             + markerPrefixLength(for: corePreservingStyle)
 
-        return MarkdownInlineFormatPlan(
+        let plan = MarkdownInlineFormatPlan(
             replacementRange: token.range,
             replacement: replacement,
             selectionAfter: NSRange(location: selectionLocation, length: (coreText as NSString).length),
             actionName: style.actionName
         )
+        return coreReplacement == originalCoreReplacement ? plan : selectingVisibleContent(in: plan, style: style)
+    }
+
+    /// Put punctuation-based containers outside emphasis so a preceding letter cannot
+    /// turn `*==text==*` into literal stars. Only complete nested wrappers move;
+    /// their combined width and every content offset remain unchanged.
+    private static func orderedBoundaryWrappers(_ source: String) -> String {
+        let text = source as NSString
+        let core = trimmedRange(NSRange(location: 0, length: text.length), in: text)
+        guard core.length > 0, [0x2A, 0x5F].contains(text.character(at: core.location)),
+              source.contains("==") || source.contains("~~") || source.contains("<u>") else { return source }
+        let tokens = InlineASTAdapter.tokens(from: InlineParser.parse(source))
+        var range = core
+        var wrappers: [(open: String, close: String, emphasis: Bool)] = []
+        while let token = tokens.first(where: {
+            $0.range == range && $0.markerRanges.count == 2
+                && [.bold, .italic, .boldItalic, .underline, .highlight, .strikethrough].contains($0.kind)
+        }), token.contentRange.length < range.length {
+            wrappers.append((text.substring(with: token.markerRanges[0]),
+                             text.substring(with: token.markerRanges[1]),
+                             [.bold, .italic, .boldItalic].contains(token.kind)))
+            range = token.contentRange
+        }
+        guard wrappers.contains(where: { $0.emphasis }), wrappers.contains(where: { !$0.emphasis }) else { return source }
+        let ordered = wrappers.filter { !$0.emphasis } + wrappers.filter { $0.emphasis }
+        return text.substring(to: core.location) + ordered.map(\.open).joined()
+            + text.substring(with: range) + ordered.reversed().map(\.close).joined()
+            + text.substring(from: NSMaxRange(core))
     }
 
     static func tokenMatches(_ kind: MarkdownTokenKind, style: MarkdownInlineStyle) -> Bool {
@@ -434,16 +509,6 @@ enum MarkdownInlineFormatter {
         inner.location >= outer.location && NSMaxRange(inner) <= NSMaxRange(outer)
     }
 
-    /// True when `text` holds no visible content — only emphasis markers
-    /// (`*`/`_`/`~`, literal `<u>`/`</u>` tags) and whitespace. Used by
-    /// `remove` to decide whether a side remainder is real text worth
-    /// preserving or just the marker shell of a nested span.
-    private static func isMarkerOnly(_ text: String) -> Bool {
-        text.replacingOccurrences(of: "<u>", with: "")
-            .replacingOccurrences(of: "</u>", with: "")
-            .allSatisfy { $0 == "*" || $0 == "_" || $0 == "~" || $0.isWhitespace }
-    }
-
     private static func isWhitespace(_ value: unichar) -> Bool {
         guard let scalar = UnicodeScalar(Int(value)) else { return false }
         return CharacterSet.whitespacesAndNewlines.contains(scalar)
@@ -459,16 +524,19 @@ enum MarkdownInlineFormatter {
 /// at/before it. (Replaces the old per-call `tokens.filter{…}.min{…}`, which was
 /// O(tokens) per run → O(runs × tokens) on ⌘A.)
 struct EnclosingTokenIndex {
+    let styleTokens: [MarkdownToken]
     private let byKind: [MarkdownTokenKind: [MarkdownToken]]
     /// Every character position that is an emphasis marker of ANY style, so a
     /// `*`/`_` outside them is known to be literal.
     private let markerPositions: IndexSet
+    private let styledPositions: IndexSet
 
     init(tokens: [MarkdownToken], style: MarkdownInlineStyle) {
+        styleTokens = tokens.filter { [.bold, .italic, .boldItalic, .underline, .highlight, .strikethrough, .backslashEscape].contains($0.kind) }
         var groups: [MarkdownTokenKind: [MarkdownToken]] = [:]
         var markers = IndexSet()
         for token in tokens {
-            if token.kind == .bold || token.kind == .italic || token.kind == .boldItalic {
+            if [.bold, .italic, .boldItalic, .underline, .highlight, .strikethrough, .backslashEscape].contains(token.kind) {
                 for marker in token.markerRanges where marker.length > 0 {
                     markers.insert(integersIn: marker.location..<NSMaxRange(marker))
                 }
@@ -482,6 +550,28 @@ struct EnclosingTokenIndex {
         }
         byKind = groups
         markerPositions = markers
+        var styled = markers
+        for token in groups.values.flatMap({ $0 }) {
+            styled.insert(integersIn: token.contentRange.location..<NSMaxRange(token.contentRange))
+        }
+        styledPositions = styled
+    }
+
+    func coversStyle(in range: NSRange) -> Bool {
+        let bounds = range.location..<NSMaxRange(range)
+        return styledPositions.contains(integersIn: bounds) && !markerPositions.contains(integersIn: bounds)
+    }
+
+    /// Literal punctuation remains content even when it resembles a delimiter.
+    func isMarker(at offset: Int) -> Bool { markerPositions.contains(offset) }
+
+    func containsOnlyMarkersAndWhitespace(in range: NSRange, text: NSString) -> Bool {
+        (range.location..<NSMaxRange(range)).allSatisfy { offset in
+            markerPositions.contains(offset)
+                || UnicodeScalar(Int(text.character(at: offset))).map {
+                    CharacterSet.whitespacesAndNewlines.contains($0)
+                } == true
+        }
     }
 
     /// True when `range` holds a `*` or `_` that no emphasis span's marker owns —

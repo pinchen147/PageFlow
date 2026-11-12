@@ -9,7 +9,10 @@ import AppKit
 /// it is retired, which at worst ends cell editing, never the editor.
 final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     weak var coordinator: NativeTextViewCoordinator?
-    let editor = MarkdownTableCellTextView(frame: .zero)
+    /// TextKit 1, as the grid sets its cells (`MarkdownTableLayout`): a
+    /// TextKit 2 editor put the first baseline 1 pt lower and wrapped lines
+    /// on a different pitch, so the text jumped on entering a cell.
+    let editor = MarkdownTableCellTextView(usingTextLayoutManager: false)
     private let editorScroll = NSScrollView(frame: .zero)
     weak var grid: MarkdownTableGridView?
     private var presentationOrigin = NSPoint.zero
@@ -34,7 +37,16 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     /// Consecutive keystrokes in one cell, undone as one step.
     private var typingRun: TypingRun?
     /// The cell editor's range the pending keystroke replaces, from `shouldChangeTextIn`.
-    private var pendingEditRange: NSRange?
+    var pendingEditRange: NSRange?
+    var emphasisTypingState = MarkdownEmphasisTypingState()
+    var cachedEmphasisProjection: MarkdownEmphasisProjection?
+    var cachedRichBoundaryIndex: MarkdownRichBoundaryIndex?
+    var navigatingCellEmphasis = false
+    var richBoundarySelectionProposal: ((NSRange, NSRange) -> NSRange)?
+    var richCellSelectionIntent: RichCellSelectionIntent?
+    lazy var cellWordNavigator = NSTextView(frame: .zero)
+    var pendingEmphasisTypingBefore: MarkdownEmphasisTypingState?
+    var emphasisComposition: (source: String, selection: NSRange, traits: MarkdownEmphasisTraits)?
     /// The one table showing its Markdown source because the user chose Edit
     /// Table Source. Every other table stays rendered wherever the caret is.
     private(set) var revealedSourceTableLocation: Int?
@@ -74,15 +86,17 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         var length: Int
         /// The region's source before the run.
         let original: String
+        let emphasisTypingBefore: MarkdownEmphasisTypingState
         /// The cell editor's caret after the run's last keystroke.
         var caret: Int
         var idleTimer: Timer?
 
-        init(location: Int, length: Int, original: String, caret: Int) {
+        init(location: Int, length: Int, original: String, caret: Int, emphasisTypingBefore: MarkdownEmphasisTypingState) {
             self.location = location
             self.length = length
             self.original = original
             self.caret = caret
+            self.emphasisTypingBefore = emphasisTypingBefore
         }
     }
 
@@ -216,6 +230,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
             widthKey = coordinator.tableKey(forTableAt: source.range)
         }
         epoch &+= 1
+        richCellSelectionIntent = nil
         documentGeneration = coordinator.documentGeneration
         self.row = row
         self.column = column
@@ -255,6 +270,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     }
 
     func select(row: Int, column: Int) {
+        richCellSelectionIntent = nil
         if cellSelection != nil { setCellSelection(nil) }
         defer { coordinator?.tableActions?.caretMoved() }
         finishInput()
@@ -308,6 +324,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     func retire() { retire(movingCaret: true) }
 
     private func retire(movingCaret: Bool) {
+        richCellSelectionIntent = nil
         guard !applyingSource, let current = table else { return }
         if cellSelection != nil { setCellSelection(nil) }
         endTypingRun()
@@ -361,8 +378,15 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         } else {
             view = MarkdownTableGridView(geometry: geometry, session: self)
         }
-        view.geometry = geometry
+        let isNewView = view !== previousGrid
+        let cellsChanged = view.geometry.cellRects != geometry.cellRects || isNewView
+        // A refreshed grid redraws only the cells the new layout changes.
+        if isNewView { view.geometry = geometry } else { view.show(geometry) }
         view.frame = NSRect(origin: presentationOrigin, size: geometry.size)
+        // The chrome (grips, add bars) measures from this geometry and may have
+        // re-measured before it changed: tell it, or the add-row bar stays
+        // across the rows it just added.
+        if cellsChanged { coordinator?.tableChrome?.invalidate() }
         if view.superview !== canvas { canvas.addSubview(view) }
         // A wide table's scroll canvas is its last rendered image; a cell edit can
         // outgrow it until the table re-renders.
@@ -372,8 +396,10 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         }
         grid = view
         placeEditor()
-        if previousGrid !== view { previousGrid?.removeFromSuperview() }
-        view.needsDisplay = true
+        if isNewView {
+            previousGrid?.removeFromSuperview()
+            view.needsDisplay = true
+        }
     }
 
     /// Discard an offscreen grid while keeping its one native input in the
@@ -432,7 +458,17 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         editor.setFrameSize(NSSize(width: rect.width, height: max(rect.height, editor.frame.height)))
         editor.sizeToFit()
         moveEditor(to: grid)
-        editor.scrollRangeToVisible(editor.selectedRange())
+        // Text that fits the box stays at its top, where the grid draws it:
+        // the editor's frame rounds up past the box, and scrolling the caret
+        // into view shifted every line up by the excess.
+        if let manager = editor.layoutManager, let container = editor.textContainer,
+           manager.usedRect(for: container).height <= rect.height + 0.5 {
+            editor.setFrameOrigin(.zero)
+            editorScroll.contentView.scroll(to: .zero)
+            editorScroll.reflectScrolledClipView(editorScroll.contentView)
+        } else {
+            editor.scrollRangeToVisible(editor.selectedRange())
+        }
     }
 
     func geometry(for table: MarkdownTableSource) -> MarkdownTableLayout? {
@@ -451,8 +487,14 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     /// The document range of `editorRange` in the focused cell, when the cell
     /// has source text (a missing trailing cell has none yet).
     func sourceRange(ofEditorRange editorRange: NSRange) -> NSRange? {
-        guard isActive, span.prefix.isEmpty, span.suffix.isEmpty, NSMaxRange(editorRange) <= span.range.length else { return nil }
-        return NSRange(location: span.range.location + editorRange.location, length: editorRange.length)
+        guard isActive, span.prefix.isEmpty, span.suffix.isEmpty, let table,
+              editorRange.location >= 0, NSMaxRange(editorRange) <= (editor.string as NSString).length else { return nil }
+        let raw = (table.source as NSString).substring(with: span.range)
+        let mapping = Self.decodedCellMapping(raw)
+        guard NSMaxRange(editorRange) < mapping.decodedToSource.count else { return nil }
+        let start = mapping.decodedToSource[editorRange.location]
+        let end = mapping.decodedToSource[NSMaxRange(editorRange)]
+        return NSRange(location: span.range.location + start, length: end - start)
     }
 
     /// The layout of the rendered table at `range`: the mounted grid's when it is this session's.
@@ -499,8 +541,10 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     }
 
     func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString: String?) -> Bool {
+        richCellSelectionIntent = nil
         if refreshing { return true }
         if admittedSource() != nil {
+            if applyCellRichBoundaryInput(replacementString ?? "", range: range) { return false }
             pendingEditRange = range
             return true
         }
@@ -513,11 +557,21 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) {
+        richCellSelectionIntent = nil
         guard !refreshing, !isComposing else { return }
         commitInput()
     }
 
+    /// Settle the caret after committed input, retaining explicit typing intent.
+    func normalizeCommittedEmphasisCaret() {
+        guard isActive, !refreshing, !isComposing, editor.selectedRange().length == 0 else { return }
+        normalizeEmphasisSelection()
+        typingRun?.caret = editor.selectedRange().location
+        updateEmphasisTypingAttributes()
+    }
+
     func textViewDidChangeSelection(_ notification: Notification) {
+        adoptCellEmphasisSelection()
         coordinator?.selectionBar?.setNeedsUpdate()
     }
 
@@ -525,12 +579,19 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     /// committed. Typing joins the cell's typing run, one Undo step; a command
     /// (`coalescing: false`) is its own named step.
     @discardableResult
-    func commitInput(actionName: String = "Edit Table Cell", coalescing: Bool = true) -> Bool {
+    func commitInput(actionName: String = "Typing", coalescing: Bool = true, selectionBefore: NSRange? = nil) -> Bool {
         guard isActive, !refreshing, !isComposing else { return !isComposing }
         let encoded = Self.encodedCell(editor.string, selection: editor.selectedRange(), lineBreak: lineBreakSpelling())
         let committed = admittedSource()?.substring(with: span.range)
         if committed == encoded.text {
             pendingEditRange = nil
+            // A same-text IME commit can reconstruct the native attributed
+            // buffer without changing canonical source. Reconcile its look too.
+            if let table, let coordinator {
+                refreshing = true
+                applyCellStyle(coordinator: coordinator, table: table)
+                refreshing = false
+            }
             return true
         }
         guard committed != nil, let table, let coordinator, let main = coordinator.textView else {
@@ -548,14 +609,19 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         }
         let run = coalescing ? typingRun(for: span.range, actionName: actionName) : nil
         if !coalescing { endTypingRun() }
+        let selection = selectionBefore.map {
+            FormattingSelection(tableLocation: table.range.location, row: row, column: column,
+                                before: $0, after: editor.selectedRange())
+        }
         applyingSource = true
         let deferred = coordinator.replaceHiddenTableSource(
-            span.range, with: replacement, actionName: actionName, registersUndo: run == nil
+            span.range, with: replacement, actionName: actionName, registersUndo: run == nil,
+            tableSelection: selection
         )
         // The encoded cell never contains a line break, so the paragraph chain is unchanged.
         let accepted = deferred ?? coordinator.replaceSourceRanges(
             [span.range], with: replacement, expectedSource: main.string, actionName: actionName,
-            reflowsParagraphChain: false, registersUndo: run == nil
+            reflowsParagraphChain: false, registersUndo: run == nil, tableSelection: selection
         )
         applyingSource = false
         guard accepted else { retire(); return false }
@@ -575,8 +641,8 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         refreshing = true
         if editor.string != shown.text {
             editor.string = shown.text
-            applyCellStyle(coordinator: coordinator, table: refreshed)
         }
+        applyCellStyle(coordinator: coordinator, table: refreshed)
         editor.setSelectedRange(shown.selection)
         refreshing = false
         remount()
@@ -610,6 +676,8 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     private func typingRun(for range: NSRange, actionName: String) -> TypingRun? {
         let edit = pendingEditRange
         pendingEditRange = nil
+        let emphasisBefore = pendingEmphasisTypingBefore ?? emphasisTypingState
+        pendingEmphasisTypingBefore = nil
         if let run = typingRun {
             let adjacent = edit.map { $0.location <= run.caret && run.caret <= NSMaxRange($0) } ?? false
             let inside = range.location >= run.location && NSMaxRange(range) <= run.location + run.length
@@ -622,7 +690,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         guard let coordinator, let undo = coordinator.textView?.undoManager,
               let source = admittedSource() else { return nil }
         let run = TypingRun(location: range.location, length: range.length,
-                            original: source.substring(with: range), caret: 0)
+                            original: source.substring(with: range), caret: 0, emphasisTypingBefore: emphasisBefore)
         let ownsGroup = undo.groupingLevel == 0
         if ownsGroup { undo.beginUndoGrouping() }
         undo.registerUndo(withTarget: coordinator) { [weak self] coordinator in
@@ -643,7 +711,8 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         let range = NSRange(location: run.location, length: run.length)
         guard NSMaxRange(range) <= (source as NSString).length else { return }
         _ = coordinator.replaceSourceRanges([range], with: run.original, expectedSource: source,
-                                            actionName: actionName, reflowsParagraphChain: false)
+                                            actionName: actionName, reflowsParagraphChain: false,
+                                            tableEmphasisTyping: run.emphasisTypingBefore)
     }
 
     private func restartIdleTimer(of run: TypingRun) {
@@ -766,6 +835,9 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     func showCommittedCell() {
         guard let coordinator, let table else { return }
         refreshing = true
+        emphasisTypingState.adopt()
+        emphasisComposition = nil
+        pendingEmphasisTypingBefore = nil
         editor.string = Self.decodedCell((table.source as NSString).substring(with: span.range)).text
         applyCellStyle(coordinator: coordinator, table: table)
         editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
@@ -778,18 +850,15 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     private func applyCellStyle(coordinator: NativeTextViewCoordinator, table: MarkdownTableSource) {
         let font = MarkdownTableLayout.cellFont(for: coordinator.baseFontAndStyle().0)
         let lineHeight = font.pointSize * MarkdownTableLayout.lineHeightMultiple
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byWordWrapping
-        paragraph.minimumLineHeight = lineHeight
-        paragraph.maximumLineHeight = lineHeight
-        if let alignments = MarkdownTableScanner.alignments(in: (table.source as NSString).substring(with: table.rows[1].contentRange)),
-           alignments.indices.contains(column) {
-            switch alignments[column] {
-            case .left: paragraph.alignment = .left
-            case .center: paragraph.alignment = .center
-            case .right: paragraph.alignment = .right
-            }
+        let alignments = MarkdownTableScanner.alignments(in: (table.source as NSString).substring(with: table.rows[1].contentRange))
+        let alignment: MarkdownStyler.TableAlignment = switch alignments.flatMap({ $0.indices.contains(column) ? $0[column] : nil }) {
+        case .center: .center
+        case .right: .right
+        case .left, nil: .left
         }
+        let paragraph = MarkdownTableLayout.paragraphStyle(
+            alignment, direction: MarkdownTableLayout.writingDirection(of: editor.string), lineHeight: lineHeight
+        )
         let theme = coordinator.configuration.theme
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font, .foregroundColor: row == 0 ? theme.tableHeaderText : theme.bodyText,
@@ -803,11 +872,13 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         if let storage = editor.textStorage, storage.length > 0 {
             storage.setAttributes(attributes, range: NSRange(location: 0, length: storage.length))
         }
+        applyCellEmphasis(baseFont: font)
+        applyCellInlineStyles(baseFont: font)
     }
 
     // MARK: - Commands
 
-    /// Toggle inline formatting on the cell's selection, or the word at its caret.
+    /// Toggle emphasis for future typing at a caret, or format the cell's selection.
     @discardableResult
     func format(_ style: MarkdownInlineStyle) -> Bool {
         if isRangeMode {
@@ -815,6 +886,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
             return true
         }
         guard isActive, !isComposing, admittedSource() != nil, let coordinator else { return false }
+        if toggleCellEmphasis(style) { return true }
         let text = editor.string as NSString
         let target = coordinator.inlineFormattingTargetRange(in: editor, text: text)
         let tokens = MarkdownInlineFormattingRuns.inlineTokens(in: text, range: NSRange(location: 0, length: text.length))
@@ -834,6 +906,11 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         guard let table, admittedSource() != nil, let coordinator, let main = coordinator.textView,
               let plan = MarkdownTableEditPlan(edit, table: table, row: row, column: column) else { return false }
         let editedColumn = column
+        // One group holds the rewrite and the widths it moves, so Undo brings both back.
+        let undo = main.undoManager
+        let ownsGroup = undo.map { $0.groupingLevel == 0 && !$0.isUndoing && !$0.isRedoing } ?? false
+        if ownsGroup { undo?.beginUndoGrouping() }
+        defer { if ownsGroup { undo?.endUndoGrouping() } }
         applyingSource = true
         let accepted = coordinator.replaceSourceRanges(
             [table.range], with: plan.replacement, expectedSource: main.string, actionName: edit.actionName,
@@ -845,7 +922,7 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
         ) else { retire(); return false }
         adopt(refreshed)
         resyncFocusedCell()
-        followWidths { widths in
+        followWidths(registersUndo: true) { widths in
             switch edit {
             case .insertColumn(let right):
                 let index = editedColumn + (right ? 1 : 0)
@@ -926,11 +1003,14 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     /// cells in document order and land at the start of the cell above or
     /// below, and Escape never leaves the table.
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard let table else { return false }
+        guard let table, !navigatingCellEmphasis else { return false }
         if isRangeMode { return handleRangeCommand(selector) }
+        if handleCellRichBoundaryCommand(selector) { return true }
+        if handleCellEmphasisCommand(selector) { return true }
         if extendFromTextEdge(selector) { return true }
-        let selection = editor.selectedRange()
-        let length = (editor.string as NSString).length
+        let richCoordinates = richCellNavigationCoordinates
+        let selection = richCoordinates?.selection ?? emphasisVisibleSelection
+        let length = richCoordinates?.length ?? (emphasisProjection.visibleText as NSString).length
         let caret = selection.length == 0 ? selection.location : nil
         let wholeCell = length > 0 && selection == NSRange(location: 0, length: length)
         switch selector {
@@ -1051,23 +1131,34 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
 
     /// Opens a link that covers the caret in the cell's source.
     private func openLinkAtCaret() -> Bool {
-        let text = editor.string as NSString
-        let caret = editor.selectedRange().location
-        var opened = false
-        for node in InlineParser.parse(editor.string) {
-            guard case .link(let range, _, let url, _, _) = node, caret >= range.location, caret <= NSMaxRange(range) else { continue }
-            var destination = InlineParser.decodedLinkDestination(in: text, range: url)
-            if destination.lowercased().hasPrefix("www.") { destination = "https://" + destination }
-            if let link = URL(string: destination), let main = coordinator?.textView {
-                opened = main.delegate?.textView?(main, clickedOnLink: link, at: main.selectedRange().location) ?? false
-                if !opened, ["http", "https", "mailto"].contains(link.scheme?.lowercased() ?? "") {
-                    NSWorkspace.shared.open(link)
-                    opened = true
-                }
-            }
-            break
+        guard let target = link(atEditorIndex: editor.selectedRange().location), let main = coordinator?.textView else { return false }
+        guard case .url(let link) = target else {
+            coordinator?.openTableLink(target)
+            return true
+        }
+        var opened = main.delegate?.textView?(main, clickedOnLink: link, at: main.selectedRange().location) ?? false
+        if !opened, ["http", "https", "mailto"].contains(link.scheme?.lowercased() ?? "") {
+            NSWorkspace.shared.open(link)
+            opened = true
         }
         return opened
+    }
+
+    /// The link whose Markdown covers `index` in the cell's text.
+    func link(atEditorIndex index: Int) -> TableLinkTarget? {
+        let text = editor.string as NSString
+        for node in InlineParser.parse(editor.string) {
+            switch node {
+            case .link(let range, _, let url, _, _) where index >= range.location && index <= NSMaxRange(range):
+                return MarkdownTableLayout.url(forLinkDestination: InlineParser.decodedLinkDestination(in: text, range: url))
+                    .map(TableLinkTarget.url)
+            case .wikiLink(let range, let name, _, _) where index >= range.location && index <= NSMaxRange(range):
+                return .wikiLink(text.substring(with: name))
+            default:
+                continue
+            }
+        }
+        return nil
     }
 
     /// A double-click selects the word under the pointer in the focused cell; a triple-click its whole text.
@@ -1123,70 +1214,19 @@ final class MarkdownTableEditingSession: NSObject, NSTextViewDelegate {
     }
 
     /// The cell's source as its editor shows it: each unescaped `<br>` tag is a
-    /// line break; everything else, escapes included, is shown raw. Maps a
-    /// source selection into the shown text.
+    /// line break and each `\|` a pipe; everything else, other escapes
+    /// included, is shown raw. Maps a source selection into the shown text.
     static func decodedCell(_ source: String, selection: NSRange = NSRange(location: 0, length: 0)) -> (text: String, selection: NSRange) {
-        let input = source as NSString
-        guard source.contains("<") else { return (source, selection) }
-        var output: [UInt16] = []
-        var offsets = Array(repeating: 0, count: input.length + 1)
-        var index = 0
-        var slashes = 0
-        let tags = MarkdownStyler.lineBreakTag.matches(in: source, range: NSRange(location: 0, length: input.length))
-        var nextTag = 0
-        while index < input.length {
-            offsets[index] = output.count
-            while nextTag < tags.count, tags[nextTag].range.location < index { nextTag += 1 }
-            if nextTag < tags.count, tags[nextTag].range.location == index, slashes % 2 == 0 {
-                let tag = tags[nextTag].range
-                for inner in index..<NSMaxRange(tag) { offsets[inner] = output.count }
-                output.append(10)
-                index = NSMaxRange(tag)
-                slashes = 0
-                continue
-            }
-            let unit = input.character(at: index)
-            output.append(unit)
-            slashes = unit == 92 ? slashes + 1 : 0
-            index += 1
-        }
-        offsets[input.length] = output.count
-        let start = offsets[min(selection.location, input.length)]
-        let end = offsets[min(NSMaxRange(selection), input.length)]
-        return (String(decoding: output, as: UTF16.self), NSRange(location: start, length: max(0, end - start)))
+        SemanticTableCellCodec.decodedSource(source, selection: selection)
     }
 
-    /// Encode only the edited cell, retaining existing escapes. Map the native
-    /// UTF-16 selection through inserted escaping and inline line breaks. A
-    /// typed `<br>` tag is escaped (`\<br>`) so it stays text.
-    static func encodedCell(_ text: String, selection: NSRange, lineBreak: String = "<br>") -> (text: String, selection: NSRange) {
-        let input = Array(text.utf16)
-        let typedTags = Set(MarkdownStyler.lineBreakTag.matches(in: text, range: NSRange(location: 0, length: input.count))
-            .map(\.range.location))
-        var output: [UInt16] = []
-        var offsets = Array(repeating: 0, count: input.count + 1)
-        var slashes = 0
-        var index = 0
-        while index < input.count {
-            offsets[index] = output.count
-            let unit = input[index]
-            if unit == 13 || unit == 10 {
-                output.append(contentsOf: Array(lineBreak.utf16))
-                if unit == 13, index + 1 < input.count, input[index + 1] == 10 {
-                    index += 1
-                    offsets[index] = output.count
-                }
-            } else {
-                if unit == 124 && slashes % 2 == 0 { output.append(92) }
-                if unit == 60 && slashes % 2 == 0 && typedTags.contains(index) { output.append(92) }
-                output.append(unit)
-            }
-            slashes = unit == 92 ? slashes + 1 : 0
-            index += 1
-        }
-        offsets[input.count] = output.count
-        let start = offsets[min(selection.location, input.count)]
-        let end = offsets[min(NSMaxRange(selection), input.count)]
-        return (String(decoding: output, as: UTF16.self), NSRange(location: start, length: max(0, end - start)))
+    private static func decodedCellMapping(_ source: String) -> (text: String, sourceToDecoded: [Int], decodedToSource: [Int]) {
+        let mapping = SemanticTableCellCodec.decodedSourceMapping(source)
+        return (mapping.text, mapping.sourceToDecoded, mapping.decodedToSource)
     }
+
+    static func encodedCell(_ text: String, selection: NSRange, lineBreak: String = "<br>") -> (text: String, selection: NSRange) {
+        SemanticTableCellCodec.encodedSource(text, selection: selection, lineBreak: lineBreak)
+    }
+
 }

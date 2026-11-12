@@ -72,7 +72,7 @@ enum MarkdownASTStyler {
             styleBlock(block, font: baseFont, ctx: ctx, into: &attrs)
         }
         }
-        PerfTrace.time("ast.shrink") { shrinkInactiveMarkers(in: blocks, ctx: ctx, into: &attrs) }
+        PerfTrace.time("ast.shrink") { shrinkRichBodyMarkers(in: blocks, ctx: ctx, into: &attrs) }
 
         // Text/regex passes (AST-agnostic); AST code ranges drive the "skip inside code" checks.
         var codeRanges: [NSRange] = [], checkboxRanges: [NSRange] = [], completeLinks: [NSRange] = []
@@ -157,16 +157,30 @@ enum MarkdownASTStyler {
     }
 
     /// Link detector + incomplete-link patterns, compiled ONCE (they were rebuilt
-    /// every restyle). Both are thread-safe + stateless for matching.
-    private static let linkDetector = try? NSDataDetector(
-        types: NSTextCheckingResult.CheckingType.link.rawValue
-    )
+    /// every restyle). Both are thread-safe + stateless for matching, but the
+    /// detector's scanner keeps the last text it was given, a whole note's, until
+    /// it next scans: ``releaseLinkDetector()`` lets it go with that.
+    static var linkDetector: NSDataDetector? {
+        linkDetectorLock.withLock {
+            if let detector = keptLinkDetector { return detector }
+            let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+            keptLinkDetector = detector
+            return detector
+        }
+    }
+    private static let linkDetectorLock = NSLock()
+    nonisolated(unsafe) private static var keptLinkDetector: NSDataDetector?
+
+    static func releaseLinkDetector() {
+        linkDetectorLock.withLock { keptLinkDetector = nil }
+    }
+
     private static let incompleteLinkPatterns: [NSRegularExpression] = [
         #"\[\]"#, #"\[\[\]\]"#, #"\[[^\]\r\n]*$"#, #"\[[^\]\r\n]+\](?!\()"#,
         #"\[[^\]\r\n]+\]\([^)\r\n]*$"#,
     ].compactMap { try? NSRegularExpression(pattern: $0, options: []) }
 
-    /// Tag a thematic-break line for a full-width rule (AST-driven); suppressed while the caret edits it.
+    /// Keep a recognized thematic break rendered as a rule in the rich body.
     private static func styleThematicBreak(range: NSRange, ctx: Ctx, into attrs: inout [StyledRange]) {
         var hr = range
         while hr.length > 0 {
@@ -174,13 +188,12 @@ enum MarkdownASTStyler {
             guard last == 0x0A || last == 0x0D else { break }
             hr.length -= 1
         }
-        guard hr.length > 0,
-              !(NSLocationInRange(ctx.caret, hr) || ctx.caret == NSMaxRange(hr)) else { return }
+        guard hr.length > 0 else { return }
         attrs.append((hr, [.foregroundColor: NSColor.clear, .thematicBreak: true]))
         attrs.append((hr, [.paragraphStyle: NSMutableParagraphStyle()]))
     }
 
-    /// AST list-item decoration: indent paragraph, `•` bullet, checkbox + strikethrough, all caret-aware.
+    /// AST list-item decoration: stable unordered bullets and semantic task checkboxes.
     private static func styleListItem(_ item: ListItem, ctx: Ctx, into attrs: inout [StyledRange]) {
         guard ctx.config.lists.helpersEnabled else { return }
 
@@ -216,10 +229,8 @@ enum MarkdownASTStyler {
         ps.headIndent = ctx.config.lists.indentPerLevel + depthIndent + markerWidth + extraSpacing
         attrs.append((line, [.paragraphStyle: ps]))
 
-        // 2. Marker decoration (suppressed while the caret edits the syntax).
+        // 2. Task syntax stays concealed behind the checkbox; unordered markers present as bullets.
         if let box = item.checkbox {
-            let syntax = NSRange(location: item.marker.location, length: NSMaxRange(box) - item.marker.location)
-            if NSLocationInRange(ctx.caret, syntax) || ctx.caret == NSMaxRange(box) { return }
             let spacer = NSRange(location: NSMaxRange(item.marker), length: box.location - NSMaxRange(item.marker))
             attrs.append((item.marker, [.foregroundColor: NSColor.clear]))
             if spacer.length > 0 { attrs.append((spacer, [.foregroundColor: NSColor.clear])) }
@@ -231,9 +242,6 @@ enum MarkdownASTStyler {
                 ]))
             }
         } else if !item.ordered {
-            let syntax = NSRange(location: item.marker.location,
-                                 length: item.contentRange.location - item.marker.location)
-            if NSLocationInRange(ctx.caret, syntax) { return }
             attrs.append((item.marker, [.bulletMarker: true, .foregroundColor: NSColor.clear]))
         }
     }
@@ -383,7 +391,7 @@ enum MarkdownASTStyler {
         }
     }
 
-    /// Per-line blockquote: indent, mute content, hide/show `>` markers, tag first char with bar level.
+    /// Per-line blockquote: indent, mute content, conceal `>` markers and retain its semantic bar.
     private static func styleBlockquote(range: NSRange, ctx: Ctx, into attrs: inout [StyledRange]) {
         let indentPerLevel = MarkdownTextLayoutFragment.blockquoteIndentPerLevel
         var lineStart = range.location
@@ -429,11 +437,7 @@ enum MarkdownASTStyler {
             if contentRange.length > 0 {
                 attrs.append((contentRange, [.foregroundColor: ctx.theme.mutedText]))
             }
-            if ctx.isActive(tokenRange) {
-                attrs.append((markerRange, [.foregroundColor: ctx.theme.mutedText]))
-            } else {
-                attrs.append((markerRange, [.foregroundColor: NSColor.clear, .font: ctx.inlineMarkerFont]))
-            }
+            attrs.append((markerRange, [.foregroundColor: NSColor.clear, .font: ctx.inlineMarkerFont]))
             // Whole line, not just the first char, so each soft-wrapped visual line
             attrs.append((tokenRange, [.blockquoteLevel: level]))
         }
@@ -569,10 +573,9 @@ enum MarkdownASTStyler {
                 attrs.append((contentRange, [.font: codeFont, .backgroundColor: ctx.codeBackground]))
                 // Suppress spell-check underlines on inline `code` spans (markers + content).
                 attrs.append((range, [.spellingState: 0, .markdownCode: 1]))
-                let markerAttrs: [NSAttributedString.Key: Any] = ctx.isActive(range)
-                    ? [.foregroundColor: ctx.theme.mutedText, .font: ctx.codeFont]
-                    : [.foregroundColor: ctx.theme.mutedText.withAlphaComponent(ctx.config.markers.inlineCodeMarkerAlpha),
-                       .font: ctx.inlineMarkerFont]
+                let markerAttrs: [NSAttributedString.Key: Any] = [
+                    .foregroundColor: NSColor.clear, .font: ctx.inlineMarkerFont,
+                    .kern: -ctx.inlineMarkerFont.pointSize]
                 for marker in markers(of: range, content: contentRange) { attrs.append((marker, markerAttrs)) }
 
             case .link(let range, let textRange, let url, let markers, let children):
@@ -618,6 +621,18 @@ enum MarkdownASTStyler {
     ) {
         attrs.append((range, [.spellingState: 0]))
         let nodeName = ctx.ns.substring(with: name)
+        if ctx.config.link.wikiLinkAliases {
+            // The label is the alias when there is one; the link carries the target.
+            let label = id ?? name
+            if !ctx.isActive(range) {
+                let exists = ctx.config.services.wikiLinks.resolve(displayName: nodeName, range: name)?.exists ?? false
+                attrs.append((label, exists
+                    ? [.link: nodeName, .underlineStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: ctx.theme.link]
+                    : [.foregroundColor: ctx.theme.disabledText]))
+            }
+            for marker in markers { attrs.append((marker, [.foregroundColor: ctx.theme.mutedText])) }
+            return
+        }
         let linkID = id.map { ctx.ns.substring(with: $0) } ?? ctx.wikiLinkID(range)
         var contentAttrs: [NSAttributedString.Key: Any] = [:]
         if let linkID { contentAttrs[.wikiLinkID] = linkID }
@@ -634,10 +649,10 @@ enum MarkdownASTStyler {
         for marker in markers { attrs.append((marker, [.foregroundColor: ctx.theme.mutedText])) }
     }
 
-    // MARK: - Marker shrinking (hide syntax of inactive nodes)
+    // MARK: - Rich-body syntax concealment
 
-    /// Collapse inactive nodes' markers to a tiny kerned font so syntax vanishes; code/LaTeX skip themselves.
-    private static func shrinkInactiveMarkers(in blocks: [BlockNode], ctx: Ctx, into attrs: inout [StyledRange]) {
+    /// Conceal recognized source syntax while retaining the rich body's semantic content.
+    private static func shrinkRichBodyMarkers(in blocks: [BlockNode], ctx: Ctx, into attrs: inout [StyledRange]) {
         for block in blocks where ctx.inScope(block.range) {
             switch block {
             case .heading(_, let range, let markers, let inlines):
@@ -658,46 +673,41 @@ enum MarkdownASTStyler {
         }
     }
 
-    /// Shrink inactive markers; an active ancestor reveals its whole subtree via `forceReveal`.
-    private static func shrinkInlineMarkers(_ nodes: [InlineNode], ctx: Ctx, forceReveal: Bool = false, into attrs: inout [StyledRange]) {
+    /// Conceal inline delimiters independently of caret and selection.
+    private static func shrinkInlineMarkers(_ nodes: [InlineNode], ctx: Ctx, into attrs: inout [StyledRange]) {
         for node in nodes {
             switch node {
-            case .emphasis(_, let range, let markers, let children):
-                let active = forceReveal || ctx.isActive(range)
-                if !active { shrink(markers, ctx: ctx, into: &attrs) }
-                shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
-            case .strikethrough(let range, let markers, let children), .highlight(let range, let markers, let children):
-                let active = forceReveal || ctx.isActive(range)
-                if !active { shrink(markers, ctx: ctx, into: &attrs) }
-                shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
-            case .underline(let range, let markers, let children):
-                let active = forceReveal || ctx.isActive(range)
-                if !active { shrink(markers, ctx: ctx, into: &attrs) }
-                shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
-            case .link(let range, _, _, let markers, let children):
-                let active = forceReveal || ctx.isActive(range)
-                if !active {
-                    shrink(markers, ctx: ctx, into: &attrs)
-                    if markers.count >= 4 {   // also hide the "(url)" run
-                        let hide = NSRange(location: markers[2].location,
-                                           length: NSMaxRange(markers[3]) - markers[2].location)
-                        attrs.append((hide, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear]))
-                    }
+            case .emphasis(_, _, let markers, let children), .underline(_, let markers, let children),
+                 .strikethrough(_, let markers, let children), .highlight(_, let markers, let children):
+                for marker in markers {
+                    attrs.append((marker, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear,
+                                           .kern: -ctx.inlineMarkerFont.pointSize]))
                 }
-                shrinkInlineMarkers(children, ctx: ctx, forceReveal: active, into: &attrs)
-            case .wikiLink(let range, _, let id, let markers):
-                if !(forceReveal || ctx.isActive(range)) {
-                    shrink(markers, ctx: ctx, into: &attrs)
-                    if let id {
-                        let suffix = NSRange(location: id.location - 1, length: id.length + 1)
-                        attrs.append((suffix, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear,
-                                               .kern: -ctx.inlineMarkerFont.pointSize]))
-                    }
+                shrinkInlineMarkers(children, ctx: ctx, into: &attrs)
+            case .link(_, _, _, let markers, let children):
+                shrink(markers, ctx: ctx, into: &attrs)
+                if markers.count >= 4 {   // also hide the destination, retaining its visible label
+                    let hide = NSRange(location: markers[2].location,
+                                       length: NSMaxRange(markers[3]) - markers[2].location)
+                    attrs.append((hide, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear]))
                 }
-            case .image(let range, _, _, let markers):
-                if !(forceReveal || ctx.isActive(range)) { shrink(markers, ctx: ctx, into: &attrs) }
-            case .escape(let range, _, let marker):
-                if !(forceReveal || ctx.isActive(range)) { shrink([marker], ctx: ctx, into: &attrs) }
+                shrinkInlineMarkers(children, ctx: ctx, into: &attrs)
+            case .wikiLink(_, let name, let id, let markers):
+                shrink(markers, ctx: ctx, into: &attrs)
+                if let id, ctx.config.link.wikiLinkAliases {
+                    // Hide `Target|`, leaving the alias.
+                    let prefix = NSRange(location: name.location, length: id.location - name.location)
+                    attrs.append((prefix, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear,
+                                           .kern: -ctx.inlineMarkerFont.pointSize]))
+                } else if let id {
+                    let suffix = NSRange(location: id.location - 1, length: id.length + 1)
+                    attrs.append((suffix, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear,
+                                           .kern: -ctx.inlineMarkerFont.pointSize]))
+                }
+            case .image(_, _, _, let markers):
+                shrink(markers, ctx: ctx, into: &attrs)
+            case .escape(_, _, let marker):
+                shrink([marker], ctx: ctx, into: &attrs)
             case .text, .code, .imageEmbed, .inlineLatex:
                 break   // own marker handling / not shrunk
             }
@@ -706,7 +716,7 @@ enum MarkdownASTStyler {
 
     private static func shrink(_ markers: [NSRange], ctx: Ctx, into attrs: inout [StyledRange]) {
         for marker in markers {
-            attrs.append((marker, [.font: ctx.inlineMarkerFont, .kern: -ctx.inlineMarkerFont.pointSize]))
+            attrs.append((marker, [.font: ctx.inlineMarkerFont, .foregroundColor: NSColor.clear, .kern: -ctx.inlineMarkerFont.pointSize]))
         }
     }
 

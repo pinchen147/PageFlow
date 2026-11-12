@@ -26,10 +26,12 @@ extension NativeTextViewCoordinator {
     /// Move the caret with `selector` and remember the key, so a caret that
     /// lands in a table enters the cell the reference editor enters: ↓ the first row
     /// under the caret, ↑ the last row, → the first cell, ← the last cell's end.
-    func moveCaretRememberingTableEntry(_ selector: Selector, in textView: NSTextView) -> Bool {
+    /// A list command crossing concealed prefixes keeps its original location
+    /// across native steps, so entering from the table's edge retains direction.
+    func moveCaretRememberingTableEntry(_ selector: Selector, in textView: NSTextView, fromLocation: Int? = nil) -> Bool {
         let selection = textView.selectedRange()
         guard pendingTableEntry == nil, selection.length == 0,
-              let intent = TableEntryIntent(selector, from: selection.location) else { return false }
+              let intent = TableEntryIntent(selector, from: fromLocation ?? selection.location) else { return false }
         pendingTableEntry = intent
         defer { pendingTableEntry = nil }
         textView.perform(selector, with: nil)
@@ -249,18 +251,17 @@ extension NativeTextViewCoordinator {
         let text = storage.mutableString
         guard location <= text.length else { return nil }
         var lineStart = text.lineRange(for: NSRange(location: location, length: 0)).location
-        guard startsWithPipe(text, at: lineStart) else { return nil }
-        while lineStart > 0 {
-            let previous = text.lineRange(for: NSRange(location: lineStart - 1, length: 0)).location
-            guard startsWithPipe(text, at: previous) else { break }
-            lineStart = previous
+        // Walk up the table's rows to its first line, which carries the anchor.
+        while isTableRow(text, at: lineStart) {
+            if lineStart < storage.length,
+               let value = storage.attribute(.markdownTableSourceRange, at: lineStart, effectiveRange: nil) as? NSValue {
+                let table = AnchorRelativeRange.decode(value, anchorLocation: lineStart)
+                return table.location <= location && location <= NSMaxRange(table) ? table : nil
+            }
+            guard lineStart > 0 else { return nil }
+            lineStart = text.lineRange(for: NSRange(location: lineStart - 1, length: 0)).location
         }
-        guard lineStart < storage.length,
-              let value = storage.attribute(.markdownTableSourceRange, at: lineStart, effectiveRange: nil) as? NSValue else {
-            return nil
-        }
-        let table = AnchorRelativeRange.decode(value, anchorLocation: lineStart)
-        return table.location <= location && location <= NSMaxRange(table) ? table : nil
+        return nil
     }
 
     /// The end of the table's last line, before its line break.
@@ -270,30 +271,18 @@ extension NativeTextViewCoordinator {
         return end
     }
 
-    /// Up to three spaces, then a pipe: how every table row this editor renders starts.
-    private static func startsWithPipe(_ text: NSString, at lineStart: Int) -> Bool {
-        var index = lineStart
-        while index < text.length, index - lineStart <= 3 {
-            let unit = text.character(at: index)
-            if unit == 0x7C { return true }
-            if unit != 0x20 { return false }
-            index += 1
-        }
-        return false
+    /// Whether the line at `lineStart` has an unescaped pipe: every table row
+    /// does, with or without outer pipes (`a | b`, `--|--`).
+    private static func isTableRow(_ text: NSString, at lineStart: Int) -> Bool {
+        guard lineStart <= text.length else { return false }
+        let line = text.lineRange(for: NSRange(location: lineStart, length: 0))
+        return MarkdownTableScanner.scan(inLine: line, of: text) != nil
     }
 
-    /// A cheap filter before any parse: table lines start with a pipe, or are
-    /// a delimiter row (`---|---`), which may omit its outer pipes.
+    /// A cheap filter before any parse: the line at `location` could be a table row.
     private static func mayBeTableLine(_ text: NSString, at location: Int) -> Bool {
         guard text.length > 0 else { return false }
         let lineStart = text.lineRange(for: NSRange(location: min(location, text.length - 1), length: 0)).location
-        var index = lineStart
-        while index < text.length, index - lineStart <= 3 {
-            let unit = text.character(at: index)
-            if unit == 0x7C || unit == 0x2D || unit == 0x3A { return true }
-            if unit != 0x20 { return false }
-            index += 1
-        }
-        return false
+        return isTableRow(text, at: lineStart)
     }
 }

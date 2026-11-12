@@ -13,6 +13,8 @@ import SwiftUI
 
 struct MarkdownOutlineSidebar: View {
     let items: [MarkdownOutlineItem]
+    /// The heading the reader is in, shown like EPUB's current chapter.
+    var currentID: Int?
     let onSelect: (MarkdownOutlineItem) -> Void
     let onClose: () -> Void
 
@@ -21,7 +23,7 @@ struct MarkdownOutlineSidebar: View {
             HStack {
                 GlassSidebarTitle(text: "Contents")
                 Spacer()
-                GlassSidebarCloseButton(action: onClose)
+                GlassSidebarCloseButton(label: "Close Sidebar", action: onClose)
             }
         } content: {
             GlassSidebarList {
@@ -37,12 +39,14 @@ struct MarkdownOutlineSidebar: View {
     }
 
     private func outlineItemRow(_ item: MarkdownOutlineItem) -> some View {
-        Button {
+        let isCurrent = item.id == currentID
+        return Button {
             onSelect(item)
         } label: {
             HStack {
                 Text(item.title.isEmpty ? "Untitled" : item.title)
-                    .foregroundStyle(.primary)
+                    .fontWeight(isCurrent ? .semibold : .regular)
+                    .foregroundStyle(isCurrent ? Color.accentColor : .primary)
                     .lineLimit(1)
                 Spacer()
             }
@@ -54,5 +58,6 @@ struct MarkdownOutlineSidebar: View {
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }

@@ -41,4 +41,36 @@ public enum MarkdownFormat: Equatable, Sendable {
     case table
     /// Wraps the selection as a link and puts the caret where typing continues.
     case link
+    /// Aligns the selected blocks (a `<div align>` wrapper), or a selected image.
+    case align(MarkdownTextAlignment)
+    /// Removes inline marks from the selection, or the caret's line.
+    case clearFormatting
+    /// Moves the selected lines up or down one line.
+    case moveLines(up: Bool)
+}
+
+/// A command on the table the caret is in (a host's Format ▸ Table menu).
+/// Each acts like its Cell actions row: on the cell range, else the caret's cell.
+public enum MarkdownTableCommand: String, CaseIterable, Sendable {
+    case insertRowAbove, insertRowBelow, insertColumnLeft, insertColumnRight
+    case deleteRow, deleteColumn, deleteTable
+    case alignColumnLeft, alignColumnCenter, alignColumnRight
+    case editTableSource
+
+    /// The command's menu title, as Cell actions names it.
+    public var title: String {
+        switch self {
+        case .insertRowAbove: "Insert Row Above"
+        case .insertRowBelow: "Insert Row Below"
+        case .insertColumnLeft: "Insert Column Left"
+        case .insertColumnRight: "Insert Column Right"
+        case .deleteRow: "Delete Row"
+        case .deleteColumn: "Delete Column"
+        case .deleteTable: "Delete Table"
+        case .alignColumnLeft: "Align Column Left"
+        case .alignColumnCenter: "Align Column Center"
+        case .alignColumnRight: "Align Column Right"
+        case .editTableSource: "Edit Table Source"
+        }
+    }
 }

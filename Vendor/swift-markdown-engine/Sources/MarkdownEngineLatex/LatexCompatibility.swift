@@ -222,6 +222,15 @@ enum LatexCompatibility {
         "\u{03A6}": "\\Phi ", "\u{03A8}": "\\Psi ", "\u{03A9}": "\\Omega ",
     ]
 
+    /// Whether `text` holds a symbol the typesetter would silently leave out.
+    static func dropsSymbols(in text: String) -> Bool {
+        text.contains { ch in
+            guard unicodeReplacements[ch] == nil, let scalar = ch.unicodeScalars.first,
+                  ch.unicodeScalars.count == 1 else { return false }
+            return scalar.value > 0x7E && !(0x0410...0x044F).contains(scalar.value) && !ch.isLetter
+        }
+    }
+
     private static func replaceUnicode(in text: String) -> String {
         guard text.unicodeScalars.contains(where: { $0.value > 0x7E }) else { return text }
         var out = ""
@@ -474,7 +483,8 @@ enum LatexCompatibility {
                     out += "\\text" + String(chars[second.start..<second.end])
                     i = second.end
                 } else {
-                    out += String(chars[argument.start..<argument.end])
+                    let inner = String(chars[(argument.start + 1)..<(argument.end - 1)])
+                    out += "{\(rewriteCommands(in: inner))}"
                     i = argument.end
                 }
             } else if droppedCommands.contains(name) {

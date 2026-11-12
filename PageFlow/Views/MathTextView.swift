@@ -7,16 +7,20 @@
 
 import SwiftUI
 import SwiftMath
+import MarkdownEngineLatex
 
 struct MathTextView: View {
     let text: String
     let fontSize: CGFloat
     let maxWidth: CGFloat
+    let textColor: NSColor?
 
-    init(text: String, fontSize: CGFloat = DesignTokens.commentFontSize, maxWidth: CGFloat = 160) {
+    init(text: String, fontSize: CGFloat = DesignTokens.commentFontSize, maxWidth: CGFloat = 160,
+         textColor: NSColor? = nil) {
         self.text = text
         self.fontSize = fontSize
         self.maxWidth = maxWidth
+        self.textColor = textColor
     }
 
     private var segments: [TextSegment]? {
@@ -35,7 +39,7 @@ struct MathTextView: View {
     private var plainText: some View {
         Text(text)
             .font(.system(size: fontSize))
-            .foregroundStyle(DesignTokens.commentTextColor.opacity(DesignTokens.commentTextOpacity))
+            .foregroundStyle((textColor.map { Color(nsColor: $0) } ?? DesignTokens.commentTextColor).opacity(DesignTokens.commentTextOpacity))
     }
 
     // MARK: - Content Line Grouping
@@ -118,7 +122,8 @@ struct MathTextView: View {
                 delimiter: "",
                 fontSize: fontSize,
                 mode: .text,
-                maxWidth: maxWidth
+                maxWidth: maxWidth,
+                textColor: textColor
             )
 
         case .display(let latex):
@@ -127,7 +132,8 @@ struct MathTextView: View {
                 delimiter: "$$",
                 fontSize: fontSize,
                 mode: .display,
-                maxWidth: maxWidth
+                maxWidth: maxWidth,
+                textColor: textColor
             )
             .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -142,18 +148,30 @@ private struct MathOrFallbackView: View {
     let fontSize: CGFloat
     let mode: MTMathUILabelMode
     let maxWidth: CGFloat
+    let textColor: NSColor?
 
     @State private var hasError = false
 
+    private var nativeText: LatexNativeTextParts {
+        LatexNativeText.split(latex)
+    }
+
     var body: some View {
-        if hasError {
+        if hasError || nativeText.requiresSourceFallback {
             Text("\(delimiter)\(latex)\(delimiter)")
                 .font(.system(size: fontSize))
-                .foregroundStyle(DesignTokens.commentTextColor.opacity(DesignTokens.commentTextOpacity))
+                .foregroundStyle((textColor.map { Color(nsColor: $0) } ?? DesignTokens.commentTextColor).opacity(DesignTokens.commentTextOpacity))
         } else {
-            MathLabelView(latex: latex, fontSize: fontSize, mode: mode, maxWidth: maxWidth) { error in
-                DispatchQueue.main.async {
-                    hasError = error
+            HStack(alignment: .firstTextBaseline, spacing: max(4, fontSize * 0.35)) {
+                MathLabelView(latex: nativeText.latex, fontSize: fontSize, mode: mode, maxWidth: maxWidth, textColor: textColor) { error in
+                    DispatchQueue.main.async {
+                        hasError = error
+                    }
+                }
+                ForEach(Array(nativeText.annotations.enumerated()), id: \.offset) { _, annotation in
+                    Text(annotation)
+                        .font(.system(size: max(11, fontSize * 0.82)))
+                        .foregroundStyle((textColor.map { Color(nsColor: $0) } ?? DesignTokens.commentTextColor).opacity(DesignTokens.commentTextOpacity))
                 }
             }
         }

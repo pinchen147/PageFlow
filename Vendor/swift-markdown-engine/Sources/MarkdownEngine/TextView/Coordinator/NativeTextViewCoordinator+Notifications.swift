@@ -53,7 +53,6 @@ extension NativeTextViewCoordinator {
         if let sender = notification.object as? NSTextView, sender !== tv {
             return
         }
-        let fullRange = NSRange(location: 0, length: (tv.string as NSString).length)
-        restyleTextView(tv, paragraphCandidates: [fullRange])
+        requestAppearanceRefresh(in: tv)
     }
 }

@@ -62,6 +62,11 @@ struct MarkdownEditorView: View {
     /// Resolves `![alt](path)` relative to the note's folder; owned by the tab's
     /// content so decoded images outlive restyles.
     var imageProvider: (any EmbeddedImageProvider)? = nil
+    /// Says which `[[wiki-links]]` name no file (drawn dimmed); owned by the
+    /// tab's content. `wikiLinkRevision` changes when its answers do, so the
+    /// engine sees a new fingerprint and restyles.
+    var wikiLinkResolver: (any WikiLinkResolver)? = nil
+    var wikiLinkRevision = 0
     /// Turns image files dropped or pasted into the editor into image links.
     var onPasteImage: ((NSPasteboard) -> String?)? = nil
     /// Opens dropped PDF/Markdown files as tabs instead of inserting their paths.
@@ -74,6 +79,8 @@ struct MarkdownEditorView: View {
     var onFileDragHover: ((MarkdownFileDragKind?) -> Void)? = nil
     /// Follows a local link (relative path, `file:`, `#heading`) clicked in the note.
     var onOpenLocalLink: ((URL) -> Void)? = nil
+    /// Follows a `[[wiki-link]]`; receives the text before any `|alias`.
+    var onOpenWikiLink: ((String) -> Void)? = nil
     /// The window's warm (mounted) tab `documentId`s (S8 P2). The engine keeps each
     /// retained tab's scroll offset across a switch and forgets the rest; `nil`
     /// keeps all. Passed through verbatim to the engine wrapper.
@@ -111,6 +118,9 @@ struct MarkdownEditorView: View {
     /// A user gesture changed the magnification (pinch end / Ctrl-scroll); the
     /// host adopts + persists it.
     var onZoomChanged: ((CGFloat) -> Void)? = nil
+    var isWidthFitted = false
+    var zoomRequest: MarkdownZoomRequest? = nil
+    var onFittedZoomChanged: ((CGFloat) -> Void)? = nil
 
     var body: some View { nativeEditor }
 
@@ -128,6 +138,7 @@ struct MarkdownEditorView: View {
             opensDroppedFile: opensDroppedFile,
             onImportImages: onImportImages,
             onFileDragHover: onFileDragHover,
+            onLinkClick: onOpenWikiLink,
             onOpenLocalLink: onOpenLocalLink,
             retainedScrollDocumentIds: retainedScrollDocumentIds,
             editorController: editorController,
@@ -145,7 +156,10 @@ struct MarkdownEditorView: View {
             // host owns + persists the level per document.
             magnificationRange: DesignTokens.markdownMinZoom...DesignTokens.markdownMaxZoom,
             magnification: zoomScale,
-            onMagnificationChanged: onZoomChanged
+            onMagnificationChanged: onZoomChanged,
+            isWidthFitted: isWidthFitted,
+            zoomRequest: zoomRequest,
+            onFittedMagnificationChanged: onFittedZoomChanged
         )
     }
 
@@ -156,6 +170,7 @@ struct MarkdownEditorView: View {
         var configuration = Self.baseConfiguration
         configuration.services.bus = bus
         if let imageProvider { configuration.services.images = imageProvider }
+        if let wikiLinkResolver { configuration.services.wikiLinks = wikiLinkResolver }
         // User-defined side margins (live) + top clearance so the first line
         // scrolls out from under the floating chrome.
         configuration.textInsets = TextInsets(horizontal: sideMargin, vertical: 0)
@@ -182,6 +197,18 @@ struct MarkdownEditorView: View {
             forcedAppearanceName.flatMap { NSAppearance(named: $0) }
         #endif
         return configuration
+    }
+
+    /// Drops the formula, diagram and table renders every note shares.
+    @MainActor
+    static func releaseRenderCaches() {
+        MarkdownSharedCaches.release()
+        #if canImport(MarkdownEngineLatex)
+        (baseConfiguration.services.latex as? SwiftMathBridge)?.clearCache()
+        #endif
+        #if canImport(MarkdownEngineMermaid)
+        (baseConfiguration.services.diagram as? MermaidBridge)?.clearCache()
+        #endif
     }
 
     /// Runs `build` with math and diagrams rendering for paper: dark ink,
@@ -217,6 +244,14 @@ struct MarkdownEditorView: View {
         configuration.showsSelectionBar = true
         // Typed source stays exactly what was typed: no paired brackets (D10).
         configuration.lists.autoClosePairsEnabled = false
+        // Find matches in PDF's and EPUB's colours.
+        configuration.theme.findCurrentMatchHighlight = DesignTokens.searchCurrentResult
+        configuration.theme.findMatchHighlight = DesignTokens.searchOtherResults
+        configuration.markers.findMatchHighlightAlpha = 1
+        // `[[Note|Alias]]` shows the alias (Obsidian). Without a note's own
+        // resolver (see `wikiLinkResolver`) every wiki-link is a link.
+        configuration.link.wikiLinkAliases = true
+        configuration.services.wikiLinks = MarkdownWikiLinkResolver.shared
         // Side margins (textInsets) are per-instance — the user setting drives
         // them in `configuration` above; the base carries everything tab-invariant.
         #if canImport(MarkdownEngineLatex)

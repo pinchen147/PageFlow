@@ -17,10 +17,16 @@ import AppKit
 import UniformTypeIdentifiers
 
 final class NativeTextView: NSTextView {
+    var renderedAccessibilityTables: [NSRange: RenderedTableAccessibilityElement] = [:]
+
     /// Room the comment rail keeps at the right (doc 25 §4.1): the reading
     /// column moves left to end this far from the editor's right edge.
     var commentLaneReserve: CGFloat = 0 {
         didSet {
+            defer { (delegate as? NativeTextViewCoordinator)?.scheduleWidthFit() }
+            if commentLaneReserve != oldValue {
+                (delegate as? NativeTextViewCoordinator)?.scheduleSectionNavigationRefresh()
+            }
             guard abs(commentLaneReserve - oldValue) > 0.5, let scrollView = enclosingScrollView else { return }
             if configuration.readingWidth != nil {
                 centerReadingColumn(forClipWidth: scrollView.contentView.bounds.width)
@@ -69,6 +75,8 @@ final class NativeTextView: NSTextView {
     var isApplyingManagedFrameSize = false
     /// Set on switch/resize to force full-layout height measurement until the cascade settles.
     var pendingFullLayoutMeasure = false
+    /// The first paint left the note's full measure for the last styling chunk.
+    var owesFullMeasureAfterStyling = false
     /// Net newline delta from the most recent text edit, captured before AppKit
     /// mutates storage. Used for cheap frame-growth estimates on the typing path.
     var pendingTextEditLineDelta = 0
@@ -114,6 +122,10 @@ final class NativeTextView: NSTextView {
     // MARK: Configuration
     var configuration: MarkdownEditorConfiguration = .default {
         didSet {
+            if configuration.readingWidth != oldValue.readingWidth
+                || configuration.horizontalLayoutInset != oldValue.horizontalLayoutInset {
+                (delegate as? NativeTextViewCoordinator)?.scheduleSectionNavigationRefresh()
+            }
             overscrollPercent = configuration.overscroll.percent
             maxOverscrollPoints = configuration.overscroll.maxPoints
             minOverscrollPoints = configuration.overscroll.minPoints
@@ -197,6 +209,7 @@ final class NativeTextView: NSTextView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        (delegate as? NativeTextViewCoordinator)?.requestAppearanceRefresh(in: self)
         // Forward appearance changes to the embedder's highlighter via its registered notification.
         if let name = configuration.services.syntaxHighlighter.appearanceDidChangeNotification {
             NotificationCenter.default.post(name: name, object: self)
@@ -217,6 +230,7 @@ final class NativeTextView: NSTextView {
         if !hasMarkedText() {
             let range = replacementRange.location == NSNotFound ? self.selectedRange() : replacementRange
             (delegate as? NativeTextViewCoordinator)?.beginFoldComposition(replacing: range, in: self)
+            (delegate as? NativeTextViewCoordinator)?.beginEmphasisComposition(replacing: range, in: self)
         }
         isSettingMarkedText = true
         defer {
@@ -224,7 +238,10 @@ final class NativeTextView: NSTextView {
             if !hasMarkedText() { (delegate as? NativeTextViewCoordinator)?.finishComposition(in: self) }
         }
         (delegate as? NativeTextViewCoordinator)?.pendingCompositionRefresh = true
+        let ownedCompositionUndo = (delegate as? NativeTextViewCoordinator)?.emphasisEditor.composition != nil ? undoManager : nil
+        ownedCompositionUndo?.disableUndoRegistration()
         super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        ownedCompositionUndo?.enableUndoRegistration()
         if hasMarkedText(), let coordinator = delegate as? NativeTextViewCoordinator {
             coordinator.applyCompositionAttributes(to: markedRange(), in: self)
         }
@@ -238,20 +255,33 @@ final class NativeTextView: NSTextView {
         if !hasMarkedText(), replacementRange.location == NSNotFound {
             (delegate as? NativeTextViewCoordinator)?.makeParagraphAfterTableGap(in: self)
         }
+        let sourceRevision = (delegate as? NativeTextViewCoordinator)?.nativeSourceGeneration
         let committing = hasMarkedText()
+        let ownsComposition = (delegate as? NativeTextViewCoordinator)?.emphasisEditor.composition != nil
+        let ownedCompositionUndo = ownsComposition ? undoManager : nil
         if committing { isCommittingMarkedText = true }
+        ownedCompositionUndo?.disableUndoRegistration()
         super.insertText(insertString, replacementRange: replacementRange)
+        ownedCompositionUndo?.enableUndoRegistration()
         if committing {
             isCommittingMarkedText = false
             (delegate as? NativeTextViewCoordinator)?.finishComposition(in: self)
+        } else if let coordinator = delegate as? NativeTextViewCoordinator,
+                  coordinator.nativeSourceGeneration != sourceRevision {
+            coordinator.normalizeCommittedListCaret(in: self)
+            coordinator.normalizeCommittedEmphasisCaret(in: self)
         }
     }
 
     override func unmarkText() {
         let pendingRefresh = (delegate as? NativeTextViewCoordinator)?.pendingCompositionRefresh ?? false
         let committing = (hasMarkedText() || pendingRefresh) && !isCommittingMarkedText
+        let ownsComposition = (delegate as? NativeTextViewCoordinator)?.emphasisEditor.composition != nil
+        let ownedCompositionUndo = ownsComposition ? undoManager : nil
         if committing { isCommittingMarkedText = true }
+        ownedCompositionUndo?.disableUndoRegistration()
         super.unmarkText()
+        ownedCompositionUndo?.enableUndoRegistration()
         if committing {
             isCommittingMarkedText = false
             (delegate as? NativeTextViewCoordinator)?.finishComposition(in: self)
@@ -273,8 +303,9 @@ final class NativeTextView: NSTextView {
 
     /// The editor's keyboard commands (doc 24 §6.10, §7.7.5) as the host binds
     /// them, caught by the focused editor before the app's menus. Block
-    /// commands do nothing in a table cell.
-    private func editorCommand(_ event: NSEvent, coordinator: NativeTextViewCoordinator) -> Bool {
+    /// commands do nothing in a table cell, except ⌘L, ⌘E and ⌘R, which align
+    /// the cell's column.
+    func editorCommand(_ event: NSEvent, coordinator: NativeTextViewCoordinator) -> Bool {
         guard let command = coordinator.keyBindings.command(for: event) else { return false }
         let inCell = coordinator.tableEditingSession.isActive
         switch command {
@@ -296,7 +327,7 @@ final class NativeTextView: NSTextView {
             return false   // ⌘Return in a cell is the cell's own
         default:
             guard let format = command.format else { return false }
-            if !(command.isBlock && inCell) { coordinator.apply(format) }
+            if !(command.isBlock && inCell) || command.alignsTableColumn { coordinator.apply(format) }
             return true
         }
     }
@@ -348,6 +379,9 @@ final class NativeTextView: NSTextView {
         if let coordinator = delegate as? NativeTextViewCoordinator {
             coordinator.invalidateSectionNavigation()
             coordinator.scheduleSectionNavigationRefresh()
+            if let scrollView = enclosingScrollView as? ClampedScrollView {
+                coordinator.applyPendingReadingPosition(scrollView: scrollView, textView: self)
+            }
         }
         updateKeyMonitor()
     }
@@ -366,6 +400,6 @@ extension NSTextView {
     func ensureWholeNoteLayoutUnlessLong() {
         guard let tlm = textLayoutManager,
               (self as? NativeTextView)?.prefersEstimatedLayoutChain != true else { return }
-        tlm.ensureLayout(for: tlm.documentRange)
+        tlm.ensureLayout(for: tlm.documentRange) // whole-note-layout: the one gate, which long notes skip
     }
 }

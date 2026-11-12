@@ -40,7 +40,7 @@ final class PastedImageStore: @unchecked Sendable {
     /// Absolute path → security-scoped bookmark, newest last. Guarded by `lock`.
     nonisolated(unsafe) private var bookmarks: [(path: String, bookmark: Data)]
 
-    init(defaults: UserDefaults = .standard, folderAccess: FolderAccessStore = .shared,
+    init(defaults: UserDefaults = AppDefaults.store, folderAccess: FolderAccessStore = .shared,
          fallbackFolder: URL = PastedImageStore.fallbackAttachmentsFolder) {
         self.defaults = defaults
         self.folderAccess = folderAccess
@@ -406,7 +406,8 @@ final class PastedImageStore: @unchecked Sendable {
             edits.append((match.range, "![\(alt)](\(Self.destination(for: moved, documentURL: noteURL)))"))
         }
         guard whileApproved() else { return [] }
-        for file in adopted.keys { try? FileManager.default.removeItem(at: file) }
+        // Keep original resources until the document has durably saved its new links.
+        // A cancelled or rejected native edit must not leave the old links dangling.
         return edits
     }
 

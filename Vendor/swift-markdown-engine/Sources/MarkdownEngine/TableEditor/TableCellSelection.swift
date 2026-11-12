@@ -151,7 +151,16 @@ extension MarkdownTableEditPlan {
             guard current.rowCount >= 2 else { return nil }
             let ns = text as NSString
             let header = current.rows[0], promoted = current.rows[2]
-            let promotedContent = ns.substring(with: promoted.contentRange)
+            var promotedContent = ns.substring(with: promoted.contentRange)
+            // A header needs the delimiter row's cell count: pad or trim the promoted row to it.
+            if promoted.cells.count != current.columnCount {
+                let leading = promoted.leadingPipeRange.map { ns.substring(with: NSRange(location: promoted.contentRange.location,
+                                                                                        length: NSMaxRange($0) - promoted.contentRange.location)) } ?? ""
+                var cells = promoted.cells.prefix(current.columnCount).map { ns.substring(with: $0.rawRange) }
+                let padded = cells.count < current.columnCount
+                while cells.count < current.columnCount { cells.append("  ") }
+                promotedContent = leading + cells.joined(separator: "|") + (promoted.trailingPipeRange != nil || padded ? "|" : "")
+            }
             let endedWithoutBreak = promoted.lineEndingRange.length == 0
             var rebuilt = ns.replacingCharacters(in: promoted.lineRange, with: "")
             // The table kept no final line break; neither does its new last line.

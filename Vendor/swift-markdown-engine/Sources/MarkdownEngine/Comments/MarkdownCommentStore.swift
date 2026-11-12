@@ -161,6 +161,14 @@ final class MarkdownCommentStore {
         }
     }
 
+    /// Install native visible coordinates after resolving persisted source selectors.
+    func installSemanticRanges(_ mapped: [String: NSRange], text: NSString) {
+        ranges = mapped
+        liveExact = mapped.mapValues { text.substring(with: $0) }
+        needsResolve = false
+        onDisplayChange?()
+    }
+
     /// The threads with anchors taken from `text`, the note being saved; the
     /// threads keep these anchors from now on.
     func threadsForSaving(text: NSString) -> [MarkdownCommentThread] {

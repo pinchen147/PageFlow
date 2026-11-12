@@ -37,6 +37,20 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var lastFoldSummaryPreference: Bool?
     lazy var blockMover = BlockMover(coordinator: self)
     var documentId: String?
+    /// Last host zoom received or synchronously adopted from native publication.
+    /// An unchanged host prop must not overwrite a newer native gesture value.
+    var lastHostMagnification: CGFloat?
+    var isWidthFitted = false
+    var lastReceivedWidthFitted: Bool?
+    var pendingZoomRequest: MarkdownZoomRequest?
+    var consumedZoomRequestTokens: Set<UUID> = []
+    var zoomIntentGeneration = -1
+    var zoomIntentDocumentId: String?
+    var zoomIntentRange: ClosedRange<CGFloat>?
+    var fittedMagnificationCallback: ((CGFloat) -> Void)?
+    var widthFitWorkItem: DispatchWorkItem?
+    var lastWidthFitGeometry: CGSize?
+    var isApplyingWidthFit = false
     /// Remembered scroll offset (`bounds.origin.y`) per `documentId` — saved on
     /// switch-away, restored on switch-back.
     var scrollOffsets: [String: CGFloat] = [:]
@@ -86,7 +100,9 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// Fired on mouse-down so the host can activate this tab.
     var onRequestFocus: (() -> Void)?
     private var registeredAppearanceObserverName: Notification.Name?
-    weak var textView: NSTextView?
+    weak var textView: NSTextView? {
+        didSet { if oldValue !== textView { renderedSourceIntent = nil } }
+    }
     /// PageFlow fork patch P1 (doc 10 §3 / ADR-0010): host-retained handle for the
     /// synchronous save-time text read/flush. Weak — the host owns it.
     weak var editorController: MarkdownEditorController? {
@@ -132,6 +148,13 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var pendingIsEditable: Bool?
     var pendingCompositionRefresh = false
     var pendingPresentationRefresh = false
+    /// Palette work has separate ownership: hidden source-edit chunks may keep
+    /// running, while appearance-only rasterization waits for a displayed view.
+    var pendingAppearanceRefresh = false
+    var appearanceRefreshScheduled = false
+    var appearanceRestyleRanges: [NSRange] = []
+    var appearanceSourceGeneration = -1
+    var appearanceRestyleChunkSize = NativeTextViewCoordinator.deferredRestyleChunk / 4
     var activeFindHighlights: [FindHighlight] = []
     var pendingFindCommand: PendingFindCommand?
     var findRenderingNeedsReset = false
@@ -142,6 +165,7 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// A span edit is being applied; the table session follows it afterwards
     /// (`sourceDidChange`) instead of ending.
     var isApplyingSpanEdit = false
+    var emphasisEditor = MarkdownEmphasisEditorState()
     var isTransferringFoldState = false
     /// The arrow key moving the document caret now, so a caret it puts in a
     /// rendered table enters the cell the reference editor would (+TableEntry).
@@ -191,6 +215,7 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var wtUndoneDuringSession: Bool = false
     var wtPostUndoSnapshot: String?
     var lastAppliedInlineReplacementID: UUID?
+    var renderedSourceIntent: RenderedSourceIntent?
     var activeTokenIndices: Set<Int> = []
     var previousActiveTokenIndices: Set<Int> = []
 
@@ -205,7 +230,11 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// character range in the NEW text, so the restyle can go viewport-first.
     var pendingViewportFirstRange: NSRange? = nil
     /// Ranges still to restyle in idle passes (see +DeferredRestyle).
-    var deferredRestyleRanges: [NSRange] = []
+    var deferredRestyleRanges: [NSRange] = [] {
+        didSet { if deferredRestyleRanges.isEmpty { finishOwedFullMeasure() } }
+    }
+    /// A pass of the owed measure is on its way (`finishOwedFullMeasure`).
+    var owedMeasureScheduled = false
     /// The background parse whose landing still owes the note its styling
     /// (`+BackgroundParse.swift`). A newer one, or a whole-note restyle on
     /// main, takes the debt over.
@@ -214,6 +243,10 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var deferredRestyleAnchorsVisibleSource = false
     var bulkViewportAnchor: BulkViewportAnchor?
     var deferredRestyleScheduled = false
+    /// Characters the next deferred chunk styles; shrinks where text is costly.
+    /// Starts small: two cheap passes reach the full size, while a first pass
+    /// over costly text would otherwise hold the main thread before it adapts.
+    var deferredRestyleChunkSize = NativeTextViewCoordinator.deferredRestyleChunk / 4
     var previousCaretLocation: Int? = nil
     var skipNextSelectionChangeAfterPlainEdit = false
     /// Drag-select suppressed a restyle; replayed on the next non-drag selection change.
@@ -236,6 +269,7 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// Plain insertions typed since `cachedParsedDocument` was parsed, in order,
     /// each in the source as it was when typed; consecutive keystrokes merge.
     var plainInsertionsSinceParse: [NSRange] = []
+    var listEditor = NativeListEditingState()
     var pendingPlainFastPathExpansion: PlainFastPathExpansion?
     // Skip spellcheck property setters when the state wouldn't change.
     var cachedSpellingDisabled: Bool?
@@ -320,6 +354,8 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     /// restyle work, the pre-edit token sets, the caret memory. Run at the
     /// node-switch seam so none of it is applied to the incoming document.
     func resetPerDocumentEditState(preservingReadingPosition: Bool = false) {
+        renderedSourceIntent = nil
+        listEditor = NativeListEditingState()
         deferredRestyleRanges.removeAll()
         deferredRestyleAnchorsVisibleSource = false
         bulkViewportAnchor = nil
@@ -348,6 +384,8 @@ public final class NativeTextViewCoordinator: NSObject, NSTextViewDelegate {
     var cachedBlockParse: BlockParser.Snapshot? {
         didSet {
             cachedBlockParseRevision = cachedBlockParse.map { _ in (nativeSourceGeneration, documentGeneration) }
+            listEditor.continuity = nil
+            if let textView, !textView.isHiddenOrHasHiddenAncestor { normalizeCommittedListCaret(in: textView) }
             blockMover.prepareIndex()
             scheduleSectionNavigationRefresh()
         }

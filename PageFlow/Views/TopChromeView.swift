@@ -246,14 +246,25 @@ private struct ActiveFloatingToolbar: View {
                 bookmarkManager: runtime.bookmarkManager,
                 onOpenFilePicker: { tabManager.openFilePicker() },
                 showingOutline: $tabManager.showingOutline,
-                showingComments: $tabManager.showingComments
+                showingComments: $tabManager.showingComments,
+                onFind: { tabManager.requestFind() }
             )
             .id(runtime.tabID)
         case .markdown(let runtime):
             MarkdownFormatToolbar(
                 content: runtime.content,
                 onOpenFilePicker: { tabManager.openFilePicker() },
-                showingOutline: $tabManager.showingOutline
+                showingOutline: $tabManager.showingOutline,
+                canFind: tabManager.canFind,
+                onFind: { tabManager.requestFind() }
+            )
+            .id(runtime.tabID)
+        case .epub(let runtime):
+            EPUBToolbar(
+                content: runtime.content,
+                onOpenFilePicker: { tabManager.openFilePicker() },
+                showingContents: $tabManager.showingOutline,
+                onFind: { tabManager.requestFind() }
             )
             .id(runtime.tabID)
         case nil:

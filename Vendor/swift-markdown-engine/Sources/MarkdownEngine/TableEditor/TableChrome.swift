@@ -6,6 +6,7 @@ import AppKit
 /// view and takes clicks only inside a zone; everything else falls through.
 final class TableChromeView: NSView {
     weak var controller: TableChromeController?
+    weak var semanticSession: NativeSemanticTableSession?
     var layout: TableChromeLayout?
     var hovered: CellCoord?
     /// The zone under the pointer, and the one pressed or with its menu open.
@@ -18,7 +19,7 @@ final class TableChromeView: NSView {
     /// The column whose border the pointer is on, or that is being resized.
     var resizeColumn: Int?
     /// A resize in progress: the table drawn at the new width over the old one.
-    var resizePreview: (image: NSImage, origin: NSPoint, covers: NSRect)?
+    var resizePreview: (layout: MarkdownTableLayout, origin: NSPoint, covers: NSRect)?
 
     override var isFlipped: Bool { true }
 
@@ -116,8 +117,9 @@ final class TableChromeView: NSView {
             // The table at its new width, over the old raster (it may run over the text below).
             NSColor.textBackgroundColor.setFill()
             local(preview.covers).fill()
-            preview.image.draw(in: local(NSRect(origin: preview.origin, size: preview.image.size)), from: .zero,
-                               operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            // Straight from the layout: a drag frame typesets only the cells
+            // in the dirty rect, through no whole-table bitmap.
+            preview.layout.draw(in: local(NSRect(origin: preview.origin, size: preview.layout.size)))
         }
         if let column = resizeColumn {
             ChromePalette.accent.withAlphaComponent(0.4).setFill()
@@ -222,6 +224,7 @@ final class TableChromeView: NSView {
     // MARK: - Input
 
     override func mouseDown(with event: NSEvent) {
+        if let semanticSession { semanticSession.pressChrome(event); return }
         guard let controller, let layout, let hovered, let superview else { return }
         let point = superview.convert(event.locationInWindow, from: nil)
         guard let zone = layout.zone(at: point, hovered: hovered, showsAddRow: showsAddRow, showsAddColumn: showsAddColumn) else { return }
@@ -409,7 +412,11 @@ final class TableChromeController: NSResponder, NSDraggingSource {
     func hover(at point: NSPoint) {
         coordinator?.blockMover.hover(at: point)
         guard !pressing, gripMenu == nil, let main, main.isEditable else { return }
-        if let layout = view.layout, let hovered = view.hovered, !view.isHidden,
+        // A zone of the shown layout keeps it only while that layout is still
+        // the table's current one: after a row is added, a pointer resting on
+        // the add-row bar would otherwise keep the old bar across the new rows.
+        if let layout = view.layout, entries?.first(where: { $0.range == table })?.layout == layout,
+           let hovered = view.hovered, !view.isHidden,
            layout.zone(at: point, hovered: hovered, showsAddRow: view.showsAddRow, showsAddColumn: view.showsAddColumn) != nil {
             setHoveredZone(at: point)
             return
@@ -422,11 +429,22 @@ final class TableChromeController: NSResponder, NSDraggingSource {
             entriesViewport = viewport
         }
         if let entry = entries?.first(where: { $0.layout.table.contains(point) }), let cell = entry.layout.cell(at: point) {
-            if entry.range != table || cell != view.hovered || view.isHidden { place(entry, cell: cell) }
+            // Re-place for a changed table too (a row just added keeps the same
+            // hovered cell), or the add-row bar stays across the new rows.
+            if entry.range != table || cell != view.hovered || view.isHidden || entry.layout != view.layout {
+                place(entry, cell: cell)
+            }
             setHoveredZone(at: point)
             return
         }
-        if let layout = view.layout, !view.isHidden, layout.wrapper.contains(point) {
+        if let layout = view.layout, !view.isHidden, layout.wrapper.contains(point), let table, let hovered = view.hovered,
+           let entry = entries?.first(where: { $0.range.location == table.location }) {
+            // The gutter keeps the chrome, re-placed when the table changed under it (a row just deleted).
+            if entry.range != table || entry.layout != layout {
+                let rows = entry.layout.cells.count, columns = entry.layout.cells.first?.count ?? 0
+                guard rows > 0, columns > 0, entry.layout.wrapper.contains(point) else { remove(); return }
+                place(entry, cell: CellCoord(row: min(hovered.row, rows - 1), column: min(hovered.column, columns - 1)))
+            }
             setHoveredZone(at: point)
             return
         }
@@ -535,8 +553,10 @@ final class TableChromeController: NSResponder, NSDraggingSource {
             guard !refused else { continue }
             if !dragging, hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) > 5 {
                 if rows, index == 0 {
-                    // PageFlow refuses at once what the reference editor only refuses later.
+                    // PageFlow refuses at once what the reference editor only refuses
+                    // later, and says why on screen as well as aloud.
                     MarkdownTableEditingSession.announce("Header rows stay at the top.")
+                    flashHint("Header rows stay at the top.", layout: layout, cell: hovered)
                     refused = true
                     continue
                 }
@@ -555,6 +575,18 @@ final class TableChromeController: NSResponder, NSDraggingSource {
         } else if !refused {
             clickGrip(zone, index: index)
         }
+    }
+
+    /// A brief message where the table hint goes, over `layout`'s table.
+    private func flashHint(_ message: String, layout: TableChromeLayout, cell: CellCoord) {
+        guard let hint = coordinator?.tableHint, let scrollView, let main,
+              layout.cells.indices.contains(cell.row), layout.cells[cell.row].indices.contains(cell.column) else { return }
+        func topDown(_ rect: NSRect) -> NSRect {
+            let local = scrollView.convert(rect, from: main)
+            return scrollView.isFlipped ? local
+                : NSRect(x: local.minX, y: scrollView.bounds.height - local.maxY, width: local.width, height: local.height)
+        }
+        hint.flash(message, table: topDown(layout.table), cell: topDown(layout.cells[cell.row][cell.column]), in: scrollView)
     }
 
     func drop(rows: Bool, index: Int, boundary: Int) {
@@ -587,21 +619,25 @@ final class TableChromeController: NSResponder, NSDraggingSource {
         let cell = TableCellSelection(anchor: hovered, head: hovered)
         typealias Item = TableMenuView.Item
         let items: [Item] = rows ? [
-            Item("Insert row above", symbol: "arrow.up.to.line", disabledReason: hovered.row == 0 ? "Header rows stay at the top." : nil) { [weak session] in
+            Item("Insert Row Above", symbol: "arrow.up.to.line", disabledReason: hovered.row == 0 ? "Header rows stay at the top." : nil) { [weak session] in
                 session?.insertAround(cell, edit: .insertRow(below: false), announce: nil)
             },
-            Item("Insert row below", symbol: "arrow.down.to.line") { [weak session] in
+            Item("Insert Row Below", symbol: "arrow.down.to.line") { [weak session] in
                 session?.insertAround(cell, edit: .insertRow(below: true), announce: nil)
             },
-            Item("Delete row", symbol: "xmark.rectangle") { [weak session] in session?.deleteRows(of: cell, announce: false) },
+            Item("Delete Row", symbol: "xmark.rectangle", disabledReason: session.deleteRowsDisabledReason(cell)) { [weak session] in
+                session?.deleteRows(of: cell, announce: false)
+            },
         ] : [
-            Item("Insert column left", symbol: "arrow.left.to.line") { [weak session] in
+            Item("Insert Column Left", symbol: "arrow.left.to.line") { [weak session] in
                 session?.insertAround(cell, edit: .insertColumn(right: false), announce: nil)
             },
-            Item("Insert column right", symbol: "arrow.right.to.line") { [weak session] in
+            Item("Insert Column Right", symbol: "arrow.right.to.line") { [weak session] in
                 session?.insertAround(cell, edit: .insertColumn(right: true), announce: nil)
             },
-            Item("Delete column", symbol: "xmark.rectangle.portrait") { [weak session] in session?.deleteColumns(of: cell, announce: false) },
+            Item("Delete Column", symbol: "xmark.rectangle.portrait", disabledReason: session.deleteColumnsDisabledReason(cell)) { [weak session] in
+                session?.deleteColumns(of: cell, announce: false)
+            },
         ]
         let grip = scrollView.convert(view.rect(of: zone, in: layout, hovered: hovered), from: main)
         let anchor = scrollView.isFlipped ? grip : NSRect(x: grip.minX, y: scrollView.bounds.height - grip.maxY, width: grip.width, height: grip.height)
@@ -684,13 +720,13 @@ final class TableChromeController: NSResponder, NSDraggingSource {
         func preview() {
             let dx = last.locationInWindow.x - start + scrolled
             widths[column] = min(MarkdownTableLayout.maximumSetColumnWidth, max(MarkdownTableLayout.minimumColumnWidth, startWidth + dx))
-            let image = MarkdownTableLayout(table: parsed, font: coordinator.baseFontAndStyle().0, theme: configuration.theme,
-                                            codeBackground: configuration.services.syntaxHighlighter.backgroundColor(),
-                                            latex: configuration.services.latex, appearance: main.effectiveAppearance,
-                                            cache: cache, columnWidths: widths).image()
+            let resized = MarkdownTableLayout(table: parsed, font: coordinator.baseFontAndStyle().0, theme: configuration.theme,
+                                              codeBackground: configuration.services.syntaxHighlighter.backgroundColor(),
+                                              latex: configuration.services.latex, appearance: main.effectiveAppearance,
+                                              cache: cache, columnWidths: widths)
             let origin = NSPoint(x: header[0].minX - 1, y: layout.table.minY - 1)
-            view.resizePreview = (image, origin, layout.table.insetBy(dx: -1, dy: -1))
-            let grown = NSRect(origin: origin, size: image.size).union(view.frame)
+            view.resizePreview = (resized, origin, layout.table.insetBy(dx: -1, dy: -1))
+            let grown = NSRect(origin: origin, size: resized.size).union(view.frame)
             if !view.frame.contains(grown) { view.frame = grown.integral }
             view.needsDisplay = true
         }

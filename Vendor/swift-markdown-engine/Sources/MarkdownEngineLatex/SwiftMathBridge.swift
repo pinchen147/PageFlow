@@ -51,8 +51,11 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
     private var cacheCost = 0
     private var cacheSequence: UInt64 = 0
     private let cacheLock = NSLock()
+    private var fonts: [CGFloat: MTFont] = [:]
     /// Formulas served from the on-disk cache since launch (tests, diagnostics).
     public private(set) var diskCacheHits = 0
+    /// Times the math font was loaded (tests).
+    private(set) var fontLoads = 0
 
     // MARK: - Disk cache
     //
@@ -63,7 +66,7 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
     // block and hundreds of inline formulas); the second open reads pixels
     // instead. Bump `diskCacheVersion` whenever the rendering itself changes
     // (SwiftMath update, font, cropping) — the key covers the inputs only.
-    private static let diskCacheVersion = "v5"
+    private static let diskCacheVersion = "v8"
     private static let diskCacheDirectory: URL? = {
         guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
         let root = base.appendingPathComponent("com.pageflow.MarkdownEngine", isDirectory: true)
@@ -114,8 +117,12 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
     private static func loadFromDisk(_ key: CacheKey) -> CacheEntry? {
         guard let directory = diskCacheDirectory else { return nil }
         let name = diskName(for: key)
-        guard let png = try? Data(contentsOf: directory.appendingPathComponent(name + ".png")),
-              let json = try? Data(contentsOf: directory.appendingPathComponent(name + ".json")),
+        // A new formula misses here: `access` costs little, where a failed read builds an
+        // error, and a URL appended to with no hint stats the path.
+        let pngPath = directory.path + "/" + name + ".png"
+        guard access(pngPath, R_OK) == 0,
+              let png = try? Data(contentsOf: URL(filePath: pngPath, directoryHint: .notDirectory)),
+              let json = try? Data(contentsOf: directory.appending(path: name + ".json", directoryHint: .notDirectory)),
               let sidecar = try? JSONDecoder().decode(DiskSidecar.self, from: json),
               let rep = NSBitmapImageRep(data: png) else { return nil }
         let size = CGSize(width: sidecar.width, height: sidecar.height)
@@ -176,15 +183,9 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
     ) -> LatexRenderResult? {
         let normalizedLatex = latex.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedLatex.isEmpty else { return nil }
+        guard !LatexNativeText.split(normalizedLatex).requiresSourceFallback else { return nil }
 
-        let appearance = appearanceOverride ?? NSAppearance.currentDrawing()
-        let isDarkMode = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let requestedColor = isDarkMode ? theme.latexDarkModeText : theme.latexLightModeText
-        var resolvedColor: NSColor?
-        appearance.performAsCurrentDrawingAppearance {
-            resolvedColor = requestedColor.usingColorSpace(.sRGB)
-        }
-        let textColor = resolvedColor ?? requestedColor
+        let (appearance, textColor, resolvedColor) = ink(for: theme)
         let key = resolvedColor.map { CacheKey(
             latex: normalizedLatex, fontSize: fontSize, appearance: appearance.name.rawValue,
             color: [$0.redComponent, $0.greenComponent, $0.blueComponent, $0.alphaComponent]
@@ -219,7 +220,60 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         return entry.map(Self.result)
     }
 
+    /// `render`'s formula, drawn from SwiftMath's display list each time the
+    /// image is drawn, so it stays sharp at any scale (a zoomed table cell).
+    /// Size and baseline are `render`'s, which keeps its memory and disk
+    /// caches; this image holds no bitmap.
+    public func renderScalable(
+        latex: String,
+        fontSize: CGFloat,
+        theme: MarkdownEditorTheme
+    ) -> LatexRenderResult? {
+        guard let raster = render(latex: latex, fontSize: fontSize, theme: theme) else { return nil }
+        let normalizedLatex = latex.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (appearance, textColor, _) = ink(for: theme)
+        var typeset: TypesetFormula?
+        appearance.performAsCurrentDrawingAppearance {
+            typeset = layOut(normalizedLatex, fontSize: fontSize, textColor: textColor)
+        }
+        guard let typeset, let displayList = typeset.label.displayList else { return raster }
+        let size = raster.size
+        let annotation = typeset.annotations.isEmpty ? nil
+            : Self.annotation(typeset.annotations.joined(separator: " "), fontSize: fontSize, textColor: textColor)
+        // The raster's math part: all of it, or what the annotation leaves.
+        let mathWidth = annotation.map { size.width - $0.gap - $0.size.width } ?? size.width
+        let mathY = annotation == nil ? 0 : (size.height - typeset.canvasHeight) / 2
+        let image = NSImage(size: size, flipped: false) { _ in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.saveGState()
+            context.translateBy(x: 0, y: mathY)
+            context.clip(to: CGRect(x: 0, y: 0, width: mathWidth, height: typeset.canvasHeight))
+            displayList.draw(context)
+            context.restoreGState()
+            if let annotation {
+                annotation.text.draw(at: NSPoint(x: mathWidth + annotation.gap, y: (size.height - annotation.size.height) / 2))
+            }
+            return true
+        }
+        // Never a cached bitmap at the first drawing's scale.
+        image.cacheMode = .never
+        return LatexRenderResult(image: image, size: size, baselineOffset: raster.baselineOffset)
+    }
+
     // MARK: - Private
+
+    /// The appearance formulas follow, their ink in it, and that ink in sRGB
+    /// (nil when it has no sRGB form, which leaves the render uncached).
+    private func ink(for theme: MarkdownEditorTheme) -> (NSAppearance, NSColor, NSColor?) {
+        let appearance = appearanceOverride ?? NSAppearance.currentDrawing()
+        let isDarkMode = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let requestedColor = isDarkMode ? theme.latexDarkModeText : theme.latexLightModeText
+        var resolvedColor: NSColor?
+        appearance.performAsCurrentDrawingAppearance {
+            resolvedColor = requestedColor.usingColorSpace(.sRGB)
+        }
+        return (appearance, resolvedColor ?? requestedColor, resolvedColor)
+    }
 
     private static func result(_ entry: CacheEntry) -> LatexRenderResult {
         LatexRenderResult(image: entry.image, size: entry.size, baselineOffset: entry.baselineOffset)
@@ -243,8 +297,20 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         cacheCost += cost
     }
 
-    private func renderLatex(_ latex: String, fontSize: CGFloat, textColor: NSColor) -> CacheEntry? {
-        guard let mathList = Self.parse(latex) else { return nil }
+    /// A formula laid out in a label `probeWidth` × `canvasHeight` points.
+    private struct TypesetFormula {
+        let label: MTMathUILabel
+        let annotations: [String]
+        let exactWidth: CGFloat
+        let probeWidth: CGFloat
+        let canvasHeight: CGFloat
+        let descent: CGFloat
+    }
+
+    private func layOut(_ latex: String, fontSize: CGFloat, textColor: NSColor) -> TypesetFormula? {
+        let nativeText = LatexNativeText.split(latex)
+        guard !nativeText.requiresSourceFallback else { return nil }
+        guard let mathList = Self.parse(nativeText.latex) else { return nil }
         Self.normalizeBinaryOperators(in: mathList)
 
         let mathLabel = MTMathUILabel()
@@ -255,7 +321,7 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         mathLabel.labelMode = .text
 
         // Latin Modern Math gives the cleanest LaTeX glyphs at typical sizes.
-        if let mathFont = MTFontManager().font(withName: "latinmodern-math", size: fontSize) {
+        if let mathFont = mathFont(size: fontSize) {
             mathLabel.font = mathFont
         }
 
@@ -279,8 +345,30 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         // Render with right slack, then crop to the measured ink edge.
         let rightSlack = ceil(fontSize)
         let probeWidth = ceil(exactWidth) + rightSlack
+        mathLabel.frame = CGRect(origin: .zero, size: CGSize(width: probeWidth, height: canvasHeight))
+        // Positions the display list in this frame.
+        mathLabel.needsLayout = true
+        mathLabel.layoutSubtreeIfNeeded()
+        return TypesetFormula(label: mathLabel, annotations: nativeText.annotations, exactWidth: exactWidth,
+                              probeWidth: probeWidth, canvasHeight: canvasHeight, descent: displayList.descent)
+    }
 
-        guard let probeRep = renderLabelToRep(mathLabel, size: CGSize(width: probeWidth, height: canvasHeight)),
+    /// Latin Modern Math, loaded once per size. A font manager of its own opens the font
+    /// file and parses its math table each time, which was 40% of typesetting a formula.
+    private func mathFont(size: CGFloat) -> MTFont? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let font = fonts[size] { return font }
+        fontLoads += 1
+        let font = MTFontManager().font(withName: "latinmodern-math", size: size)
+        fonts[size] = font
+        return font
+    }
+
+    private func renderLatex(_ latex: String, fontSize: CGFloat, textColor: NSColor) -> CacheEntry? {
+        guard let typeset = layOut(latex, fontSize: fontSize, textColor: textColor) else { return nil }
+        let (exactWidth, probeWidth, canvasHeight) = (typeset.exactWidth, typeset.probeWidth, typeset.canvasHeight)
+        guard let probeRep = renderLabelToRep(typeset.label, size: CGSize(width: probeWidth, height: canvasHeight)),
               let probeCG = probeRep.cgImage else {
             return nil
         }
@@ -303,11 +391,64 @@ public final class SwiftMathBridge: LatexRenderer, @unchecked Sendable {
         let image = NSImage(size: finalSize)
         image.addRepresentation(finalRep)
 
-        return CacheEntry(
+        let mathEntry = CacheEntry(
             image: image,
             size: finalSize,
-            baselineOffset: displayList.descent
+            baselineOffset: typeset.descent
         )
+        guard !typeset.annotations.isEmpty else { return mathEntry }
+        return appendNativeText(
+            typeset.annotations.joined(separator: " "),
+            to: mathEntry,
+            fontSize: fontSize,
+            textColor: textColor
+        )
+    }
+
+    /// Native text set beside a formula: the text, its size, and the gap before it.
+    private static func annotation(_ text: String, fontSize: CGFloat, textColor: NSColor)
+        -> (text: NSAttributedString, size: CGSize, gap: CGFloat) {
+        let annotation = NSAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: max(11, fontSize * 0.82)),
+                .foregroundColor: textColor
+            ]
+        )
+        let measured = annotation.boundingRect(
+            with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        ).integral.size
+        return (annotation, measured, ceil(fontSize * 0.4))
+    }
+
+    private func appendNativeText(
+        _ text: String,
+        to math: CacheEntry,
+        fontSize: CGFloat,
+        textColor: NSColor
+    ) -> CacheEntry {
+        let (annotation, measured, gap) = Self.annotation(text, fontSize: fontSize, textColor: textColor)
+        let size = CGSize(
+            width: math.size.width + gap + measured.width,
+            height: max(math.size.height, measured.height)
+        )
+        let image = NSImage(size: size)
+        image.lockFocus()
+        math.image.draw(
+            in: NSRect(
+                x: 0,
+                y: (size.height - math.size.height) / 2,
+                width: math.size.width,
+                height: math.size.height
+            )
+        )
+        annotation.draw(at: NSPoint(
+            x: math.size.width + gap,
+            y: (size.height - measured.height) / 2
+        ))
+        image.unlockFocus()
+        return CacheEntry(image: image, size: size, baselineOffset: math.baselineOffset)
     }
 
     /// The formula as SwiftMath parses it, after the compatibility rewrite and

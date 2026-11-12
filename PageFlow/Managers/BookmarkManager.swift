@@ -28,7 +28,8 @@ final class BookmarkManager {
 
     private weak var pdfManager: PDFManager?
     private var undoManagerProvider: (() -> UndoManager?)?
-    private let defaults = UserDefaults.standard
+    /// Internal so a test can check where this writes without writing there.
+    let defaults = AppDefaults.store
     private let keyPrefix = "bookmarks:"
 
     // MARK: - Computed Properties

@@ -60,7 +60,7 @@ protocol TabDocument: AnyObject {
     var canSave: Bool { get }
 
     /// Whether Save As… (⌘⇧S) applies. PDF: a document is open. Markdown: always —
-    /// even an untitled buffer can be written to a new file.
+    /// even an untitled buffer can be written to a new file. EPUB: the book is ready.
     var canSaveAs: Bool { get }
 
     /// Whether this tab has unsaved changes.
@@ -96,6 +96,11 @@ protocol TabDocument: AnyObject {
     func finishPendingWritesInBackground() async
     var hasPendingWrites: Bool { get }
 
+    /// True only for this backend's live editable native annotation responder.
+    /// Query the claim target window's current responder immediately before an
+    /// automatic claim. Draft existence and foreign fields do not confer ownership.
+    func ownsAnnotationResponder(_ responder: NSResponder?) -> Bool
+
     // MARK: Lifecycle
 
     /// Ordered teardown on tab close (not on a window move — that transfers the
@@ -125,6 +130,7 @@ extension TabContent {
         switch self {
         case .pdf(let content): return content
         case .markdown(let content): return content
+        case .epub(let content): return content
         }
     }
 }

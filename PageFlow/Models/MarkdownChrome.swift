@@ -23,9 +23,10 @@ import Foundation
 /// branch on a tiny `Equatable`/`Sendable` value without reaching the managers.
 /// Exhaustive switches over this — never a default — so a new content type forces
 /// every chrome site to choose its icon / toolbar set / sidebar.
-enum ContentKind: Equatable, Sendable {
+enum ContentKind: CaseIterable, Equatable, Sendable {
     case pdf
     case markdown
+    case epub
 
     /// The SF Symbol shown on the tab pill so mixed PDF + Markdown tabs are
     /// visually distinguishable.
@@ -33,6 +34,7 @@ enum ContentKind: Equatable, Sendable {
         switch self {
         case .pdf: return "doc.richtext"
         case .markdown: return "text.alignleft"
+        case .epub: return "book.closed"
         }
     }
 }
@@ -61,17 +63,28 @@ enum MarkdownFormatCommand: String, CaseIterable, Identifiable, Sendable {
     case codeBlock
     case divider
     case table
+    case alignLeft
+    case alignCenter
+    case alignRight
+    case alignJustify
+    case clearFormatting
+    case moveLineUp
+    case moveLineDown
 
     var id: String { rawValue }
 
     /// Commands that change whole lines (styles, lists, blocks), not text runs.
     var isBlock: Bool {
         switch self {
-        case .bold, .italic, .underline, .strikethrough, .code, .highlight, .link: return false
+        case .bold, .italic, .underline, .strikethrough, .code, .highlight, .link, .clearFormatting: return false
         case .text, .heading, .heading2, .heading3, .bulletedList, .numberedList, .checklist, .quote,
-             .codeBlock, .divider, .table: return true
+             .codeBlock, .divider, .table, .alignLeft, .alignCenter, .alignRight, .alignJustify,
+             .moveLineUp, .moveLineDown: return true
         }
     }
+
+    /// In a table cell these align the cell's column instead of its lines.
+    var alignsTableColumn: Bool { self == .alignLeft || self == .alignCenter || self == .alignRight }
 
     /// The window toolbar's set (the reference editor's host toolbar, doc 24 §6.12):
     /// Table and Checklist; the marks live on the selection bar.
@@ -101,8 +114,18 @@ enum MarkdownFormatCommand: String, CaseIterable, Identifiable, Sendable {
         case .codeBlock: return "Code Block"
         case .divider: return "Divider"
         case .table: return "Table"
+        case .alignLeft: return "Align Left"
+        case .alignCenter: return "Center"
+        case .alignRight: return "Align Right"
+        case .alignJustify: return "Justify"
+        case .clearFormatting: return "Clear Formatting"
+        case .moveLineUp: return "Move Line Up"
+        case .moveLineDown: return "Move Line Down"
         }
     }
+
+    /// Whether the command acts on a selected image (alignment, except justify).
+    var appliesToImage: Bool { self == .alignLeft || self == .alignCenter || self == .alignRight }
 
     /// SF Symbol for the toolbar button.
     var iconSystemName: String {
@@ -124,17 +147,22 @@ enum MarkdownFormatCommand: String, CaseIterable, Identifiable, Sendable {
         case .codeBlock: return "curlybraces.square"
         case .divider: return "minus"
         case .table: return "tablecells"
+        case .alignLeft: return "text.alignleft"
+        case .alignCenter: return "text.aligncenter"
+        case .alignRight: return "text.alignright"
+        case .alignJustify: return "text.justify"
+        case .clearFormatting: return "textformat"
+        case .moveLineUp: return "arrow.up"
+        case .moveLineDown: return "arrow.down"
         }
     }
 
-    /// The Format menu's key equivalent. `nil` for Code (none) and Underline,
-    /// whose ⌘U belongs to Annotate ▸ Underline and routes here on Markdown tabs.
-    /// Its Settings row (`ShortcutCatalog`): the Format menu and the focused editor share it.
-    var shortcutID: String { "format.\(rawValue)" }
+    /// Shared marks have one Settings row for all document formats.
+    var shortcutID: String { ShortcutCatalog.canonicalID(for: "format.\(rawValue)") }
 
     /// The key the Format menu shows and the editor answers, if any.
     var menuShortcut: ShortcutModel? {
-        let shortcut = ShortcutModel.current(for: shortcutID)
+        let shortcut = ShortcutModel.currentForMarkdown(for: shortcutID)
         return shortcut.isNone ? nil : shortcut
     }
 
@@ -142,45 +170,6 @@ enum MarkdownFormatCommand: String, CaseIterable, Identifiable, Sendable {
     var help: String {
         guard let label = menuShortcut?.displayString else { return title }
         return "\(title) (\(label))"
-    }
-}
-
-// MARK: - Markdown navigation trail
-
-/// The Markdown side of Go Back/Forward (⌘[ / ⌘]) — a pure two-stack trail of
-/// positions, the peer of the PDF view's page-navigation history. A jump
-/// (outline click, Go to Line) records the departure position; going back pushes
-/// the current position onto the forward stack, so the trail walks both ways.
-/// New jumps clear the forward stack (browser semantics). The Markdown tab stores
-/// text locations (ADR-0021), so zoom and reflow never strand an entry.
-struct MarkdownNavigationTrail<Position: Equatable & Sendable>: Equatable, Sendable {
-    /// Oldest-first; a runaway jump session prunes from the front.
-    private(set) var backStack: [Position] = []
-    private(set) var forwardStack: [Position] = []
-
-    private static var capacity: Int { 100 }
-
-    var canGoBack: Bool { !backStack.isEmpty }
-    var canGoForward: Bool { !forwardStack.isEmpty }
-
-    mutating func recordJump(from position: Position) {
-        backStack.append(position)
-        if backStack.count > Self.capacity {
-            backStack.removeFirst(backStack.count - Self.capacity)
-        }
-        forwardStack.removeAll()
-    }
-
-    mutating func goBack(from current: Position) -> Position? {
-        guard let target = backStack.popLast() else { return nil }
-        forwardStack.append(current)
-        return target
-    }
-
-    mutating func goForward(from current: Position) -> Position? {
-        guard let target = forwardStack.popLast() else { return nil }
-        backStack.append(current)
-        return target
     }
 }
 
@@ -195,6 +184,8 @@ struct MarkdownOutlineItem: Identifiable, Equatable, Sendable {
     let title: String
     let level: Int
     let lineIndex: Int
+    /// UTF-16 offset where the heading's line starts (for the current section).
+    var location = 0
 }
 
 /// Pure markdown heading extraction for the sidebar outline. Scans `#`..`######`
@@ -260,6 +251,18 @@ nonisolated enum MarkdownOutline {
         _ = visit(index, NSRange(location: start, length: length - start), nil)
     }
 
+    /// The heading the reader is in: the last one starting at or before
+    /// `offset` (nil above the first heading). Binary search, so it can run
+    /// on every scroll.
+    static func currentItemID(in items: [MarkdownOutlineItem], at offset: Int) -> Int? {
+        var low = 0, high = items.count
+        while low < high {
+            let mid = (low + high) / 2
+            if items[mid].location <= offset { low = mid + 1 } else { high = mid }
+        }
+        return low == 0 ? nil : items[low - 1].id
+    }
+
     /// Parses `text` into outline items in document order. A heading is a line
     /// whose first non-space run is 1–6 `#` followed by a space (or end of line),
     /// outside any fenced code block. Setext headings (=== / ---) are not parsed
@@ -307,7 +310,8 @@ nonisolated enum MarkdownOutline {
                     id: ordinal,
                     title: heading.title,
                     level: heading.level,
-                    lineIndex: lineIndex
+                    lineIndex: lineIndex,
+                    location: range.location
                 )
             )
             ordinal += 1
@@ -419,8 +423,9 @@ nonisolated struct WordCount: Equatable, Sendable {
 
     /// Compact label for the chip, e.g. "128 words · 742 chars".
     var label: String {
-        let w = words == 1 ? "word" : "words"
         let c = characters == 1 ? "char" : "chars"
-        return "\(words) \(w) · \(characters) \(c)"
+        return "\(wordsLabel) · \(characters) \(c)"
     }
+
+    var wordsLabel: String { "\(words) \(words == 1 ? "word" : "words")" }
 }

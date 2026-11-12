@@ -38,7 +38,15 @@ final class MarkdownContent {
     @ObservationIgnored let editorController: MarkdownEditorController
 
     /// The native editor survives window moves and retains native undo targets.
-    @ObservationIgnored var retainedEditorSurface: RetainedMarkdownEditorSurface?
+    /// A replaced surface brings a new clip view, so section tracking moves to it.
+    @ObservationIgnored var retainedEditorSurface: RetainedMarkdownEditorSurface? {
+        didSet {
+            guard retainedEditorSurface !== oldValue else { return }
+            let editor = retainedEditorSurface?.nativeView.markdownEditorKeyView as? NSTextView
+            documentManager.bindLineEndings(to: editor?.textStorage, undoManager: undoManager)
+            if sectionScrollObserver != nil { observeSectionScrolling() }
+        }
+    }
 
     /// Detach cold editors from layout work. Native undo actions target the text
     /// view, so retain that view while its document has undo or redo history.
@@ -58,6 +66,11 @@ final class MarkdownContent {
         undoManager.removeAllActions()
     }
 
+    /// The tab of a note still being read, shown as a note from its first frame.
+    /// It has no editor (nothing can be typed over what the read will bring) and
+    /// nothing to save; the read's result replaces it, or its failure removes the tab.
+    var isAwaitingOpen = false
+
     /// Stable per-tab id (= `TabSession.id`), used as the engine `documentId` and
     /// the scoped-bus `object` stamp so this tab's find posts reach only its editor.
     let documentId: String
@@ -71,30 +84,46 @@ final class MarkdownContent {
     /// This tab's Find backend (S7a). Lives here so it survives warm tab switches;
     /// the shared Find bar drives it (via `MarkdownTabView`) when this tab is active.
     /// Searches the live editor's exact native source, falling back to the
-    /// durable document when unmounted. Live preview conceals link suffixes
-    /// through attributes; native find and source ranges share UTF-16 coordinates.
+    /// durable document when unmounted. Find omits recognized emphasis delimiters
+    /// and maps visible matches back to canonical UTF-16 source coordinates.
     @ObservationIgnored lazy var searchManager: MarkdownSearchManager = {
         MarkdownSearchManager(
             bus: bus,
             documentId: documentId,
             textProvider: { [weak self] in
                 guard let self else { return "" }
-                return self.editorController.currentDisplayText ?? self.documentManager.text
+                return self.editorController.currentSearchText ?? self.documentManager.text
             },
-            editorController: editorController
+            editorController: editorController,
+            navigationContext: { [weak self] in self?.findNavigationContext() }
         )
     }()
 
     /// Test seam: the live editor's storage-form text (fork P1). Production reads
     /// the `editorController`; tests inject a stub since no coordinator is mounted
     /// headlessly, so the real `currentStorageText` always returns `nil`.
-    @ObservationIgnored var liveStorageText: () -> String?
+    @ObservationIgnored var liveStorageText: () throws -> String?
 
     /// Resolves `![alt](path)` images relative to this note's folder; one per
     /// note so decoded images (and misses) outlive restyles and warm switches.
     @ObservationIgnored private(set) lazy var imageProvider = DocumentImageProvider { [weak self] in
         MainActor.assumeIsolated { self?.documentManager.documentURL }
     }
+
+    /// Which of this note's `[[wiki-links]]` name no file, looked up in the
+    /// background so the editor can draw those dimmed.
+    @ObservationIgnored private(set) lazy var wikiLinkPresence = MarkdownWikiLinkPresence(
+        noteFolder: { [weak self] in
+            // Styling asks on the main thread; anywhere else, links stay undimmed.
+            guard Thread.isMainThread else { return nil }
+            return MainActor.assumeIsolated { self?.documentManager.documentURL?.deletingLastPathComponent() }
+        },
+        onChange: { [weak self] in MainActor.assumeIsolated { self?.wikiLinkRevision &+= 1 } }
+    )
+
+    /// Bumped when `wikiLinkPresence` learns a link's file appeared or went
+    /// missing; the tab view passes it on so the editor restyles.
+    var wikiLinkRevision = 0
 
     init(documentId: String, documentManager: MarkdownDocumentManager? = nil) {
         self.documentManager = documentManager ?? MarkdownDocumentManager()
@@ -103,7 +132,7 @@ final class MarkdownContent {
         // The commit writes the live storage into the binding AND updates the
         // engine's de-dupe guard, so the editor sees an echo of its own text,
         // not a foreign change to rebuild from (which relaid the whole note).
-        self.liveStorageText = { [weak controller] in controller?.commitPendingText() }
+        self.liveStorageText = { [weak controller] in try controller?.flushCommittedSource() }
         self.documentId = documentId
         self.bus = Self.makeBus(documentId: documentId)
         controller.onFoldingStateChange = { [weak self] in self?.foldingRevision &+= 1 }
@@ -136,9 +165,52 @@ final class MarkdownContent {
     }
 
     @ObservationIgnored private var shortcutObserver: NSObjectProtocol?
+    @ObservationIgnored private var sectionScrollObserver: NSObjectProtocol?
 
     deinit {
         if let shortcutObserver { NotificationCenter.default.removeObserver(shortcutObserver) }
+        if let sectionScrollObserver { NotificationCenter.default.removeObserver(sectionScrollObserver) }
+    }
+
+    // MARK: - Current section (the outline sidebar's highlight)
+
+    /// The outline heading the reader is in, tracked while the sidebar shows.
+    private(set) var currentOutlineItemID: Int?
+
+    /// Follows scrolling while the outline sidebar shows. It listens to the
+    /// editor's own clip view when there is one yet (otherwise to every clip
+    /// view, picking the editor's out), so other scrolling never wakes it.
+    func setTracksCurrentSection(_ tracks: Bool) {
+        if !tracks {
+            if let sectionScrollObserver { NotificationCenter.default.removeObserver(sectionScrollObserver) }
+            sectionScrollObserver = nil
+            return
+        }
+        if sectionScrollObserver == nil { observeSectionScrolling() }
+        refreshCurrentOutlineItem()
+    }
+
+    /// (Re)registers for the current editor's clip view: a surface made after
+    /// tracking began has a clip view the earlier registration never named.
+    private func observeSectionScrolling() {
+        if let sectionScrollObserver { NotificationCenter.default.removeObserver(sectionScrollObserver) }
+        sectionScrollObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: retainedEditorSurface?.nativeView.contentView, queue: .main
+        ) { [weak self] note in
+            let clip = note.object as? NSClipView
+            MainActor.assumeIsolated {
+                guard let self, let clip, clip === self.retainedEditorSurface?.nativeView.contentView else { return }
+                self.refreshCurrentOutlineItem()
+            }
+        }
+    }
+
+    /// Re-reads the reader's line; keeps the last answer while nothing is laid out.
+    func refreshCurrentOutlineItem() {
+        guard let offset = editorController.readingLineOffset else { return }
+        let id = MarkdownOutline.currentItemID(in: documentManager.outline, at: offset)
+        if id != currentOutlineItemID { currentOutlineItemID = id }
     }
 
     /// The formatting at the editor's selection, shared by the selection bar,
@@ -149,13 +221,14 @@ final class MarkdownContent {
     /// Whether `command` can apply at the selection. A table cell takes no
     /// block command (a list, heading or table can't live in a cell), and code
     /// takes none but leaving the code block; their buttons and menu items show
-    /// disabled rather than doing nothing.
+    /// disabled rather than doing nothing. In a cell, Align Left, Center and
+    /// Right align the cell's column (GFM has no justified column).
     func isFormatEnabled(_ command: MarkdownFormatCommand) -> Bool {
-        if formatState.inTableCell { return !command.isBlock }
+        if formatState.inTableCell { return !command.isBlock || command.alignsTableColumn }
         switch formatState.context {
-        case .cellText, .cellRange: return !command.isBlock
-        case .codeBlock: return !command.isBlock || command == .codeBlock
-        case .image: return false
+        case .cellText, .cellRange: return !command.isBlock || command.alignsTableColumn
+        case .codeBlock: return (!command.isBlock && command != .clearFormatting) || command == .codeBlock
+        case .image: return command.appliesToImage
         case .none, .text: return true
         }
     }
@@ -178,7 +251,8 @@ final class MarkdownContent {
         case .bulletedList: return state.listChecked == .bulleted
         case .numberedList: return state.listChecked == .numbered
         case .checklist: return state.listChecked == .checklist
-        case .quote, .codeBlock, .divider, .table: return false
+        case .quote, .codeBlock, .divider, .table, .alignLeft, .alignCenter, .alignRight, .alignJustify,
+             .clearFormatting, .moveLineUp, .moveLineDown: return false
         }
     }
 
@@ -218,11 +292,25 @@ final class MarkdownContent {
     @discardableResult
     func adoptPastedImages(savedAt url: URL, store: PastedImageStore = .shared, whileApproved: () -> Bool = { true }) -> Bool {
         reconcileLiveText()
+        guard documentManager.sourceExportFailure == nil else { return false }
         let source = documentManager.text
         let edits = store.adoptFallbackImages(in: source, savedAt: url, whileApproved: {
-            whileApproved() && (self.editorController.currentStorageText ?? self.documentManager.text).hasSameSource(as: source)
+            guard whileApproved() else { return false }
+            do { return try (self.editorController.exportSource() ?? self.documentManager.text).hasSameSource(as: source) }
+            catch { self.documentManager.sourceExportFailure = error.localizedDescription; return false }
         })
         guard let first = edits.first, let last = edits.last else { return false }
+        do {
+            if let admitted = try editorController.adoptImageLinks(ranges: edits.map(\.range),
+                    replacements: edits.map(\.link), expectedSource: source) {
+                guard admitted else { return false }
+                reconcileLiveText()
+                return documentManager.sourceExportFailure == nil
+            }
+        } catch {
+            documentManager.sourceExportFailure = error.localizedDescription
+            return false
+        }
         let ns = source as NSString
         let span = NSRange(location: first.range.location, length: NSMaxRange(last.range) - first.range.location)
         var rebuilt = ""
@@ -242,16 +330,20 @@ final class MarkdownContent {
     /// A `#heading` link: the first heading whose title matches by slug
     /// (`#Some Heading`, `#some-heading` and `#Some%20Heading` all match).
     func scrollToHeading(_ fragment: String) {
-        let wanted = Self.headingSlug(fragment.removingPercentEncoding ?? fragment)
-        guard let item = documentManager.outline.first(where: { Self.headingSlug($0.title) == wanted }) else { return }
+        let outline = documentManager.outline
+        guard let item = HeadingSlug.firstIndex(of: fragment, in: outline.map(\.title)).map({ outline[$0] }) else { return }
         scrollToOutlineItem(item)
     }
 
-    /// Lowercase words joined by hyphens, punctuation dropped (GitHub's anchors).
-    static func headingSlug(_ title: String) -> String {
-        title.lowercased()
-            .split { !($0.isLetter || $0.isNumber || $0 == "_") }
-            .joined(separator: "-")
+    /// A heading another note links to: scrolled to when the editor is on
+    /// screen, otherwise where the editor opens.
+    func revealHeading(_ fragment: String) {
+        guard editorController.readingPosition == nil else { return scrollToHeading(fragment) }
+        let outline = documentManager.outline
+        guard let item = HeadingSlug.firstIndex(of: fragment, in: outline.map(\.title)).map({ outline[$0] }),
+              let location = MarkdownOutline.lineStartLocation(ofLine: item.lineIndex, in: documentManager.text) else { return }
+        pendingReadingPosition = ReadingPositionRequest(
+            ReadingPosition(anchorOffset: location, offsetInViewport: 0, magnification: zoomScale))
     }
 
     /// A clicked local link's file: a `file:` URL as given, a path from the
@@ -271,23 +363,25 @@ final class MarkdownContent {
 
     /// Jump to a 0-based source line (outline click, Go to Line dialog).
     func scrollToLine(_ lineIndex: Int) {
-        let text = editorController.currentDisplayText ?? documentManager.text
-        guard let location = MarkdownOutline.lineStartLocation(ofLine: lineIndex, in: text) else { return }
-        if let departure = editorController.readingPosition {
-            navigationTrail.recordJump(from: departure)
-        }
-        bus.postFindScroll(
-            documentId: documentId,
-            range: NSRange(location: location, length: 0),
-            currentIndex: 0,
-            allRanges: []
-        )
+        do {
+            let source = try editorController.exportSource() ?? documentManager.text
+            guard let location = MarkdownOutline.lineStartLocation(ofLine: lineIndex, in: source),
+                  let navigation = findNavigationContext() else { return }
+            let sourceRange = NSRange(location: location, length: 0)
+            let visible = try editorController.visibleRange(forSourceRange: sourceRange) ?? sourceRange
+            bus.postFindScroll(documentId: documentId, range: visible, currentIndex: 0,
+                allRanges: [], navigation: navigation,
+                expectedSource: editorController.currentDisplayText ?? source)
+        } catch { documentManager.sourceExportFailure = error.localizedDescription }
     }
 
     /// Number of source lines (1-based upper bound for the Go to Line dialog).
     var lineCount: Int {
-        let text = editorController.currentDisplayText ?? documentManager.text
-        return MarkdownOutline.lineCount(in: text)
+        do { return MarkdownOutline.lineCount(in: try editorController.exportSource() ?? documentManager.text) }
+        catch {
+            documentManager.sourceExportFailure = error.localizedDescription
+            return MarkdownOutline.lineCount(in: documentManager.text)
+        }
     }
 
     // MARK: - Reading position (D7 — the PDF DocumentStateStore peer)
@@ -304,7 +398,12 @@ final class MarkdownContent {
     func restoreReadingPositionIfAvailable() {
         guard let url = documentManager.documentURL,
               let state = DocumentStateStore.shared.state(for: url) else { return }
-        if let scale = state.markdownScaleFactor { zoomScale = Self.clampZoom(scale) }
+        isWidthFitted = state.markdownIsWidthFitted == true
+        zoomRequest = isWidthFitted ? MarkdownZoomRequest(.fitWidth) : nil
+        if let scale = state.markdownScaleFactor, scale.isFinite, scale > 0 {
+            // A saved fitted percentage is provisional until the destination measures its row.
+            zoomScale = isWidthFitted ? min(scale, DesignTokens.markdownMaxZoom) : ZoomRange.markdown.clamp(scale)
+        }
         // Table widths before the first styling pass, so tables open at the widths left.
         let widths = state.markdownTableColumnWidths?.mapValues { $0.map { $0.map { CGFloat($0) } } } ?? [:]
         if widths != editorController.tableColumnWidths {
@@ -324,8 +423,19 @@ final class MarkdownContent {
     /// (eviction, tear-off), so the rebuilt editor lands where the reader is —
     /// not where the document was loaded. A no-op without a mounted editor.
     func armReadingPositionRestore() {
-        guard let position = editorController.readingPosition else { return }
+        guard let position = editorController.readingPosition ?? positionWhenHidden else { return }
+        // Armed once from a live editor, later arms with none to read keep this place.
+        positionWhenHidden = position
         pendingReadingPosition = ReadingPositionRequest(position)
+    }
+
+    /// Where the reader was as the tab went out of sight. A hidden editor has no
+    /// viewport to read, and it can still be evicted or moved to another window.
+    @ObservationIgnored private var positionWhenHidden: ReadingPosition?
+
+    /// The tab is going out of sight, its editor not hidden yet.
+    func noteGoingOutOfSight() {
+        positionWhenHidden = editorController.readingPosition ?? positionWhenHidden
     }
 
     /// Persists the current reading position AND the zoom in one record. The
@@ -339,7 +449,7 @@ final class MarkdownContent {
         DocumentStateStore.shared.save(
             .markdown(anchorOffset: position?.anchorOffset ?? existing?.markdownAnchorOffset,
                       offsetInViewport: position?.offsetInViewport ?? existing?.markdownOffsetInViewport,
-                      scaleFactor: zoomScale, tableColumnWidths: existing?.markdownTableColumnWidths),
+                      scaleFactor: zoomScale, isWidthFitted: isWidthFitted, tableColumnWidths: existing?.markdownTableColumnWidths),
             for: url
         )
     }
@@ -366,6 +476,12 @@ final class MarkdownContent {
         }
     }
 
+    /// Comments show, in the margin or the list (View ▸ Hide Comments).
+    var isShowingComments: Bool { commentsMode != .hidden }
+
+    /// The comments list (the panel) is open: the button shows it as on.
+    var isShowingCommentsList: Bool { commentsMode == .list }
+
     /// The open count the button shows, only while comments are hidden.
     var hiddenCommentBadge: Int? { commentsMode == .hidden && openCommentCount > 0 ? openCommentCount : nil }
 
@@ -391,7 +507,12 @@ final class MarkdownContent {
         commentsMode = editorController.commentsMode
     }
 
-    /// ⌥⇧C: hide comments, or show them again.
+    /// Tools ▸ Add Comment (⌥⌘M), the editor's own Comment command.
+    func addComment() {
+        editorController.performCommentCommand()
+    }
+
+    /// View ▸ Show/Hide Comments (⌥⌘E): hide comments, or show them again.
     func toggleCommentsHidden() {
         editorController.commentsMode = commentsMode == .hidden ? .margin : .hidden
         commentsMode = editorController.commentsMode
@@ -417,9 +538,9 @@ final class MarkdownContent {
 
     /// Before the note is written: the comments' anchors move to the text being
     /// saved.
-    private func syncCommentBlock() {
+    private func syncCommentBlock() throws {
         guard commentsLoaded else { return }
-        let threads = editorController.commentThreadsForSaving(text: documentManager.text)
+        let threads = try editorController.committedCommentThreadsForSaving(text: documentManager.text)
         documentManager.setCommentBlock(Self.commentBlock(for: threads, keeping: documentManager.commentBlock))
     }
 
@@ -442,7 +563,7 @@ final class MarkdownContent {
         let existing = DocumentStateStore.shared.state(for: url)
         DocumentStateStore.shared.save(
             .markdown(anchorOffset: existing?.markdownAnchorOffset, offsetInViewport: existing?.markdownOffsetInViewport,
-                      scaleFactor: zoomScale,
+                      scaleFactor: zoomScale, isWidthFitted: isWidthFitted,
                       tableColumnWidths: widths.mapValues { $0.map { $0.map { Double($0) } } }),
             for: url
         )
@@ -457,37 +578,55 @@ final class MarkdownContent {
     /// change.
     var zoomScale: CGFloat = 1.0
 
-    private static func clampZoom(_ v: CGFloat) -> CGFloat {
-        min(max(v, DesignTokens.markdownMinZoom), DesignTokens.markdownMaxZoom)
-    }
+    /// Persistent mode and one-shot commands are independent of the measured percentage.
+    private(set) var isWidthFitted = false
+    private(set) var zoomRequest: MarkdownZoomRequest?
 
-    /// A user gesture (pinch end / Ctrl-scroll) changed the magnification — adopt
-    /// and persist it. Guarded so re-projecting the same value is a no-op.
+    /// User magnification always exits Fit, even when its scale did not change.
     func handleMagnificationChanged(_ value: CGFloat) { setZoom(value) }
 
-    /// ⌘+ / ⌘− / ⌘0 (routed from the View menu). Multiplicative steps, PDF-style.
-    func zoomIn() { setZoom(zoomScale * DesignTokens.markdownZoomStepFactor) }
-    func zoomOut() { setZoom(zoomScale / DesignTokens.markdownZoomStepFactor) }
-    func resetZoom() { setZoom(1.0) }
+    /// Native Fit results may fall below the ordinary manual minimum.
+    func handleFittedMagnificationChanged(_ value: CGFloat) {
+        guard value.isFinite, value > 0 else { return }
+        isWidthFitted = true
+        zoomRequest = nil
+        zoomScale = min(value, DesignTokens.markdownMaxZoom)
+        scheduleZoomPersistence()
+    }
 
-    /// Coalesces the per-gesture-tick zoom persist: `DocumentStateStore.save`
-    /// JSON-encodes the whole store into UserDefaults, and a Ctrl-scroll burst
-    /// fires setZoom dozens of times a second — writing each tick contributed
-    /// visible zoom lag. Trailing-debounced; lifecycle boundaries flush the
-    /// settled value anyway via `persistReadingPosition`.
+    func zoomToFit() {
+        isWidthFitted = true
+        zoomRequest = MarkdownZoomRequest(.fitWidth)
+        scheduleZoomPersistence()
+    }
+
+    /// ⌘+ / ⌘− leave Fit even if the manual limit keeps the target unchanged.
+    func zoomIn() { setZoom(ZoomRange.markdown.steppedIn(from: zoomScale)) }
+    func zoomOut() { setZoom(ZoomRange.markdown.steppedOut(from: zoomScale)) }
+    func resetZoom() {
+        setZoom(1.0)
+        zoomRequest = MarkdownZoomRequest(.actualSize)
+    }
+
+    var canZoomIn: Bool { ZoomRange.markdown.canStepIn(from: zoomScale) }
+    var canZoomOut: Bool { ZoomRange.markdown.canStepOut(from: zoomScale) }
+    var canResetZoom: Bool { isWidthFitted || !ZoomRange.markdown.isActualSize(zoomScale) }
+
     @ObservationIgnored private var zoomPersistWorkItem: DispatchWorkItem?
 
     private func setZoom(_ target: CGFloat) {
-        let clamped = Self.clampZoom(target)
-        guard abs(clamped - zoomScale) > 0.0001 else { return }
-        #if DEBUG
-        NSLog("[ZOOMCMD] %.3f → %.3f", zoomScale, clamped)
-        #endif
+        guard target.isFinite else { return }
+        let clamped = ZoomRange.markdown.clamp(target)
+        let changed = isWidthFitted || zoomRequest != nil || abs(clamped - zoomScale) > 0.0001
+        isWidthFitted = false
+        zoomRequest = nil
         zoomScale = clamped
-        // Persist the zoom WITHOUT the live scroll offset: a centered zoom shifts
-        // the clip origin only AFTER the wrapper projects (next update), so the
-        // live offset here is stale. Keep the last-saved offset; the normal
-        // reading-position persist (scroll / blur / quit) captures the settled one.
+        if changed { scheduleZoomPersistence() }
+    }
+
+    /// Keep the last-saved anchor: the native centered zoom has not settled when
+    /// a command changes scale. Scroll/blur/quit later captures its live location.
+    private func scheduleZoomPersistence() {
         zoomPersistWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self, let url = self.documentManager.documentURL else { return }
@@ -495,7 +634,8 @@ final class MarkdownContent {
             DocumentStateStore.shared.save(
                 .markdown(anchorOffset: existing?.markdownAnchorOffset,
                           offsetInViewport: existing?.markdownOffsetInViewport,
-                          scaleFactor: self.zoomScale, tableColumnWidths: existing?.markdownTableColumnWidths),
+                          scaleFactor: self.zoomScale, isWidthFitted: self.isWidthFitted,
+                          tableColumnWidths: existing?.markdownTableColumnWidths),
                 for: url
             )
         }
@@ -507,10 +647,20 @@ final class MarkdownContent {
 
     /// Scroll-jump history. A stored property on @Observable content, so the
     /// Go menu's canGoBack/canGoForward gates re-evaluate on every mutation.
-    private(set) var navigationTrail = MarkdownNavigationTrail<ReadingPosition>()
+    private(set) var navigationTrail = NavigationTrail<ReadingPosition>()
 
     var canGoBack: Bool { navigationTrail.canGoBack }
     var canGoForward: Bool { navigationTrail.canGoForward }
+
+    private func findNavigationContext() -> MarkdownFindNavigation? {
+        guard let surface = retainedEditorSurface, let presentation = surface.activePresentation else { return nil }
+        return MarkdownFindNavigation(whileValid: { [weak surface] in
+            surface?.ownsPresentation(presentation) == true
+        }, didNavigate: { [weak self, weak surface] departure in
+            guard let self, surface?.ownsPresentation(presentation) == true else { return }
+            self.navigationTrail.recordJump(from: departure)
+        })
+    }
 
     func navigateToSection(_ target: MarkdownSectionTarget, whileValid: @escaping () -> Bool) {
         guard let surface = retainedEditorSurface, let presentation = surface.activePresentation else { return }
@@ -625,10 +775,24 @@ final class MarkdownContent {
         // ignores); this assignment is for the test seam and the no-editor case.
         // Skipped when nothing changed: assigning the same string still fires
         // @Observable and re-derives the outline + word count.
-        if let latest = liveStorageText(), latest != documentManager.text {
-            documentManager.text = latest
+        do {
+            if let latest = try liveStorageText(), !latest.hasSameSource(as: documentManager.text) {
+                documentManager.text = latest
+            }
+            try syncCommentBlock()
+            if let receipt = try editorController.exportSourceReceipt() {
+                try documentManager.prepareSemanticBytes(originSource: receipt.originSource, body: receipt.source,
+                    pieces: receipt.pieces.map { piece in
+                        switch piece {
+                        case .original(let range): return .original(range)
+                        case .generated(let text): return .generated(text)
+                        }
+                    })
+            }
+            documentManager.sourceExportFailure = nil
+        } catch {
+            documentManager.sourceExportFailure = error.localizedDescription
         }
-        syncCommentBlock()
     }
 
     /// Ordered teardown when the tab is closed (peer of `PDFContent.cleanup`).
@@ -669,6 +833,10 @@ final class MarkdownContent {
 /// (formerly the `DirtyDoc.markdown` arm — reconcile the live editor first so the
 /// trailing keystroke isn't dropped, then surface the one-time UTF-8 note).
 extension MarkdownContent: TabDocument {
+    func ownsAnnotationResponder(_ responder: NSResponder?) -> Bool {
+        editorController.ownsAnnotationResponder(responder)
+    }
+
     var restoreBookmark: Data? { documentManager.securityScopedBookmark }
 
     var hasContent: Bool {
@@ -681,10 +849,10 @@ extension MarkdownContent: TabDocument {
 
     /// Native edits publish to the model later. Keep Save available so its action
     /// can reconcile the live source before checking whether a write is needed.
-    var canSave: Bool { true }
+    var canSave: Bool { !isAwaitingOpen }
 
     /// Save As… always applies — even an untitled buffer can be written to a new file.
-    var canSaveAs: Bool { true }
+    var canSaveAs: Bool { !isAwaitingOpen }
 
     var isDirty: Bool { documentManager.isDirty }
 
@@ -730,21 +898,33 @@ extension MarkdownContent: TabDocument {
 
 // MARK: - Find-scroll post helper (the one userInfo shape the engine reads)
 
+/// Request-scoped history receipt; the engine accepts it only at a changed landing.
+struct MarkdownFindNavigation {
+    let whileValid: () -> Bool
+    let didNavigate: (ReadingPosition) -> Void
+}
+
 extension MarkdownEditorBus {
     /// Posts the scoped reveal+scroll request in the ONE userInfo shape
     /// `handleFindScrollToRange` reads. Empty `allRanges` = navigate-only
     /// (outline clicks): reveal + scroll without painting highlights — an
     /// engine contract (PAGEFLOW-FORK.md). A no-op when the bus has no leg.
-    func postFindScroll(documentId: String, range: NSRange, currentIndex: Int, allRanges: [NSRange]) {
+    func postFindScroll(documentId: String, range: NSRange, currentIndex: Int, allRanges: [NSRange],
+                        allSourceSegments: [[NSRange]]? = nil, paintsOnly: Bool = false,
+                        navigation: MarkdownFindNavigation? = nil, expectedSource: String? = nil) {
         guard let name = findScrollToRange else { return }
+        var info: [AnyHashable: Any] = ["range": range, "currentIndex": currentIndex, "allRanges": allRanges,
+                                        "paintsOnly": paintsOnly]
+        if let allSourceSegments { info["allSourceSegments"] = allSourceSegments }
+        if let expectedSource { info["expectedSource"] = expectedSource }
+        if !paintsOnly, let navigation {
+            info["whileValid"] = navigation.whileValid
+            info["didNavigate"] = navigation.didNavigate
+        }
         NotificationCenter.default.post(
             name: name,
             object: documentId,
-            userInfo: [
-                "range": range,
-                "currentIndex": currentIndex,
-                "allRanges": allRanges
-            ]
+            userInfo: info
         )
     }
 }
@@ -770,6 +950,13 @@ private extension MarkdownFormatCommand {
         case .codeBlock: return .codeBlock
         case .divider: return .divider
         case .table: return .table
+        case .alignLeft: return .align(.left)
+        case .alignCenter: return .align(.center)
+        case .alignRight: return .align(.right)
+        case .alignJustify: return .align(.justify)
+        case .clearFormatting: return .clearFormatting
+        case .moveLineUp: return .moveLines(up: true)
+        case .moveLineDown: return .moveLines(up: false)
         }
     }
 }

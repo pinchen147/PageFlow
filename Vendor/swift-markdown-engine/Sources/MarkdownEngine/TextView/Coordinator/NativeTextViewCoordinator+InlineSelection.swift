@@ -18,12 +18,18 @@ extension NativeTextViewCoordinator {
     func refreshActiveLinkCaretRect() {
         guard isWikiLinkActive || isImageEmbedActive, let tv = textView else { return }
         guard let rect = inlinePreviewRect(in: tv) else { return }
-        DispatchQueue.main.async { [weak self] in
-            self?.onCaretRectChange?(rect)
+        // Same rule as the selection path: a queued rect belongs to this
+        // document and never lands mid-composition.
+        let generation = documentGeneration
+        DispatchQueue.main.async { [weak self, weak tv] in
+            guard let self, let tv, generation == self.documentGeneration,
+                  !self.isComposing(in: tv) else { return }
+            self.onCaretRectChange?(rect)
         }
     }
 
     func inlinePreviewRect(in tv: NSTextView) -> CGRect? {
+        guard !isComposing(in: tv) else { return nil }
         let nsText = tv.string as NSString
         let parsed = parsedDocument(for: tv.string)
         let selectionLocation = tv.selectedRange().location

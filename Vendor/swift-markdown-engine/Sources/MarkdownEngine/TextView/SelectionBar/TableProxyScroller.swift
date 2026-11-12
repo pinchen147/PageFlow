@@ -8,6 +8,7 @@ import AppKit
 /// only a change of 1 pt or more.
 final class TableProxyScroller {
     private weak var coordinator: NativeTextViewCoordinator?
+    private weak var semanticTextView: NativeSemanticTextView?
     private weak var scrollView: NSScrollView?
     let scroller = SubtleScroller()
     /// The table the docked scroller drives now.
@@ -19,6 +20,17 @@ final class TableProxyScroller {
     init(coordinator: NativeTextViewCoordinator, scrollView: NSScrollView) {
         self.coordinator = coordinator
         self.scrollView = scrollView
+        install()
+    }
+
+    init(textView: NativeSemanticTextView, scrollView: NSScrollView) {
+        semanticTextView = textView
+        self.scrollView = scrollView
+        install()
+    }
+
+    private func install() {
+        guard let scrollView else { return }
         scroller.scrollerStyle = .legacy
         scroller.isEnabled = true
         scroller.isHidden = true
@@ -41,10 +53,13 @@ final class TableProxyScroller {
 
     /// Picks the table, places the docked scroller and copies the table's offset.
     func update() {
-        guard !syncing, let scrollView, let main = coordinator?.textView as? NativeTextView, main.window != nil else { return }
+        guard !syncing, let scrollView,
+              let main: NSTextView = coordinator?.textView ?? semanticTextView, main.window != nil else { return }
         let visible = main.visibleRect
         let bottom = visible.maxY
-        let candidates = main.wideTableOverlays.values.compactMap { overlay -> (WideTableOverlay, NSRect)? in
+        let overlays = (main as? NativeTextView).map { Array($0.wideTableOverlays.values) }
+            ?? MainActor.assumeIsolated { semanticTextView?.semanticTableSessions().compactMap(\.wideOverlay) ?? [] }
+        let candidates = overlays.compactMap { overlay -> (WideTableOverlay, NSRect)? in
             guard !overlay.isHidden, let superview = overlay.superview, let document = overlay.documentView else { return nil }
             let overflow = document.frame.width - overlay.contentView.bounds.width
             guard overflow > 1 else { return nil }

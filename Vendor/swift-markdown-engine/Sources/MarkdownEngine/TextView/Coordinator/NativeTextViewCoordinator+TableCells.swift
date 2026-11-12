@@ -8,7 +8,8 @@ extension NativeTextViewCoordinator {
     /// written this way (it holds the table's image anchor), so the caller uses
     /// the ordinary transaction.
     func replaceHiddenTableSource(
-        _ range: NSRange, with replacement: String, actionName: String, registersUndo: Bool = true
+        _ range: NSRange, with replacement: String, actionName: String, registersUndo: Bool = true,
+        tableSelection: MarkdownTableEditingSession.FormattingSelection? = nil
     ) -> Bool? {
         guard let tv = textView, let attributes = hiddenTableSourceAttributes(replacing: range, with: replacement) else {
             return nil
@@ -17,7 +18,7 @@ extension NativeTextViewCoordinator {
         defer { isDeferringTableRender = false }
         return replaceSourceRanges([range], with: replacement, expectedSource: tv.string, actionName: actionName,
                                    reflowsParagraphChain: false, insertedAttributes: attributes,
-                                   registersUndo: registersUndo)
+                                   registersUndo: registersUndo, tableSelection: tableSelection)
     }
 
     /// Re-render the table at `range` now, pinned to the viewport: a cell edit
