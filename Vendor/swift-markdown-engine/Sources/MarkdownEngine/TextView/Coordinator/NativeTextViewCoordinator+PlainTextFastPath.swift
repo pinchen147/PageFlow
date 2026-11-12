@@ -56,6 +56,7 @@ extension NativeTextViewCoordinator {
             )
         }
         recordPlainInsertion(change)
+        if isPlainInsertion { retainListInsertion(change) }
 
         activeTokenIndices = activePlainInsertion ? preEditActiveTokenIndices : []
         isImageEmbedActive = false
@@ -152,7 +153,7 @@ extension NativeTextViewCoordinator {
         return parsedDocument(from: rebased)
     }
 
-    private func isFastPlainInsertion(_ change: TextChange, in text: NSString) -> Bool {
+    func isFastPlainInsertion(_ change: TextChange, in text: NSString) -> Bool {
         guard change.oldRange.length == 0,
               change.delta > 0,
               !change.replacement.isEmpty,
@@ -180,10 +181,10 @@ extension NativeTextViewCoordinator {
         return false
     }
 
-    /// The characters Markdown syntax is made of (`# * _ ` [ ] ( ) ! $ ~ | > \ <`).
+    /// The characters Markdown syntax is made of (`# * _ ` [ ] ( ) ! $ ~ | > \ < =`).
     static func isInlineSyntax(_ unit: UInt16) -> Bool {
         switch unit {
-        case 0x23, 0x2A, 0x5F, 0x60, 0x5B, 0x5D, 0x28, 0x29, 0x21, 0x24, 0x7E, 0x7C, 0x3E, 0x5C, 0x3C:
+        case 0x23, 0x2A, 0x5F, 0x60, 0x5B, 0x5D, 0x28, 0x29, 0x21, 0x24, 0x7E, 0x7C, 0x3E, 0x5C, 0x3C, 0x3D:
             return true
         default:
             return false

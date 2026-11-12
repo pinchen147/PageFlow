@@ -9,6 +9,17 @@
 import Foundation
 
 extension URL {
+    /// The file is on a volume that isn't mounted now: an unplugged drive or a
+    /// share. Its absence says nothing about the file, unlike one missing from a
+    /// mounted volume, which is really gone. `mountedVolumeURLs` answers in the sandbox.
+    nonisolated var pageFlowVolumeIsOffline: Bool {
+        let components = standardizedFileURL.pathComponents
+        guard components.count > 2, components[1] == "Volumes" else { return false }
+        let root = "/Volumes/\(components[2])"
+        let mounted = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: []) ?? []
+        return !mounted.contains { $0.path == root } && !FileManager.default.fileExists(atPath: root)
+    }
+
     /// The file's bytes live only with its cloud provider (iCloud Drive, a File
     /// Provider). Reading it downloads first, which can take a long time
     /// (TN3150); `stat` reports the flag without starting that download.

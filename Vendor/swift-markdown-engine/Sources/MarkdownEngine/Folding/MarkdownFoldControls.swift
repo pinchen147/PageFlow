@@ -131,7 +131,7 @@ final class MarkdownFoldControls {
 }
 
 /// A stable native button; hover changes ink, never geometry or document metrics.
-private final class FoldButton: NSButton {
+final class FoldButton: NSButton {
     let summary: Bool
     let actionHandler: () -> Void
     private var closed = false

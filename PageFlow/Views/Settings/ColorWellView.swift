@@ -10,9 +10,12 @@ import AppKit
 
 struct ColorWellView: NSViewRepresentable {
     @Binding var color: NSColor
+    var style: NSColorWell.Style = .default
+    var isCircular = false
 
     func makeNSView(context: Context) -> NSColorWell {
-        let well = NSColorWell()
+        let well = isCircular ? CircularColorWell() : NSColorWell()
+        well.colorWellStyle = style
         well.color = color
         well.supportsAlpha = true
         well.target = context.coordinator
@@ -25,9 +28,18 @@ struct ColorWellView: NSViewRepresentable {
     }
 
     func updateNSView(_ well: NSColorWell, context: Context) {
+        context.coordinator.color = $color
+        well.colorWellStyle = style
         if well.color != color {
             well.color = color
         }
+    }
+
+    static func dismantleNSView(_ well: NSColorWell, coordinator: Coordinator) {
+        coordinator.color = nil
+        well.deactivate()
+        well.target = nil
+        well.action = nil
     }
 
     func makeCoordinator() -> Coordinator {
@@ -35,15 +47,51 @@ struct ColorWellView: NSViewRepresentable {
     }
 
     class Coordinator: NSObject {
-        @Binding var color: NSColor
+        var color: Binding<NSColor>?
 
         init(color: Binding<NSColor>) {
-            _color = color
+            self.color = color
         }
 
         @objc func colorChanged(_ sender: NSColorWell) {
-            color = sender.color
+            color?.wrappedValue = sender.color
         }
+    }
+}
+
+/// Keeps the note's original swatch while inheriting the standard Colors-window interaction.
+private final class CircularColorWell: NSColorWell {
+    override func activate(_ exclusive: Bool) {
+        let sourceWindow = window
+        super.activate(exclusive)
+        guard let sourceWindow, let screen = sourceWindow.screen else { return }
+
+        let panel = NSColorPanel.shared
+        let available = screen.visibleFrame
+        var frame = panel.frame
+        frame.origin.x = max(available.minX,
+            min(sourceWindow.frame.midX - frame.width / 2, available.maxX - frame.width))
+        frame.origin.y = min(available.maxY - frame.height,
+            max(sourceWindow.frame.midY - frame.height / 2, available.minY))
+        panel.setFrame(frame, display: true)
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: DesignTokens.epubHighlightSwatchSize, height: DesignTokens.epubHighlightSwatchSize)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let width = DesignTokens.epubSwatchStrokeWidthCurrent
+        let diameter = min(bounds.width, bounds.height) - width
+        let rect = NSRect(x: bounds.midX - diameter / 2, y: bounds.midY - diameter / 2,
+                          width: diameter, height: diameter)
+        let circle = NSBezierPath(ovalIn: rect)
+        color.setFill()
+        circle.fill()
+        NSColor.labelColor.withAlphaComponent(DesignTokens.epubSwatchStrokeOpacityCurrent).setStroke()
+        circle.lineWidth = width
+        circle.stroke()
     }
 }
 
@@ -56,7 +104,7 @@ final class HexAccessoryManager {
     private var isInstalled = false
     private var accessoryView: HexAccessoryView?
 
-    private init() {}
+    init() {}
 
     func install() {
         guard !isInstalled else { return }
@@ -68,6 +116,38 @@ final class HexAccessoryManager {
         let panel = NSColorPanel.shared
         panel.accessoryView = accessory
         panel.showsAlpha = true
+        Self.recoverInitialFrameIfNeeded(panel)
+    }
+
+    /// Repair only a restored, nearly screen-filling frame before first use.
+    /// Later user resizes never enter this first-installation transaction.
+    static func recoverInitialFrameIfNeeded(_ panel: NSColorPanel) {
+        guard !panel.isVisible,
+              let screen = panel.screen ?? NSScreen.main,
+              let content = panel.contentView else { return }
+        let available = screen.visibleFrame
+        let pixel = 1 / screen.backingScaleFactor
+        guard panel.frame.width >= available.width - pixel,
+              panel.frame.height >= available.height * 0.90 else { return }
+
+        let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        // Restored split preferences participate in fittingSize. A temporary
+        // outer preference compresses them while required native minima win.
+        let minimumContent = panel.contentRect(forFrameRect: NSRect(origin: .zero, size: panel.minSize)).size
+        let compactSize: NSSize = {
+            let height = content.heightAnchor.constraint(equalToConstant: max(0, minimumContent.height))
+            height.priority = .defaultHigh
+            height.isActive = true
+            defer { height.isActive = false }
+            panel.setContentSize(NSSize(width: max(content.fittingSize.width, minimumContent.width),
+                                        height: max(0, minimumContent.height)))
+            panel.layoutIfNeeded()
+            content.layoutSubtreeIfNeeded()
+            return content.fittingSize
+        }()
+        panel.setContentSize(compactSize)
+        panel.setFrameTopLeftPoint(topLeft)
+        panel.setFrame(panel.constrainFrameRect(panel.frame, to: screen), display: false)
     }
 }
 

@@ -5,6 +5,18 @@ enum ImageResizeGeometry {
         let delta = travel * (left ? -1 : 1) * (alignment == .center ? 2 : 1)
         return min(max((start + delta).rounded(), 40), max(40, column))
     }
+
+    /// Where the image sits at a new size: aligned edges stay put, a centered
+    /// image grows about its center, and the top edge never moves.
+    static func previewRect(original: CGRect, width: CGFloat, height: CGFloat, alignment: ImageAltTokens.Alignment) -> CGRect {
+        let x: CGFloat
+        switch alignment {
+        case .left: x = original.minX
+        case .center: x = original.midX - width / 2
+        case .right: x = original.maxX - width
+        }
+        return CGRect(x: x, y: original.minY, width: width, height: height)
+    }
 }
 
 enum ImageCropGeometry {

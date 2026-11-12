@@ -92,6 +92,8 @@ final class MarkdownFileSession: @unchecked Sendable {
         let overwriteGeneration: UInt64
         let text: String
         let target: Target
+        let nativeBody: MixedLineEndings?
+        let preparedData: Data?
     }
 
     private let admissionLock = NSLock()
@@ -108,13 +110,13 @@ final class MarkdownFileSession: @unchecked Sendable {
 
     init(writer: @escaping Writer) { self.writer = writer }
 
-    func admit(text: String, target: Target, epoch: UInt64, overwriteGeneration: UInt64) -> Ticket {
+    func admit(text: String, preparedData: Data? = nil, nativeBody: MixedLineEndings? = nil, target: Target, epoch: UInt64, overwriteGeneration: UInt64) -> Ticket {
         admissionLock.lock()
         defer { admissionLock.unlock() }
         nextSequence += 1
         let ticket = Ticket(sequence: nextSequence)
         pending.append(Request(ticket: ticket, epoch: epoch, overwriteGeneration: overwriteGeneration,
-                               text: text, target: target))
+                               text: text, target: target, nativeBody: nativeBody, preparedData: preparedData))
         return ticket
     }
 
@@ -152,11 +154,18 @@ final class MarkdownFileSession: @unchecked Sendable {
         case .saveAs(let chosen): destination = chosen
         }
         guard let destination else { return Outcome(didWrite: false, saved: lastSaved) }
-        let encoded = TextFileCodec.encode(request.text, fidelity: fidelity)
+        let encoded = TextFileCodec.encode(request.text, fidelity: fidelity, nativeBody: request.nativeBody)
         let scratch = destination.url == access?.url ? scratchDirectory : nil
         do {
-            let result = try writer(encoded.data, destination.url, scratch)
-            if encoded.downgradedToUTF8 { fidelity.savedAsDowngradedUTF8 = true }
+            let result = try writer(request.preparedData ?? encoded.data, destination.url, scratch)
+            if request.preparedData == nil && encoded.downgradedToUTF8 { fidelity.savedAsDowngradedUTF8 = true }
+            if let prepared = request.preparedData, fidelity.mixedLineEndings != nil {
+                let written = TextFileCodec.decode(prepared).fidelity
+                fidelity.lineEnding = written.lineEnding
+                fidelity.mixedLineEndings = written.mixedLineEndings
+            } else {
+                fidelity.mixedLineEndings = encoded.mixedLineEndings
+            }
             fidelity.replacedInvalidUTF8 = false   // the written bytes are valid UTF-8
             access = destination
             scratchDirectory = result.scratchDir

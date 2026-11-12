@@ -25,6 +25,9 @@ final class AnnotationManager {
     // MARK: - State
 
     var selectedAnnotation: PDFAnnotation?
+    /// Whether there is text to mark, kept current for the menus and toolbar:
+    /// PDFKit's selection can't be observed.
+    private(set) var hasSelection = false
 
     // Track if user explicitly selected a color (nil = use first preset)
     private var _underlineColor: NSColor?
@@ -54,6 +57,12 @@ final class AnnotationManager {
         self.pdfManager = pdfManager
         self.selectionProvider = selectionProvider
         self.undoManagerProvider = undoManagerProvider
+        selectionChanged()
+    }
+
+    /// The PDF view's selection changed.
+    func selectionChanged() {
+        hasSelection = selectionProvider?().0?.string?.isEmpty == false
     }
 
     private func getUndoManager(for action: String) -> UndoManager? {
@@ -69,11 +78,12 @@ final class AnnotationManager {
 
     // MARK: - Document Changes
 
-    /// Clears the stale annotation selection when the loaded document changes.
+    /// Clears the stale annotation selection when the loaded document changes;
+    /// a rebuilt view of the same document keeps it.
     /// PDFKit owns annotation storage (page.annotations / page.annotation(at:));
     /// the selection is the only per-document state this manager keeps.
-    func resetSelection() {
-        selectedAnnotation = nil
+    func resetSelection(unlessIn document: PDFDocument?) {
+        if document == nil || selectedAnnotation?.page?.document !== document { selectedAnnotation = nil }
     }
 
     // MARK: - Actions
@@ -150,15 +160,6 @@ final class AnnotationManager {
 
     private static func isFinite(_ rect: CGRect) -> Bool {
         rect.origin.x.isFinite && rect.origin.y.isFinite && rect.width.isFinite && rect.height.isFinite
-    }
-
-    func removeSelectedAnnotation() {
-        guard let annotation = selectedAnnotation,
-              let page = annotation.page else {
-            return
-        }
-
-        remove(annotation, from: page, actionName: "Remove Annotation")
     }
 
     func removeAnnotation(_ annotation: PDFAnnotation) {

@@ -5,7 +5,8 @@ import AppKit
 /// right-aligned 6 pt above the table, for 4 s and a 200 ms fade. A key, a
 /// click or a scroll dismisses it (within the first second it re-arms); a
 /// right-click in a table or opening Cell actions latches it off. Once per
-/// app session (the reference editor: once per page load).
+/// app session (the reference editor: once per page load). The same view
+/// also flashes a brief message for a refused gesture (``flash(_:table:cell:in:)``).
 final class TableHintView: NSView {
     static let text = "Right-click a cell\u{2019}s blank space, or press \u{21E7}F10, for row and column options"
     /// Latched for the rest of the app session.
@@ -13,6 +14,10 @@ final class TableHintView: NSView {
 
     private let label = NSTextField(labelWithString: TableHintView.text)
     private var shownAt: CFAbsoluteTime?
+    /// Showing a flashed message, not the hint: it ignores and never sets the latch.
+    private(set) var isFlash = false
+    /// The text showing now (tests).
+    var message: String { label.stringValue }
     private var timer: Timer?
     private var monitor: Any?
     private var observer: NSObjectProtocol?
@@ -51,6 +56,24 @@ final class TableHintView: NSView {
     /// cell's, both in `host`'s top-down coordinates), unless latched.
     func show(table: NSRect, cell: NSRect, in host: NSScrollView) {
         guard !Self.latched, !isShowing else { return }
+        isFlash = false
+        label.stringValue = Self.text
+        present(table: table, cell: cell, in: host, life: 4, announcing: Self.text)
+    }
+
+    /// Shows `message` where the hint goes for 1.5 s, latched or not, in place
+    /// of anything showing (the caller announces it).
+    func flash(_ message: String, table: NSRect, cell: NSRect, in host: NSScrollView) {
+        if isShowing {
+            tearDown()
+            removeFromSuperview()
+        }
+        isFlash = true
+        label.stringValue = message
+        present(table: table, cell: cell, in: host, life: 1.5, announcing: nil)
+    }
+
+    private func present(table: NSRect, cell: NSRect, in host: NSScrollView, life: TimeInterval, announcing announcement: String?) {
         let available = host.bounds.width - 16
         let size = label.sizeThatFits(NSSize(width: available - 16, height: .greatestFiniteMagnitude))
         let width = min(ceil(size.width) + 16, available)
@@ -67,8 +90,10 @@ final class TableHintView: NSView {
         alphaValue = 1
         host.addSubview(self, positioned: .above, relativeTo: nil)
         shownAt = CFAbsoluteTimeGetCurrent()
-        NSAccessibility.post(element: host, notification: .announcementRequested,
-                             userInfo: [.announcement: Self.text, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        if let announcement {
+            NSAccessibility.post(element: host, notification: .announcementRequested,
+                                 userInfo: [.announcement: announcement, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+        }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] event in
             self?.dismiss()
             return event
@@ -76,7 +101,7 @@ final class TableHintView: NSView {
         host.contentView.postsBoundsChangedNotifications = true
         observer = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: host.contentView,
                                                           queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.dismiss() } }
-        let timer = Timer(timeInterval: 4, repeats: false) { [weak self] _ in
+        let timer = Timer(timeInterval: life, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.expire() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -85,7 +110,7 @@ final class TableHintView: NSView {
 
     /// The hint's life ran out: a 200 ms fade, then it is gone for the session.
     private func expire() {
-        Self.latched = true
+        if !isFlash { Self.latched = true }
         tearDown()
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             removeFromSuperview()
@@ -106,7 +131,7 @@ final class TableHintView: NSView {
     /// A key, click or scroll: gone now; within the first second it may show again.
     func dismiss() {
         guard let shownAt else { return }
-        if CFAbsoluteTimeGetCurrent() - shownAt >= 1 { Self.latched = true }
+        if !isFlash, CFAbsoluteTimeGetCurrent() - shownAt >= 1 { Self.latched = true }
         tearDown()
         removeFromSuperview()
     }

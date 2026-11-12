@@ -36,8 +36,10 @@ final class SubtleScroller: NSScroller {
         super.updateTrackingAreas()
         trackingAreas.filter { $0.owner === self }.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self))
     }
 
+    override func cursorUpdate(with event: NSEvent) { NSCursor.arrow.set() }
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
@@ -49,6 +51,7 @@ final class WideTableOverlay: NSScrollView {
 
     /// Hash of table source; key for offset persistence + reconcile lookup.
     let sourceID: Int
+    var onHorizontalScroll: (() -> Void)?
 
     /// Document index of the table anchor; click on image moves caret here.
     var anchorTextLocation: Int
@@ -80,12 +83,18 @@ final class WideTableOverlay: NSScrollView {
         )
     }
 
+    convenience init(semanticDocumentView: NSView) {
+        self.init(sourceID: 0, image: NSImage(size: semanticDocumentView.frame.size), model: nil,
+                  sourceRange: NSRange(location: 0, length: 0), ownerTextView: nil, anchorLocation: 0)
+        documentView = semanticDocumentView
+    }
+
     private init(
         sourceID: Int,
         image: NSImage,
         model: MarkdownTableModel?,
         sourceRange: NSRange,
-        ownerTextView: NativeTextView,
+        ownerTextView: NativeTextView?,
         anchorLocation: Int
     ) {
         self.sourceID = sourceID
@@ -181,6 +190,7 @@ final class WideTableOverlay: NSScrollView {
     }
 
     @objc private func scrollOffsetDidChange() {
+        onHorizontalScroll?()
         ownerTextView?.tableHorizontalScrollOffsets[sourceID] = horizontalOffset
         // The chrome and the "…" button follow the table's horizontal scroll.
         let coordinator = ownerTextView?.delegate as? NativeTextViewCoordinator
@@ -196,6 +206,7 @@ final class WideTableOverlay: NSScrollView {
 /// A click edits the cell under it; where that is impossible (read-only) it
 /// places the caret in the table, which reveals its source.
 final class WideTableImageView: NSImageView {
+    let tableAccessibilityRows = TableAccessibilityRows()
 
     weak var ownerOverlay: WideTableOverlay?
 
@@ -215,16 +226,23 @@ final class WideTableImageView: NSImageView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let image, let overlay = ownerOverlay, let textView = overlay.ownerTextView as? NativeTextView,
-              let painted = textView.selectionPaintedTable(image, tableRange: overlay.sourceRange) else {
+        // Straight from the table's layout, only the cells in the dirty rect
+        // (see `MarkdownTableLayout.image()`).
+        guard let image, let layout = MarkdownTableLayout.layout(ofRaster: image) else {
             super.draw(dirtyRect)
+            return
+        }
+        guard let overlay = ownerOverlay, let textView = overlay.ownerTextView as? NativeTextView,
+              let paint = textView.selectionPaint(forTableAt: overlay.sourceRange) else {
+            // Where NSImageView puts it: top left, unscaled.
+            layout.draw(in: NSRect(x: 0, y: isFlipped ? 0 : bounds.height - image.size.height,
+                                   width: image.size.width, height: image.size.height))
             return
         }
         // As in the text: the page colour hides the selection band, then the covered cells.
         NSColor.textBackgroundColor.setFill()
         dirtyRect.fill()
-        painted.draw(in: NSRect(origin: .zero, size: image.size), from: .zero, operation: .sourceOver, fraction: 1,
-                     respectFlipped: true, hints: nil)
+        layout.draw(in: NSRect(origin: .zero, size: image.size), selection: paint)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -233,6 +251,9 @@ final class WideTableImageView: NSImageView {
             super.mouseDown(with: event)
             return
         }
+        // ⌘-click on a cell's link opens it (read-only: any click).
+        if let coordinator = textView.delegate as? NativeTextViewCoordinator,
+           coordinator.openTableLink(for: event, editable: textView.isEditable) { return }
         if let session = beginCellEditing(event) {
             // A drag from here selects cells, as in a narrow table.
             if event.clickCount == 1, !event.modifierFlags.contains(.shift) { session.trackSelection(from: event) }

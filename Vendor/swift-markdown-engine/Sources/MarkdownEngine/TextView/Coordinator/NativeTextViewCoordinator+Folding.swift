@@ -329,16 +329,24 @@ extension NativeTextViewCoordinator {
 
     public func textView(_ textView: NSTextView, willChangeSelectionFromCharacterRange oldRange: NSRange,
                          toCharacterRange newRange: NSRange) -> NSRange {
+        let newRange = emphasisEditor.richBoundarySelectionProposal?(oldRange, newRange) ?? newRange
         guard newRange.length == 0, pendingEditedRange == nil, !isApplyingSpanEdit,
-              !isProgrammaticEdit, !isUpdatingSourceOrStyle, !isComposing(in: textView),
-              let hidden = foldLayout.hiddenRange(containing: newRange.location) else { return newRange }
+              !isProgrammaticEdit, !isUpdatingSourceOrStyle, !isComposing(in: textView) else {
+            return normalizedListSelection(newRange, in: textView)
+        }
+        guard let hidden = foldLayout.hiddenRange(containing: newRange.location) else {
+            if let routed = selectionOffCollapsedSeparator(from: oldRange, to: newRange, in: textView) {
+                return normalizedListSelection(routed, in: textView)
+            }
+            return normalizedListSelection(newRange, in: textView)
+        }
         if textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true {
             _ = revealFoldedSource(newRange)
-            return newRange
+            return normalizedListSelection(newRange, in: textView)
         }
         if newRange.location >= oldRange.location {
-            return NSRange(location: NSMaxRange(hidden), length: 0)
+            return normalizedListSelection(NSRange(location: NSMaxRange(hidden), length: 0), in: textView)
         }
-        return NSRange(location: max(0, hidden.location - 1), length: 0)
+        return normalizedListSelection(NSRange(location: max(0, hidden.location - 1), length: 0), in: textView)
     }
 }

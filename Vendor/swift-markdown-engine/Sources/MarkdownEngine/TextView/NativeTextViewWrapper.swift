@@ -179,13 +179,22 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     /// document, no reflow) bounded to this range. `nil` keeps AppKit's own
     /// magnify handling.
     public var magnificationRange: ClosedRange<CGFloat>?
-    /// The host-owned magnification, PROJECTED onto the scroll view whenever it
-    /// differs (⌘±, ⌘0, cross-launch restore). User gestures read back through
+    /// The host-owned magnification, projected when the host target changes or
+    /// the document switches (⌘±, ⌘0, cross-launch restore). User gestures read back through
     /// ``onMagnificationChanged``. Ignored unless ``magnificationRange`` is set.
     public var magnification: CGFloat?
     /// Reports a USER-driven magnification change (pinch end / Ctrl-scroll) so the
     /// host can persist the per-document zoom. Not fired for projected changes.
     public var onMagnificationChanged: ((CGFloat) -> Void)?
+
+    /// Keeps width Fit active as the viewport and configured reading row change.
+    public var isWidthFitted: Bool
+    /// A one-shot Fit or Actual Size command, independent of its resulting scale.
+    /// Removing it while `isWidthFitted` is false cancels a queued command.
+    public var zoomRequest: MarkdownZoomRequest?
+    /// Reports a measured width-fit scale, separately from user magnification.
+    /// Published asynchronously after native placement, scoped to this document.
+    public var onFittedMagnificationChanged: ((CGFloat) -> Void)?
 
     public init(
         text: Binding<String>,
@@ -223,7 +232,10 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         onRequestFocus: (() -> Void)? = nil,
         magnificationRange: ClosedRange<CGFloat>? = nil,
         magnification: CGFloat? = nil,
-        onMagnificationChanged: ((CGFloat) -> Void)? = nil
+        onMagnificationChanged: ((CGFloat) -> Void)? = nil,
+        isWidthFitted: Bool = false,
+        zoomRequest: MarkdownZoomRequest? = nil,
+        onFittedMagnificationChanged: ((CGFloat) -> Void)? = nil
     ) {
         self._text = text
         self._isWikiLinkActive = isWikiLinkActive
@@ -261,6 +273,9 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         self.magnificationRange = magnificationRange
         self.magnification = magnification
         self.onMagnificationChanged = onMagnificationChanged
+        self.isWidthFitted = isWidthFitted
+        self.zoomRequest = zoomRequest
+        self.onFittedMagnificationChanged = onFittedMagnificationChanged
     }
 
     /// The forced appearance resolved from `forcedAppearanceName` (`nil` follows the
@@ -439,7 +454,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             textView.centerReadingColumn(forClipWidth: scrollView.contentView.bounds.width)
         }
         scrollView.contentView.postsBoundsChangedNotifications = true
-        coordinator.lastObservedViewportWidth = scrollView.contentView.bounds.width
+        coordinator.lastObservedViewportWidth = scrollView.contentView.frame.width
         coordinator.installViewObservers(scrollView: scrollView, textView: textView)
         reconcileHeader(textView: textView, coordinator: coordinator)
         // PageFlow fork knob: PDF-style visual magnification (pinch / ⌘± /
@@ -449,9 +464,11 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             scrollView.allowsMagnification = true
             scrollView.minMagnification = range.lowerBound
             scrollView.maxMagnification = range.upperBound
-            scrollView.onMagnificationChanged = onMagnificationChanged
+            reconcileMagnificationCallback(scrollView, coordinator: coordinator)
             if let m = magnification {
-                scrollView.magnification = min(max(m, range.lowerBound), range.upperBound)
+                let target = min(max(m, range.lowerBound), range.upperBound)
+                coordinator.lastHostMagnification = target
+                scrollView.magnification = target
                 // Restored zoom ≠ 1: the container must grow to the effective
                 // width and width-fitted blocks re-fit to it. The initial style
                 // pass already reads the zoom-aware width; this settles the
@@ -464,18 +481,46 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         // PageFlow fork knob: host chrome hook (e.g. custom scroller), make-time only.
         scrollViewConfigurator?(scrollView)
         coordinator.reconcileSelectionBar(in: scrollView)
+        reconcileZoomIntent(scrollView, coordinator: coordinator)
         return scrollView
     }
 
-    /// Projects the host-owned magnification onto the scroll view, zoomed about
-    /// the viewport CENTER (⌘±/⌘0/restore). Guarded by an epsilon so it never
-    /// fights a live pinch — and programmatic `setMagnification` does not post
-    /// `didEndLiveMagnify`, so this can't loop with `onMagnificationChanged`.
+    private func reconcileZoomIntent(_ scroll: ClampedScrollView, coordinator: Coordinator) {
+        coordinator.receiveZoomIntent(isWidthFitted: isWidthFitted, request: zoomRequest,
+            documentId: documentId, range: magnificationRange,
+            onFitted: onFittedMagnificationChanged, scrollView: scroll)
+    }
+
+    /// Adopt native publication before the host callback: a host can accept the
+    /// value and issue another command before SwiftUI renders that adoption.
+    /// Keep callbacks document-scoped when a caller retains an outgoing closure.
+    private func reconcileMagnificationCallback(_ scrollView: ClampedScrollView, coordinator: Coordinator) {
+        let documentId = documentId
+        scrollView.onMagnificationChanged = onMagnificationChanged.map { callback in
+            { [weak coordinator] value in
+                guard let coordinator, coordinator.documentId == documentId else { return }
+                coordinator.lastHostMagnification = value
+                // A command issued during this gesture is newer than its end
+                // receipt. Keep the host's explicit request alive until settle.
+                guard coordinator.pendingZoomRequest == nil else {
+                    coordinator.scheduleWidthFit()
+                    return
+                }
+                callback(value)
+            }
+        }
+    }
+
+    /// Project only a changed host target, or an incoming document's restore.
+    /// Native zoom can change without live-magnify notifications, so comparing
+    /// against native magnification alone would replay a stale host prop.
     /// `centeredAt` is in the content (clip) view's coordinate system.
-    private func projectMagnification(_ nsView: NSScrollView) {
+    private func projectMagnification(_ nsView: NSScrollView, coordinator: Coordinator, force: Bool = false) {
         guard let range = magnificationRange, let m = magnification,
               let clamped = nsView as? ClampedScrollView else { return }
         let target = min(max(m, range.lowerBound), range.upperBound)
+        guard force || coordinator.lastHostMagnification != target else { return }
+        coordinator.lastHostMagnification = target
         guard abs(nsView.magnification - target) > 0.001 else { return }
         let center = NSPoint(x: nsView.contentView.bounds.midX, y: nsView.contentView.bounds.midY)
         clamped.noteMagnificationChanged()   // freeze per-frame layout work (see isZoomInProgress)
@@ -505,6 +550,10 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         coordinator.foldControls = nil
         coordinator.imageControls?.uninstall()
         coordinator.imageControls = nil
+        // Its observer is keyed to the text storage's address, which a storage
+        // made later on any thread can reuse once this one is gone.
+        coordinator.comments?.tearDown()
+        coordinator.comments = nil
         coordinator.cancelDocumentWork()
         if coordinator.editorController?.coordinator === coordinator {
             coordinator.editorController?.coordinator = nil
@@ -512,6 +561,11 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         coordinator.textView = nil
         coordinator.removeViewObservers()
         ScrollTrace.forget(nsView)
+        // Once a TextKit 2 text view has been on screen, its layout manager and
+        // text container keep each other alive after the view is gone (macOS 26,
+        // a plain NSTextView too), and with them the note's text and every laid
+        // out line. Nothing lays this editor out again.
+        nsView.nativeTextView?.textLayoutManager?.textContainer = nil
     }
 
     public func updateNSView(_ nsView: NSScrollView, context: Context) {
@@ -531,6 +585,9 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         PerfTrace.stamp("updateNSView.start")
         guard let textView = nsView.nativeTextView else { return }
         defer {
+            if let scroll = nsView as? ClampedScrollView {
+                reconcileZoomIntent(scroll, coordinator: coordinator)
+            }
             coordinator.reconcileSelectionBar(in: nsView)
             coordinator.synchronizeFolding()
         }
@@ -582,7 +639,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
                 nsView.minMagnification = range.lowerBound
                 nsView.maxMagnification = range.upperBound
             }
-            clamped.onMagnificationChanged = onMagnificationChanged
+            reconcileMagnificationCallback(clamped, coordinator: coordinator)
         }
 
         reconcileHeader(textView: textView, coordinator: coordinator)
@@ -619,7 +676,11 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         // early-returns, so a pure zoom command always lands. A node switch
         // projects INSIDE the switch block instead, after the outgoing offset is
         // saved (below), so a differing incoming zoom can't corrupt it.
-        if !isNodeSwitch { projectMagnification(nsView) }
+        if !isNodeSwitch, !isWidthFitted,
+           zoomRequest.map({ coordinator.consumedZoomRequestTokens.contains($0.token) }) ?? true {
+            if let scroll = nsView as? ClampedScrollView { coordinator.leaveWidthFit(scrollView: scroll) }
+            projectMagnification(nsView, coordinator: coordinator)
+        }
 
         // Drop remembered offsets for documents no longer retained (always keep
         // the current one). Only rebuilds the dict when something must go.
@@ -732,7 +793,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             // Outgoing offset is now banked at the OLD magnification — safe to
             // apply the incoming document's zoom (park + restore below set the
             // final offset, in doc coords, independent of the scale).
-            projectMagnification(nsView)
+            if !isWidthFitted { projectMagnification(nsView, coordinator: coordinator, force: true) }
             coordinator.documentId = documentId
             coordinator.localFoldSession.reset()
             // Typing coalescing must never span documents.
@@ -799,7 +860,12 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         } else {
             coordinator.restyleCurrentSource(in: textView, focusOffset: focusOffset)
         }
-        textView.recalcOverscroll(for: nsView)
+        // A note still styling and at its top has no place to restore, so its measure
+        // waits for the last chunk: laying out text the chunks are about to restyle held
+        // the first paint for 80 ms at 72 KB. The exact chain still arrives, a piece per
+        // pass (ADR-0020, decision 2).
+        textView.owesFullMeasureAfterStyling = coordinator.isAtTopWhileStyling(focusOffset: focusOffset)
+        textView.recalcOverscroll(for: nsView, debugTag: textView.owesFullMeasureAfterStyling ? "firstPaint" : "?")
         (nsView as? ClampedScrollView)?.clampToInsets()
         // Height is measured now, so restore the saved offset; clampToInsets keeps
         // it in range if the document got shorter. A pending reading-position

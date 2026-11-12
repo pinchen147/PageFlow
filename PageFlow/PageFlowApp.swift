@@ -18,7 +18,7 @@ struct PageFlowApp: App {
 
     // MARK: - Focused Values
 
-    @FocusedValue(\.tabManager) private var focusedSceneTabManager
+    @FocusedValue(\.tabManagerReference) private var focusedSceneTabManager
 
     /// Reactive frontmost-window fallback for the menu commands. `@FocusedValue`
     /// resolves nil when the key window (e.g. a manually-created ⌘N / tear-off
@@ -31,10 +31,29 @@ struct PageFlowApp: App {
     /// The TabManager every menu command (⌘T/⌘W/⌘S/Find/…) targets: the focused
     /// window's, else the frontmost window's. Reactive on both inputs.
     private var focusedTabManager: TabManager? {
-        focusedSceneTabManager ?? activeWindow.tabManager
+        focusedSceneTabManager?.manager ?? activeWindow.tabManager
     }
 
-    @State private var firstLaunchManager = FirstLaunchManager()
+    /// Annotations belong to the current document body. A remembered document
+    /// must not receive keys from Settings, sheets, Find or comment fields.
+    private var annotationTabManager: TabManager? {
+        let text = undoCommands.focusedTextView
+        guard let window = NSApp.keyWindow, window.attachedSheet == nil, window.sheetParent == nil,
+              let manager = focusedTabManager, WindowRegistry.shared.tabManager(for: window) === manager else { return nil }
+        if let text, text.isEditable {
+            guard !text.isFieldEditor, let content = manager.activeMarkdownContent,
+                  !content.ownsAnnotationResponder(text), let surface = content.retainedEditorSurface,
+                  text.isDescendant(of: surface.nativeView) else { return nil }
+        }
+        return manager
+    }
+
+    private func annotationShortcut(_ id: String) -> ShortcutModel? {
+        guard let manager = annotationTabManager else { return nil }
+        return manager.activeMarkdownContent == nil ? ShortcutModel.current(for: id) : ShortcutModel.currentForMarkdown(for: id)
+    }
+
+    private var firstLaunchManager: FirstLaunchManager { appDelegate.firstLaunchManager }
 
     // MARK: - Computed Properties
 
@@ -56,10 +75,13 @@ struct PageFlowApp: App {
     /// Gates for content-routed view commands — thin reads of TabManager's
     /// routing (the exhaustive switches live THERE, not in the menu layer).
     private var canUseViewCommands: Bool { focusedTabManager?.activeContentAcceptsViewCommands ?? false }
-    private var canUnderline: Bool { focusedTabManager?.canUnderline ?? false }
 
     private var pdfManager: PDFManager? {
         focusedTabManager?.activePDFManager
+    }
+
+    private var epubContent: EPUBContent? {
+        focusedTabManager?.activeSession?.content.epub
     }
 
     private var pdfPermissions: PDFPermissions { pdfManager?.permissions ?? PDFPermissions() }
@@ -77,7 +99,8 @@ struct PageFlowApp: App {
     }
 
     private var showingCommentsLabel: String {
-        (focusedTabManager?.showingComments == true) ? "Hide Comments" : "Show Comments"
+        let title = focusedTabManager?.commentsTitle ?? "Comments"
+        return (focusedTabManager?.isShowingComments == true) ? "Hide \(title)" : "Show \(title)"
     }
 
     // MARK: - Body
@@ -101,7 +124,15 @@ struct PageFlowApp: App {
             CommandGroup(replacing: .toolbar) { viewMenuContent }
             CommandMenu("Go") { goMenuContent }
             CommandMenu("Tools") { toolsMenuContent }
-            CommandMenu("Tab") { tabMenuContent }
+            Group {
+                CommandMenu("Tab") { tabMenuContent }
+                // There is no help book: the system's item only says so.
+                CommandGroup(replacing: .help) {
+                    Button("PageFlow Help") {
+                        if let site = URL(string: "https://pageflow.pinchen.me") { NSWorkspace.shared.open(site) }
+                    }
+                }
+            }
         }
 
         // MARK: Settings Window
@@ -193,11 +224,27 @@ struct PageFlowApp: App {
         .keyboardShortcut(for: "saveAs")
         .disabled(!canSaveAs)
 
+        if let epub = epubContent, focusedTabManager != nil {
+            Divider()
+            // A book's highlights and notes, as Markdown.
+            // The menu outlives the tab: its actions look the book up, so that it
+            // doesn't keep a closed book in memory until its next update.
+            Button("Export Highlights…") { epubContent.map(EPUBHighlightsExport.save) }
+                .disabled(epub.highlights.items.isEmpty)
+            Button("Open Highlights in New Tab") {
+                guard let tabManager = focusedTabManager,
+                      let epub = tabManager.activeSession?.content.epub else { return }
+                Task { await EPUBHighlightsExport.openInNewTab(epub, tabManager: tabManager) }
+            }
+                .disabled(epub.highlights.items.isEmpty)
+        }
+
         Divider()
 
         Button("Print…") {
             // Content-aware: PDF prints via the unchanged PDFKit path; Markdown prints
-            // the styled Live-Preview text. `printActiveDocument` is the single
+            // the styled Live-Preview text; a book lays out for the paper.
+            // `printActiveDocument` is the single
             // exhaustive switch (peer of `saveActiveDocument`); `canPrint` is the gate.
             focusedTabManager?.printActiveDocument()
         }
@@ -208,21 +255,18 @@ struct PageFlowApp: App {
     // MARK: - Edit Menu
 
     private var undoAvailability: UndoAvailability {
-        undoCommands.availability(fallback: UndoAvailability(
-            canUndo: focusedTabManager?.activeCanUndo ?? false,
-            canRedo: focusedTabManager?.activeCanRedo ?? false
-        ))
+        undoCommands.availability(fallback: focusedTabManager?.activeUndoAvailability ?? UndoAvailability())
     }
 
     @ViewBuilder
     private var editUndoMenuContent: some View {
-        Button("Undo") {
+        Button(undoAvailability.undoTitle) {
             undoCommands.undo(fallback: focusedTabManager?.activeUndoManager)
         }
         .keyboardShortcut(for: "undo")
         .disabled(!undoAvailability.canUndo)
 
-        Button("Redo") {
+        Button(undoAvailability.redoTitle) {
             undoCommands.redo(fallback: focusedTabManager?.activeUndoManager)
         }
         .keyboardShortcut(for: "redo")
@@ -290,6 +334,19 @@ struct PageFlowApp: App {
         }
         .keyboardShortcut(for: "pastePage")
         .disabled(!pdfPermissions.editPages || !isEditingPages || !(pdfManager?.canPaste ?? false))
+
+        // After the current page; in page editing that is the selected thumbnail.
+        Button("Insert Blank Page") {
+            focusedTabManager?.insertBlankPDFPage()
+        }
+        .keyboardShortcut(for: "insertBlankPage")
+        .disabled(!(focusedTabManager?.canInsertPDFPages ?? false))
+
+        Button("Insert Pages from File…") {
+            focusedTabManager?.insertPDFPagesFromFile()
+        }
+        .keyboardShortcut(for: "insertPagesFromFile")
+        .disabled(!(focusedTabManager?.canInsertPDFPages ?? false))
     }
 
     // MARK: - Format Menu
@@ -308,20 +365,64 @@ struct PageFlowApp: App {
         Divider()
         ForEach([MarkdownFormatCommand.bulletedList, .numberedList, .checklist, .quote, .codeBlock]) { formatButton($0) }
         Divider()
-        ForEach([MarkdownFormatCommand.table, .divider]) { formatButton($0) }
+        tableMenuContent
+        formatButton(.divider)
+        Divider()
+        ForEach([MarkdownFormatCommand.alignLeft, .alignCenter, .alignRight, .alignJustify]) { formatButton($0) }
+        Divider()
+        ForEach([MarkdownFormatCommand.clearFormatting, .moveLineUp, .moveLineDown]) { formatButton($0) }
     }
 
     /// A Format item; marks, text styles and lists carry the selection bar's
     /// check mark (doc 24 §7.8.9).
     private func formatButton(_ command: MarkdownFormatCommand) -> some View {
-        Toggle(isOn: Binding(
+        let isSharedMark = command == .underline || command == .highlight
+        return Toggle(isOn: Binding(
             get: { isMarkdownFormatOn(command) },
-            set: { _ in focusedTabManager?.requestMarkdownFormat(command) }
+            set: { _ in
+                let owner = isSharedMark ? annotationTabManager : focusedTabManager
+                owner?.requestMarkdownFormat(command)
+            }
         )) {
             Text(command.title)
         }
-        .keyboardShortcut(command.menuShortcut)
-        .disabled(!canFormatMarkdown || focusedTabManager?.activeMarkdownContent?.isFormatEnabled(command) == false)
+        .keyboardShortcut(canFormatMarkdown && focusedTabManager?.activeMarkdownContent?.isFormatEnabled(command) != false
+            && (!isSharedMark || annotationTabManager != nil)
+            ? command.menuShortcut : nil)
+        .disabled(!canFormatMarkdown || focusedTabManager?.activeMarkdownContent?.isFormatEnabled(command) == false
+            || (isSharedMark && annotationTabManager == nil))
+    }
+
+    /// Format ▸ Table: Insert Table, then the caret's table's Cell actions,
+    /// each disabled when the caret is not in a table (or its Cell actions
+    /// row is). No new keys: Insert Table keeps its own.
+    @ViewBuilder
+    private var tableMenuContent: some View {
+        let content = focusedTabManager?.activeMarkdownContent
+        // Read so the menu re-evaluates as the caret moves in and out of tables.
+        let _ = content?.formatState
+        let controller = content?.editorController
+        Menu("Table") {
+            formatButton(.table)
+            Divider()
+            ForEach([MarkdownTableCommand.insertRowAbove, .insertRowBelow, .insertColumnLeft, .insertColumnRight], id: \.self) {
+                tableButton($0, controller: controller)
+            }
+            Divider()
+            ForEach([MarkdownTableCommand.deleteRow, .deleteColumn, .deleteTable], id: \.self) { tableButton($0, controller: controller) }
+            Divider()
+            ForEach([MarkdownTableCommand.alignColumnLeft, .alignColumnCenter, .alignColumnRight], id: \.self) {
+                tableButton($0, controller: controller)
+            }
+            Divider()
+            tableButton(.editTableSource, controller: controller)
+        }
+        .disabled(!canFormatMarkdown)
+    }
+
+    private func tableButton(_ command: MarkdownTableCommand, controller: MarkdownEditorController?) -> some View {
+        Button(command.title) { annotationTabManager?.activeMarkdownContent?.editorController.performTableCommand(command) }
+            .disabled(!canFormatMarkdown || controller?.canPerformTableCommand(command) != true)
     }
 
     private func isMarkdownFormatOn(_ command: MarkdownFormatCommand) -> Bool {
@@ -335,19 +436,19 @@ struct PageFlowApp: App {
         let controller = content?.editorController
         Menu("Folding") {
             Button(controller?.isCurrentSectionFolded == true ? "Expand Section" : "Collapse Section") {
-                controller?.performFoldingCommand(.toggleFold)
+                annotationTabManager?.activeMarkdownContent?.editorController.performFoldingCommand(.toggleFold)
             }
             .keyboardShortcut(for: "markdown.toggleFold")
             .disabled(controller?.canPerformFoldingCommand(.toggleFold) != true)
 
             Button("Collapse All") {
-                controller?.performFoldingCommand(.collapseAll)
+                annotationTabManager?.activeMarkdownContent?.editorController.performFoldingCommand(.collapseAll)
             }
             .keyboardShortcut(for: "markdown.collapseAll")
             .disabled(controller?.canPerformFoldingCommand(.collapseAll) != true)
 
             Button("Expand All") {
-                controller?.performFoldingCommand(.expandAll)
+                annotationTabManager?.activeMarkdownContent?.editorController.performFoldingCommand(.expandAll)
             }
             .keyboardShortcut(for: "markdown.expandAll")
             .disabled(controller?.canPerformFoldingCommand(.expandAll) != true)
@@ -381,25 +482,25 @@ struct PageFlowApp: App {
             focusedTabManager?.zoomIn()
         }
         .keyboardShortcut(for: "zoomIn")
-        .disabled(!canUseViewCommands)
+        .disabled(!canUseViewCommands || focusedTabManager?.canZoomIn != true)
 
         Button("Zoom Out") {
             focusedTabManager?.zoomOut()
         }
         .keyboardShortcut(for: "zoomOut")
-        .disabled(!canUseViewCommands)
+        .disabled(!canUseViewCommands || focusedTabManager?.canZoomOut != true)
 
-        Button("Actual Size") {
+        Button(focusedTabManager?.resetZoomTitle ?? "Actual Size") {
             focusedTabManager?.resetZoom()
         }
         .keyboardShortcut(for: "actualSize")
-        .disabled(!canUseViewCommands)
+        .disabled(!canUseViewCommands || focusedTabManager?.canResetZoom != true)
 
-        Button("Zoom to Fit") {
-            pdfManager?.requestFitOnce()
+        Button(focusedTabManager?.zoomToFitTitle ?? "Zoom to Fit") {
+            focusedTabManager?.zoomToFit()
         }
         .keyboardShortcut(for: "zoomToFit")
-        .disabled(!hasDocument)
+        .disabled(focusedTabManager?.canZoomToFit != true)
 
         Divider()
 
@@ -407,28 +508,49 @@ struct PageFlowApp: App {
 
         Divider()
 
-        Toggle("Auto-Scale", isOn: Binding(
-            get: { pdfManager?.isAutoScaling ?? false },
-            set: { newValue in
-                guard let manager = pdfManager else { return }
-                manager.setAutoScaling(newValue)
+        if let epub = epubContent {
+            // The same display names, driving the EPUB page layouts.
+            Picker("Display", selection: Binding(get: { epubContent?.layout ?? .singlePageContinuous }, set: { epubContent?.setLayout($0) })) {
+                ForEach([EPUBPageLayout.singlePage, .singlePageContinuous, .twoUp, .twoUpContinuous], id: \.self) {
+                    Text($0.title).tag($0)
+                }
             }
-        ))
-        .disabled(!hasDocument || (pdfManager?.displayMode == .twoUp || pdfManager?.displayMode == .twoUpContinuous))
+            .pickerStyle(.inline)
+            .disabled(epub.book == nil)
 
-        Divider()
+            Divider()
 
-        Picker("Display", selection: Binding(
-            get: { pdfManager?.displayMode ?? .singlePageContinuous },
-            set: { pdfManager?.displayMode = $0 }
-        )) {
-            Text("Single Page").tag(PDFDisplayMode.singlePage)
-            Text("Single Page Continuous").tag(PDFDisplayMode.singlePageContinuous)
-            Text("Two Pages").tag(PDFDisplayMode.twoUp)
-            Text("Two Pages Continuous").tag(PDFDisplayMode.twoUpContinuous)
+            // Read Aloud: the book's narration or the Mac's voice, from the
+            // selection or the page's top.
+            Button(epub.readAloud.isActive ? epub.readAloud.stopTitle : epub.readAloud.startTitle) { epubContent?.readAloud.toggle() }
+                .keyboardShortcut(for: "readAloud")
+                .disabled(epub.book == nil)
+            Button(epub.readAloud.state == .paused ? epub.readAloud.resumeTitle : epub.readAloud.pauseTitle) {
+                epubContent?.readAloud.togglePause()
+            }
+            .keyboardShortcut(for: "pauseReadAloud")
+            .disabled(!epub.readAloud.isActive)
+            if epub.readAloud.hasNarration {
+                Picker("Narration Speed", selection: Binding(
+                    get: { epubContent?.readAloud.narrationRate ?? 1 },
+                    set: { epubContent?.setNarrationRate($0) }
+                )) {
+                    ForEach(EPUBReadAloud.narrationRates, id: \.self) { Text("\($0.formatted())×").tag($0) }
+                }
+            }
+        } else {
+            Picker("Display", selection: Binding(
+                get: { pdfManager?.displayMode ?? .singlePageContinuous },
+                set: { pdfManager?.displayMode = $0 }
+            )) {
+                Text("Single Page").tag(PDFDisplayMode.singlePage)
+                Text("Single Page Continuous").tag(PDFDisplayMode.singlePageContinuous)
+                Text("Two Pages").tag(PDFDisplayMode.twoUp)
+                Text("Two Pages Continuous").tag(PDFDisplayMode.twoUpContinuous)
+            }
+            .pickerStyle(.inline)
+            .disabled(!hasDocument)
         }
-        .pickerStyle(.inline)
-        .disabled(!hasDocument)
 
         Divider()
 
@@ -440,11 +562,12 @@ struct PageFlowApp: App {
         // same per-tab uiState slot.
         .disabled(!canUseViewCommands)
 
+        // Content-routed: PDF's comments panel, Markdown's comments.
         Button(showingCommentsLabel) {
-            focusedTabManager?.showingComments.toggle()
+            focusedTabManager?.toggleComments()
         }
-        .keyboardShortcut(for: "toggleComments")
-        .disabled(!hasDocument)
+        .keyboardShortcut(ShortcutModel.commentsPanelMenuShortcut(isMarkdown: focusedTabManager?.activeMarkdownContent != nil))
+        .disabled(focusedTabManager?.canToggleComments != true)
 
         Toggle("Always Show Top Bar", isOn: topBarVisibilityBinding)
         .keyboardShortcut(for: "toggleTopBar")
@@ -499,31 +622,25 @@ struct PageFlowApp: App {
 
         Divider()
 
-        Button("Next Page") {
-            pdfManager?.nextPage()
-        }
-        .keyboardShortcut(for: "nextPage")
-        .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) >= (pdfManager?.pageCount ?? 1) - 1)
+        // Content-routed: an EPUB turns a spread at a time in two-page layouts.
+        // ⌘-arrows by default, which a text field being typed in keeps for itself.
+        Button("Next Page") { pageCommand { $0.goToNextPage() } }
+            .keyboardShortcut(for: "nextPage")
+            .disabled(!(focusedTabManager?.canGoToNextPage ?? false))
 
-        Button("Previous Page") {
-            pdfManager?.previousPage()
-        }
-        .keyboardShortcut(for: "previousPage")
-        .disabled(!hasDocument || (pdfManager?.currentPageIndex ?? 0) == 0)
+        Button("Previous Page") { pageCommand { $0.goToPreviousPage() } }
+            .keyboardShortcut(for: "previousPage")
+            .disabled(!(focusedTabManager?.canGoToPreviousPage ?? false))
 
         Divider()
 
-        Button("First Page") {
-            pdfManager?.goToFirstPage()
-        }
-        .keyboardShortcut(for: "firstPage")
-        .disabled(!hasDocument)
+        Button("First Page") { pageCommand { $0.goToFirstPage() } }
+            .keyboardShortcut(for: "firstPage")
+            .disabled(!(focusedTabManager?.hasPages ?? false))
 
-        Button("Last Page") {
-            pdfManager?.goToLastPage()
-        }
-        .keyboardShortcut(for: "lastPage")
-        .disabled(!hasDocument)
+        Button("Last Page") { pageCommand { $0.goToLastPage() } }
+            .keyboardShortcut(for: "lastPage")
+            .disabled(!(focusedTabManager?.hasPages ?? false))
 
         Divider()
 
@@ -553,35 +670,33 @@ struct PageFlowApp: App {
 
         Divider()
 
+        // PDF annotations and EPUB highlights.
         Button("Highlight Selection") {
-            focusedTabManager?.activeAnnotationManager?.highlightSelection()
+            annotationTabManager?.highlightSelection()
         }
-        .keyboardShortcut(for: "highlight")
-        .disabled(!pdfPermissions.annotate)
+        .keyboardShortcut(annotationTabManager?.canHighlightSelection == true ? annotationShortcut("highlight") : nil)
+        .disabled(annotationTabManager?.canHighlightSelection != true)
 
         // A PDF annotation; Markdown's Underline is in the Format menu (both ⌘U by default).
         Button("Underline Selection") {
-            focusedTabManager?.underlineActiveSelection()
+            annotationTabManager?.underlineActiveSelection()
         }
-        .keyboardShortcut(for: "underline")
-        .disabled(!canUnderline)
+        .keyboardShortcut(annotationTabManager?.canUnderline == true ? annotationShortcut("underline") : nil)
+        .disabled(annotationTabManager?.canUnderline != true)
 
-        Button("Add Comment") {
-            _ = focusedTabManager?.activeCommentManager?.addComment()
+        // A PDF comment, or a note on an EPUB highlight.
+        Button(focusedTabManager?.addCommentTitle ?? "Add Comment") {
+            annotationTabManager?.addComment()
         }
-        .keyboardShortcut(for: "comment")
-        .disabled(!pdfPermissions.annotate)
+        .keyboardShortcut(annotationTabManager?.canAddComment == true
+            ? annotationShortcut(annotationTabManager?.addCommentShortcutID ?? "comment") : nil)
+        .disabled(annotationTabManager?.canAddComment != true)
 
         Divider()
 
-        Button("Toggle Bookmark") {
-            if let manager = focusedTabManager?.activeBookmarkManager,
-               let pageIndex = pdfManager?.currentPageIndex {
-                manager.toggleBookmark(at: pageIndex)
-            }
-        }
-        .keyboardShortcut(for: "bookmark")
-        .disabled(!hasDocument)
+        Button("Toggle Bookmark") { focusedTabManager?.toggleBookmark() }
+            .keyboardShortcut(for: "bookmark")
+            .disabled(!(focusedTabManager?.hasPages ?? false))
 
         Divider()
 
@@ -633,6 +748,28 @@ struct PageFlowApp: App {
         .keyboardShortcut(for: "searchTabs")
         .disabled(focusedTabManager == nil)
 
+        Button("Reopen Closed Tab") {
+            focusedTabManager?.reopenClosedTab()
+        }
+        .keyboardShortcut(for: "reopenClosedTab")
+        .disabled(focusedTabManager == nil || ClosedTabStore.shared.records.isEmpty)
+
+        Divider()
+
+        Button("Move Tab to New Window") {
+            if let manager = focusedTabManager, let id = manager.activeTabID {
+                manager.moveTabToNewWindow(id)
+            }
+        }
+        .keyboardShortcut(for: "moveTabToNewWindow")
+        .disabled(focusedTabManager?.canMoveTabToNewWindow(focusedTabManager?.activeTabID) != true)
+
+        Button("Merge All Windows") {
+            if let manager = focusedTabManager { WindowRegistry.shared.mergeAllWindows(into: manager) }
+        }
+        .keyboardShortcut(for: "mergeAllWindows")
+        .disabled(activeWindow.windowCount < 2 || focusedTabManager.map(WindowRegistry.shared.canMergeAllWindows(into:)) != true)
+
         Divider()
 
         Button("Select Next Tab") {
@@ -645,6 +782,18 @@ struct PageFlowApp: App {
             focusedTabManager?.selectPreviousTab()
         }
         .keyboardShortcut(for: "selectPreviousTab")
+        .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
+
+        Button("Select Previously Used Tab") {
+            focusedTabManager?.selectRecentTabFromMenu(.older)
+        }
+        .keyboardShortcut(for: "selectRecentTab")
+        .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
+
+        Button("Select Previously Used Tab, Reversed") {
+            focusedTabManager?.selectRecentTabFromMenu(.newer)
+        }
+        .keyboardShortcut(for: "selectRecentTabReversed")
         .disabled(focusedTabManager?.tabCount ?? 0 <= 1)
 
         Divider()
@@ -660,17 +809,24 @@ struct PageFlowApp: App {
 
     // MARK: - Helper Methods
 
-    private func openRecentFile(_ recentFile: RecentFile) {
-        guard let resolved = recentFilesManager.resolveRecentFile(recentFile) else { return }
+    private func pageCommand(_ run: (TabManager) -> Void) {
+        guard !TextFieldArrowKeys.passOn(NSApp.currentEvent, to: NSApp.keyWindow?.firstResponder),
+              let focusedTabManager else { return }
+        run(focusedTabManager)
+    }
 
+    private func openRecentFile(_ recentFile: RecentFile) {
         // `focusedTabManager` already folds in the frontmost-window fallback,
         // which is nil only when no window exists at all — exactly when we want
         // the new-window branch below.
         if let tabManager = focusedTabManager {
-            tabManager.openDocument(url: resolved.url, isSecurityScoped: resolved.isSecurityScoped)
-        } else {
+            tabManager.openRecentFile(recentFile, from: recentFilesManager)
+        } else if let resolved = recentFilesManager.resolveRecentFile(recentFile) {
             appDelegate.enqueuePendingURLs([resolved.url], isSecurityScoped: resolved.isSecurityScoped)
             openNewWindow()
+        } else {
+            // No window to show the usual pill in.
+            showAlert(message: "Couldn’t open “\(recentFile.displayName)”")
         }
     }
 

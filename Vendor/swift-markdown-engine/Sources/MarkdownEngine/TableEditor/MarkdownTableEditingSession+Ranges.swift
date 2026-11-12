@@ -147,8 +147,9 @@ extension MarkdownTableEditingSession {
     /// Shift-arrows at a text edge start or extend a range (the reference editor).
     func extendFromTextEdge(_ selector: Selector) -> Bool {
         guard cellSelection == nil, let table else { return false }
-        let selection = editor.selectedRange()
-        let length = (editor.string as NSString).length
+        let richCoordinates = richCellNavigationCoordinates
+        let selection = richCoordinates?.selection ?? editor.selectedRange()
+        let length = richCoordinates?.length ?? (editor.string as NSString).length
         let start = CellCoord(row: row, column: column)
         switch selector {
         case #selector(NSResponder.moveRightAndModifySelection(_:)) where NSMaxRange(selection) == length && column + 1 < table.columnCount:
@@ -211,7 +212,7 @@ extension MarkdownTableEditingSession {
         if let selection, let undo { registerRangeRestore(selection, tableAt: table.range.location, undo: undo) }
         adopt(refreshed)
         resyncFocusedCell()
-        followWidths(reshape ?? { _ in })
+        followWidths(registersUndo: true, reshape ?? { _ in })
         return refreshed
     }
 
@@ -352,7 +353,7 @@ extension MarkdownTableEditingSession {
 
     /// Export Markdown for other editors, retaining exact cell values for an
     /// internal grid paste. A whole-table selection preserves its literal source.
-    func copyRange(cut: Bool) {
+    func copyRange(cut: Bool, to board: NSPasteboard) {
         guard let selection = cellSelection, let table else { return }
         let source = table.source as NSString
         let raw = selection.rows.map { row in
@@ -384,13 +385,16 @@ extension MarkdownTableEditingSession {
                 .map { source.substring(with: $0.lineEndingRange) } ?? "\n"
             markdown = lines.joined(separator: newline)
         }
-        let board = NSPasteboard.general
         board.clearContents()
-        board.declareTypes([.string, Self.tableCellsPasteboardType], owner: nil)
+        board.declareTypes([.string, Self.tableCellsPasteboardType, .html, .tabularText], owner: nil)
         board.setString(markdown, forType: .string)
         if let data = try? JSONSerialization.data(withJSONObject: ["version": 1, "rows": raw]) {
             board.setData(data, forType: Self.tableCellsPasteboardType)
         }
+        // Numbers, Sheets and Excel read a grid of the cells' shown text.
+        let shown = raw.map { $0.map(displayedText(ofCell:)) }
+        board.setString(TableClipboard.html(shown), forType: .html)
+        board.setString(TableClipboard.tsv(shown), forType: .tabularText)
         if cut {
             let cleared = Dictionary(uniqueKeysWithValues: selection.cells.map { ($0, "") })
             guard rangeIsCurrent,
@@ -400,14 +404,23 @@ extension MarkdownTableEditingSession {
         }
     }
 
+    /// A cell's text as the table shows it: marks gone, line breaks as line
+    /// breaks, and math as its `$…$` source (a spreadsheet has no formula image).
+    func displayedText(ofCell source: String) -> String {
+        guard let coordinator else { return source }
+        return MarkdownStyler.formattedCellString(source, baseFont: .systemFont(ofSize: 13), header: false,
+                                                  theme: coordinator.configuration.theme, codeBackgroundColor: .clear,
+                                                  latex: NoOpLatexRenderer())
+            .string.replacingOccurrences(of: "\u{2028}", with: "\n").trimmingCharacters(in: .whitespaces)
+    }
+
     /// Paste over a range: a grid (PageFlow cells, an HTML table or a pipe
     /// table) repeats or crops to fit; anything else is tiled into every cell,
     /// with the caret at the end of the last one (the reference editor).
-    func pasteIntoRange() {
+    func pasteIntoRange(from board: NSPasteboard) {
         guard let selection = cellSelection, let table, rangeIsCurrent else { return }
-        let board = NSPasteboard.general
         var values: [CellCoord: String] = [:]
-        if let grid = Self.pastedGrid(from: board), !grid.isEmpty, !grid[0].isEmpty {
+        if let grid = Self.pastedGrid(from: board) {
             for (r, row) in selection.rows.enumerated() {
                 for (c, column) in selection.columns.enumerated() {
                     let line = grid[r % grid.count]
@@ -426,9 +439,8 @@ extension MarkdownTableEditingSession {
     }
 
     /// Pasting a grid from a caret in a cell overwrites from that cell and grows the table.
-    func pasteGridAtCaret() -> Bool {
-        guard cellSelection == nil, let table, let grid = Self.pastedGrid(from: NSPasteboard.general),
-              grid.count > 1 || (grid.first?.count ?? 0) > 1 else { return false }
+    func pasteGridAtCaret(from board: NSPasteboard) -> Bool {
+        guard cellSelection == nil, let table, let grid = Self.pastedGrid(from: board) else { return false }
         let origin = CellCoord(row: row, column: column)
         let width = grid.map(\.count).max() ?? 1
         guard let grown = MarkdownTableEditPlan.growing(table, toRows: origin.row + grid.count, columns: origin.column + width),
@@ -446,11 +458,12 @@ extension MarkdownTableEditingSession {
     }
 
     /// Encoded cell values from the pasteboard: PageFlow's cells, an HTML
-    /// `<table>`, or a Markdown pipe table. Tab-separated text is not a grid.
+    /// `<table>`, a Markdown pipe table, or tab-separated text (a spreadsheet's).
     static func pastedGrid(from board: NSPasteboard) -> [[String]]? {
         if let data = board.data(forType: tableCellsPasteboardType),
            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let rows = object["rows"] as? [[String]] {
+           let rows = object["rows"] as? [[String]], !rows.isEmpty,
+           rows.allSatisfy({ !$0.isEmpty }) {
             return rows
         }
         if let html = board.string(forType: .html), let grid = htmlTableCells(html) {
@@ -460,6 +473,11 @@ extension MarkdownTableEditingSession {
            let table = MarkdownTableSource(source: text, range: NSRange(location: 0, length: (text as NSString).length)) {
             let ns = text as NSString
             return ([0] + Array(2..<table.rows.count)).map { index in table.rows[index].cells.map { ns.substring(with: $0.contentRange) } }
+        }
+        for text in [board.string(forType: .tabularText), board.string(forType: .string)].compactMap({ $0 }) {
+            if let rows = TableClipboard.tsvRows(text) {
+                return rows.map { $0.map { encodedCell($0, selection: NSRange(location: 0, length: 0)).text } }
+            }
         }
         return nil
     }
@@ -479,7 +497,9 @@ extension MarkdownTableEditingSession {
             let rowText = ns.substring(with: rowMatch.range(at: 1))
             let rowNS = rowText as NSString
             let cells = cellPattern.matches(in: rowText, range: NSRange(location: 0, length: rowNS.length)).map { match -> String in
+                // Line breaks in the HTML source are spaces; only <br> breaks a line.
                 var cell = rowNS.substring(with: match.range(at: 1))
+                    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
                 cell = tagPattern.stringByReplacingMatches(in: cell, range: NSRange(location: 0, length: (cell as NSString).length), withTemplate: "\n")
                 cell = anyTag.stringByReplacingMatches(in: cell, range: NSRange(location: 0, length: (cell as NSString).length), withTemplate: "")
                 return unescapeHTML(cell).trimmingCharacters(in: .whitespaces)

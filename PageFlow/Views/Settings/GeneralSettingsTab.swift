@@ -2,7 +2,7 @@
 //  GeneralSettingsTab.swift
 //  PageFlow
 //
-//  Settings tab for general app settings
+//  Settings pane for what every document shares: the window, the toolbar and the rail.
 //
 
 import SwiftUI
@@ -11,12 +11,6 @@ import AppKit
 struct GeneralSettingsTab: View {
     @State private var settingsManager = SettingsManager.shared
     @State private var frontmostTab: TabManager?
-
-    /// The curated font menu (`SettingsManager.markdownFontFamilies`) minus
-    /// the app default, which gets its own labeled entry at the top.
-    private static let markdownFontFamilies: [String] =
-        SettingsManager.markdownFontFamilies
-            .filter { $0 != SettingsManager.defaultMarkdownFontFamily }
 
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -38,7 +32,7 @@ struct GeneralSettingsTab: View {
                     if let appIcon = NSApp.applicationIconImage {
                         Image(nsImage: appIcon)
                             .resizable()
-                            .frame(width: 64, height: 64)
+                            .frame(width: 48, height: 48)
                     }
 
                     VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
@@ -51,124 +45,63 @@ struct GeneralSettingsTab: View {
 
                     Spacer()
                 }
-                .padding(.vertical, DesignTokens.spacingSM)
             }
 
-            Section {
-                VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
-                    HStack {
-                        Text("Toolbar size")
-                        Spacer()
-                        Text("\(Int(round(settings.toolbarScale * 100)))%")
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Slider(
-                        value: toolbarScaleBinding,
-                        in: SettingsManager.toolbarScaleRange
-                    ) {
-                        Text("Toolbar size")
-                    } minimumValueLabel: {
-                        Image(systemName: "textformat.size.smaller")
-                    } maximumValueLabel: {
-                        Image(systemName: "textformat.size.larger")
-                    }
-
-                    HStack {
-                        Spacer()
-                        Button("Reset Size") {
-                            settingsManager.resetToolbarScale()
-                        }
-                        .buttonStyle(.plain)
-                        .pageFlowClickCursor()
-                        .padding(.horizontal, DesignTokens.spacingMD)
-                        .padding(.vertical, DesignTokens.spacingXS)
-                        .pageFlowLiquidGlassSurface(
-                            .settingsAction(
-                                enabled: abs(settings.toolbarScale - SettingsManager.defaultToolbarScale) >= 0.001,
-                                activeTint: 0.08
-                            )
-                        )
-                        .disabled(abs(settings.toolbarScale - SettingsManager.defaultToolbarScale) < 0.001)
-                    }
-                }
-
-                Toggle("Magnify toolbar icons on hover", isOn: $settings.isToolbarMagnificationEnabled)
-                Toggle("Show button tooltips on hover", isOn: $settings.showTooltips)
-
+            Section("Window") {
                 Toggle("Always show top bar", isOn: $settings.isTopBarAlwaysVisible)
                 Toggle("Always show toolbar", isOn: $settings.isFloatingToolbarAlwaysVisible)
                 Toggle("Always show page number", isOn: $settings.isPageIndicatorAlwaysVisible)
                 Toggle("Compact tabs", isOn: $settings.isCompactTabsEnabled)
 
-                if let frontmostTab {
-                    @Bindable var tab = frontmostTab
-                    Toggle("Keep this window on top", isOn: $tab.isAlwaysOnTop)
-                } else {
-                    Toggle("Keep this window on top", isOn: .constant(false))
-                        .disabled(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    if let frontmostTab {
+                        @Bindable var tab = frontmostTab
+                        Toggle("Keep this window on top", isOn: $tab.isAlwaysOnTop)
+                    } else {
+                        Toggle("Keep this window on top", isOn: .constant(false))
+                            .disabled(true)
+                    }
+                    Text("Only the frontmost PageFlow window, until it closes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-            } header: {
-                Text("Window")
-            } footer: {
-                Text("Applies to the frontmost PageFlow window only. Each window is independent and resets when closed.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            }
+
+            Section("Toolbar") {
+                Slider(value: toolbarScaleBinding, in: SettingsManager.toolbarScaleRange) {
+                    HStack(spacing: DesignTokens.spacingXS) {
+                        Text("Size")
+                        Text("\(Int(round(settings.toolbarScale * 100)))%")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if abs(settings.toolbarScale - SettingsManager.defaultToolbarScale) >= 0.001 {
+                    Button("Reset Size") {
+                        settingsManager.resetToolbarScale()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                Toggle("Magnify icons on hover", isOn: $settings.isToolbarMagnificationEnabled)
+                Toggle("Show button tooltips", isOn: $settings.showTooltips)
             }
 
             Section {
                 Toggle("Show navigation rail", isOn: $settings.showNavigationRail)
+                Toggle("Show the rail only at the edge", isOn: $settings.navigationRailRevealsOnHover)
+                    .disabled(!settings.showNavigationRail)
             } header: {
                 Text("Navigation")
             } footer: {
-                Text("Show page and section markers with previews. The sidebar remains available from the toolbar and View menu.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Picker("Color scheme", selection: $settings.markdownColorScheme) {
-                    Text("System").tag(MarkdownColorScheme.system)
-                    Text("Light").tag(MarkdownColorScheme.light)
-                    Text("Dark").tag(MarkdownColorScheme.dark)
-                }
-
-                Slider(
-                    value: $settings.markdownSideMargin,
-                    in: SettingsManager.markdownSideMarginRange
-                ) {
-                    Text("Side margins: \(Int(settings.markdownSideMargin)) px")
-                } minimumValueLabel: {
-                    Image(systemName: "rectangle.expand.horizontal")
-                } maximumValueLabel: {
-                    Image(systemName: "rectangle.compress.horizontal")
-                }
-
-                Picker("Font", selection: $settings.markdownFontFamily) {
-                    Text("Default (SF Pro)").tag(SettingsManager.defaultMarkdownFontFamily)
-                    Divider()
-                    ForEach(Self.markdownFontFamilies, id: \.self) { family in
-                        Text(family).tag(family)
-                    }
-                }
-
-                Stepper(value: $settings.markdownFontSize, in: SettingsManager.markdownFontSizeRange, step: 1) {
-                    Text("Font size: \(Int(settings.markdownFontSize)) pt")
-                }
-
-                Toggle("Page look (centered reading column)", isOn: $settings.markdownPageLook)
-                Toggle("Center document when zoomed out", isOn: $settings.markdownCentersZoomedOut)
-                Toggle("Show hidden-content row", isOn: $settings.markdownShowsHiddenContentRow)
-            } header: {
-                Text("Markdown")
-            } footer: {
-                Text("Applies to the Markdown editor. Side margins set the left/right whitespace around the text (live). Headings and code scale with the base size; bold, italic, and underline work with every offered font. When zoomed out, the document pins left unless centering is on; wide tables and diagrams use the extra width either way.")
+                Text("Page and section markers with previews. The sidebar stays available from the toolbar and View menu.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .padding()
+        .scrollContentBackground(.hidden)
         .onAppear {
             frontmostTab = WindowRegistry.shared.frontmostTabManager()
         }

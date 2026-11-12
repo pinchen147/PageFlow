@@ -2,8 +2,8 @@
 
 The complete app notice resource is
 [`PageFlow/Resources/ThirdPartyNotices.txt`](PageFlow/Resources/ThirdPartyNotices.txt).
-It contains the exact license texts from the vendored engine and the dependency
-revisions recorded in
+It contains the exact license texts from the vendored engine, the vendored
+ZIPFoundation used by the EPUB reader, and the dependency revisions recorded in
 [`Package.resolved`](PageFlow.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved).
 This document records their origins; the resource carries the full notices.
 
@@ -16,6 +16,7 @@ This document records their origins; the resource carries the full notices.
 | [ElkSwift](https://github.com/lukilabs/elk-swift/tree/32f8042e3509a4819f00ff9cd46e829ec2b26da0) | 1.0.2 / `32f8042e3509a4819f00ff9cd46e829ec2b26da0` | Full EPL-2.0 `LICENSE`, upstream README acknowledgments, source-file copyright notices, and the corresponding source URL. |
 | [SwiftMath](https://github.com/mgriebling/SwiftMath/tree/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7) | 1.7.3 / `fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7` | Full MIT `LICENSE`, Copyright (c) 2023 Computer Inspirations. Font notices are retained separately as described below. |
 | [HighlighterSwift](https://github.com/smittytone/HighlighterSwift/tree/fe7aae9c9b31d3b296fd3d2dd575e1a207bb29e0) | 3.1.0 / `fe7aae9c9b31d3b296fd3d2dd575e1a207bb29e0` | Full `LICENCE.md` (MIT and BSD-3-Clause), plus `Sources/Assets/LICENCE` for the bundled highlight.js version. Both retain the upstream copyright notices. |
+| [ZIPFoundation](https://github.com/weichsel/ZIPFoundation/tree/22787ffb59de99e5dc1fbfe80b19c97a904ad48d) | 0.9.20 / `22787ffb59de99e5dc1fbfe80b19c97a904ad48d`, vendored in `Vendor/ZIPFoundation` | Full MIT `LICENSE`, Copyright (c) 2017-2025 Thomas Zoechling. The package also copies the same text into its `ZIPFoundation_ZIPFoundation.bundle` resource. |
 
 ## ElkSwift source availability
 

@@ -19,7 +19,15 @@ final class SearchManager {
         #endif
     }
 
-    var searchQuery: String = ""
+    var searchQuery: String = "" {
+        didSet {
+            guard oldValue != searchQuery else { return }
+            searchTask?.cancel()
+            searchResults = []
+            currentResultIndex = 0
+            isSearching = !searchQuery.isEmpty
+        }
+    }
     var searchResults: [PDFSelection] = []
     var currentResultIndex: Int = 0
     var isSearching: Bool = false
@@ -164,6 +172,7 @@ struct PDFFindDriver: FindDriving {
     func setQuery(_ query: String) { searchManager.searchQuery = query }
 
     var resultCount: Int { searchManager.totalResults }
+    var isSearching: Bool { searchManager.isSearching && pdfManager?.document != nil }
 
     /// 1-based focused match; `currentResultNumber` is already 0 when empty.
     var currentMatch: Int { searchManager.currentResultNumber }
@@ -175,17 +184,26 @@ struct PDFFindDriver: FindDriving {
 
     func next() {
         guard hasResults else { return }
-        pdfManager?.pushNavigationState()
         searchManager.nextResult()
+        recordJumpToCurrentResult()
     }
 
     func previous() {
         guard hasResults else { return }
-        pdfManager?.pushNavigationState()
         searchManager.previousResult()
+        recordJumpToCurrentResult()
+    }
+
+    /// A match on another page is a jump Back returns from; the view goes
+    /// there on its next update, so the page in view is still the one left.
+    private func recordJumpToCurrentResult() {
+        guard let page = searchManager.currentSelection()?.pages.first else { return }
+        pdfManager?.recordJump(to: page)
     }
 
     func clear() {
         searchManager.clearSearch()
     }
+
+    var currentMatchText: String? { searchManager.currentSelection()?.string }
 }

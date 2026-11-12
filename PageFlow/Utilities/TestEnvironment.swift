@@ -13,5 +13,5 @@ enum TestEnvironment {
     /// auto-open file panel (its modal behavior starves @MainActor tests and
     /// cascades the suite) and the quit-time save prompt (which turns finished
     /// test hosts into zombie processes).
-    static let isRunningTests = NSClassFromString("XCTestCase") != nil
+    nonisolated static let isRunningTests = NSClassFromString("XCTestCase") != nil
 }

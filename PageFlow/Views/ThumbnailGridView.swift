@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 /// PreferenceKey that collects visible cell indices.
 /// This survives SwiftUI view recreation during drag because PreferenceKey
 /// values are computed during layout, not during view lifecycle callbacks.
-private struct VisibleIndicesPreferenceKey: PreferenceKey {
+struct VisibleIndicesPreferenceKey: PreferenceKey {
     static var defaultValue: Set<Int> = []
 
     static func reduce(value: inout Set<Int>, nextValue: () -> Set<Int>) {
@@ -24,7 +24,7 @@ private struct VisibleIndicesPreferenceKey: PreferenceKey {
 
 /// Reports a cell's visibility by writing its index to VisibleIndicesPreferenceKey
 /// when the cell's frame intersects the viewport bounds.
-private struct VisibilityReporter: View {
+struct VisibilityReporter: View {
     let index: Int
     let viewportHeight: CGFloat
 
@@ -39,6 +39,18 @@ private struct VisibilityReporter: View {
                     value: isVisible ? [index] : []
                 )
         }
+    }
+}
+
+/// The mark on a bookmarked page's thumbnail, in every document type's column.
+struct ThumbnailBookmarkBadge: View {
+    var color: Color = .black
+
+    var body: some View {
+        Image(systemName: "bookmark.fill")
+            .font(.system(size: DesignTokens.thumbnailBadgeFontSize))
+            .foregroundStyle(color)
+            .padding(DesignTokens.spacingXS)
     }
 }
 
@@ -262,6 +274,8 @@ struct ThumbnailGridView: View {
                     // Visual reordering still works via ThumbnailReorderState without animation.
                 }
                 .coordinateSpace(name: "thumbnailScrollView")
+                // Thumbnails scroll with the trackpad and follow the rail; no bar of their own.
+                .scrollIndicators(.never)
                 .onPreferenceChange(VisibleIndicesPreferenceKey.self) { indices in
                     visiblePages = indices
                     autoScrollManager.visibleIndices = reorderState.isActive ? indices : []
@@ -312,7 +326,8 @@ struct ThumbnailGridView: View {
                 if let image = dragPreview.image {
                     Image(nsImage: image)
                         .resizable()
-                        .frame(width: DesignTokens.thumbnailWidth, height: DesignTokens.thumbnailHeight)
+                        .frame(width: presentation == .sidebar ? DesignTokens.sidebarThumbnailWidth : DesignTokens.thumbnailWidth,
+                               height: presentation == .sidebar ? DesignTokens.sidebarThumbnailHeight : DesignTokens.thumbnailHeight)
                         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.thumbnailCornerRadius))
                         .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
                         .position(dragPreviewPosition)
@@ -505,7 +520,7 @@ private struct ThumbnailCellView: View {
             ZStack(alignment: .topTrailing) {
                 thumbnail
                 if isBookmarked {
-                    bookmarkBadge
+                    ThumbnailBookmarkBadge()
                 }
                 if isEditing {
                     dragHandle
@@ -519,8 +534,7 @@ private struct ThumbnailCellView: View {
         .opacity(isDragging ? 0.4 : 1.0)
         .contentShape(Rectangle())
         .onTapGesture {
-            pdfManager.pushNavigationState()
-            pdfManager.goToPage(pageIndex)
+            pdfManager.jump(toPage: pageIndex)
         }
         .pointerStyle(isDragging ? .grabActive : (isEditing ? .grabIdle : .link))
         .contextMenu { if presentation == .sidebar { contextMenu } }
@@ -547,7 +561,8 @@ private struct ThumbnailCellView: View {
                 Color.clear
             }
         }
-        .frame(width: DesignTokens.thumbnailWidth, height: DesignTokens.thumbnailHeight)
+        .frame(width: presentation == .sidebar ? DesignTokens.sidebarThumbnailWidth : DesignTokens.thumbnailWidth,
+                               height: presentation == .sidebar ? DesignTokens.sidebarThumbnailHeight : DesignTokens.thumbnailHeight)
         // Fill the cell (and the letterbox bars when the page isn't A4) with the same
         // content-card surface as the comment bubbles, so a non-A4 page sits on a card
         // rather than showing the dark viewer/glass behind it.
@@ -605,13 +620,6 @@ private struct ThumbnailCellView: View {
         loadedThumbnailKey = key
     }
 
-    private var bookmarkBadge: some View {
-        Image(systemName: "bookmark.fill")
-            .font(.system(size: DesignTokens.thumbnailBadgeFontSize))
-            .foregroundStyle(.black)
-            .padding(DesignTokens.spacingXS)
-    }
-
     private var dragHandle: some View {
         VStack {
             HStack {
@@ -641,6 +649,18 @@ private struct ThumbnailCellView: View {
                 Label("Paste Page", systemImage: "doc.on.clipboard")
             }
             .disabled(!permissions.editPages || !pdfManager.canPaste)
+            Divider()
+            Group {
+                Button { pdfManager.insertBlankPage(after: pageIndex) } label: {
+                    Label("Insert Blank Page", systemImage: "doc")
+                }
+                .accessibilityHint("Adds a blank page after page \(pageIndex + 1)")
+                Button { insertPagesFromFile() } label: {
+                    Label("Insert Pages from File…", systemImage: "square.and.arrow.down.on.square")
+                }
+                .accessibilityHint("Adds the pages of another PDF after page \(pageIndex + 1)")
+            }
+            .disabled(!permissions.editPages)
             Divider()
             Group {
                 Button { rotatePage(clockwise: true) } label: {
@@ -676,6 +696,10 @@ private struct ThumbnailCellView: View {
 
     private func rotatePage(clockwise: Bool) {
         pdfManager.rotatePage(at: pageIndex, clockwise: clockwise)
+    }
+
+    private func insertPagesFromFile() {
+        WindowRegistry.shared.owner(of: pdfManager)?.insertPDFPagesFromFile(into: pdfManager, after: pageIndex)
     }
 
     private func copyPageAsMarkdown() {

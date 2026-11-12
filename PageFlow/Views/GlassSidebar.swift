@@ -21,7 +21,7 @@ struct GlassSidebarShell<Header: View, Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.spacingSM) {
+        VStack(alignment: .leading, spacing: DesignTokens.spacingXS) {
             header
                 .padding(.leading, DesignTokens.spacingMD)
                 .padding(.trailing, DesignTokens.spacingSM)
@@ -29,8 +29,6 @@ struct GlassSidebarShell<Header: View, Content: View>: View {
 
             content
         }
-        .padding(.horizontal, DesignTokens.spacingXS)
-        .padding(.vertical, DesignTokens.spacingXS)
         .frame(width: DesignTokens.sidebarWidth)
         .pageFlowLiquidGlassPanel(.sidebar)
     }
@@ -45,8 +43,8 @@ struct GlassSidebarList<Rows: View>: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) { rows }
-                .padding(.horizontal, DesignTokens.spacingMD + DesignTokens.spacingSM)
-                .padding(.bottom, DesignTokens.spacingMD)
+                .padding(.horizontal, DesignTokens.spacingSM)
+                .padding(.bottom, DesignTokens.spacingSM)
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Color.clear)
@@ -79,6 +77,8 @@ struct GlassSidebarEmptyState: View {
 
 /// The shared xmark close control in every sidebar header.
 struct GlassSidebarCloseButton: View {
+    /// What VoiceOver calls the button and its tooltip; the glyph alone is no label.
+    var label: String = "Close Sidebar"
     let action: () -> Void
 
     var body: some View {
@@ -87,8 +87,11 @@ struct GlassSidebarCloseButton: View {
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(.secondary)
                 .frame(width: DesignTokens.tabCloseButtonSize, height: DesignTokens.tabCloseButtonSize)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pageFlowClickCursor()
+        .help(label)
+        .accessibilityLabel(label)
     }
 }

@@ -18,12 +18,14 @@
 //  dropped unknown keys) is read once when no v2 blob exists.
 //
 
+import AppKit
 import Foundation
 import os.log
 
 @MainActor
 final class DocumentStateStore {
-    static let shared = DocumentStateStore()
+    /// Every tab switch saves here, so the app's store batches its writes.
+    static let shared = DocumentStateStore(defaults: AppDefaults.store, writeDelay: 1)
 
     /// Maximum number of remembered documents; least-recently-updated are pruned.
     private static let capacity = 500
@@ -38,15 +40,38 @@ final class DocumentStateStore {
         var stateObject: [String: Any]
     }
 
-    private let defaults: UserDefaults
+    /// Internal so a test can check where a store writes without writing there.
+    let defaults: UserDefaults
     private let logger = Logger(subsystem: "com.pageflow", category: "DocumentStateStore")
     private var records: [String: Record] = [:]
 
-    init(defaults: UserDefaults = .standard) {
+    /// How long saves gather before one write; zero writes at once.
+    private let writeDelay: TimeInterval
+    private var pendingWrite: DispatchWorkItem?
+    private var flushObservers: [NSObjectProtocol] = []
+
+    init(defaults: UserDefaults = AppDefaults.store, writeDelay: TimeInterval = 0) {
         self.defaults = defaults
+        self.writeDelay = writeDelay
         if let data = defaults.data(forKey: Self.storageKey) ?? defaults.data(forKey: Self.legacyStorageKey) {
             records = decodeRecords(data)
         }
+        guard writeDelay > 0 else { return }
+        // Quitting, or another app taking over (which may be followed by a
+        // force quit), writes what is still waiting.
+        flushObservers = [NSApplication.willTerminateNotification, NSApplication.didResignActiveNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.flush() }
+            }
+        }
+    }
+
+    /// Writes any saves still gathering.
+    func flush() {
+        guard let pending = pendingWrite else { return }
+        pending.cancel()
+        pendingWrite = nil
+        persist()
     }
 
     // MARK: - Access
@@ -57,8 +82,16 @@ final class DocumentStateStore {
         return records[key]?.state
     }
 
+    #if DEBUG
+    /// Saves taken, for `CountBudgetTests`.
+    private(set) var debugSaveCount = 0
+    #endif
+
     /// Records `state` for `url`, pruning the oldest entries past capacity.
     func save(_ state: DocumentViewState, for url: URL) {
+        #if DEBUG
+        debugSaveCount += 1
+        #endif
         guard let key = Self.key(for: url), let object = Self.jsonObject(of: state) else { return }
         // The keys this build writes are replaced wholesale (a field now nil is
         // gone); keys it does not know stay exactly as stored.
@@ -66,7 +99,20 @@ final class DocumentStateStore {
         merged.merge(object) { _, new in new }
         records[key] = Record(state: state, updatedAt: Date(), stateObject: merged)
         pruneIfNeeded()
-        persist()
+        schedulePersist()
+    }
+
+    private func schedulePersist() {
+        guard writeDelay > 0 else { return persist() }
+        guard pendingWrite == nil else { return }
+        let write = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.pendingWrite = nil
+                self?.persist()
+            }
+        }
+        pendingWrite = write
+        DispatchQueue.main.asyncAfter(deadline: .now() + writeDelay, execute: write)
     }
 
     // MARK: - Identity

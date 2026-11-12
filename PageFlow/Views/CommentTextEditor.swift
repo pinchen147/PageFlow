@@ -12,18 +12,30 @@ struct CustomTextEditor: NSViewRepresentable {
     @Binding var text: String
     @FocusState var isFocused: Bool
     @Binding var calculatedHeight: CGFloat
+    let fieldLabel: String
     var onCommit: () -> Void = {}
+    /// Takes the keyboard on opening, however late the window arrives.
+    var takesFocusOnAppear = false
+    var annotationOwner: AnyObject?
+    /// EPUB supplies its book colors; omitted inputs keep PDF's native defaults.
+    var textColor: NSColor? = nil
+    var colorScheme: ColorScheme? = nil
+    /// An explicit Edit request, independent of appearance-only updates.
+    var focusRevision: Int? = nil
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         let textView = CommentTextView()
+        textView.takesFocusOnAppear = takesFocusOnAppear
+        textView.annotationOwner = annotationOwner
 
         textView.delegate = context.coordinator
         textView.onCommit = onCommit
         textView.isRichText = false
-        textView.allowsUndo = false
+        textView.allowsUndo = true
         textView.font = NSFont.systemFont(ofSize: DesignTokens.commentFontSize)
-        textView.textColor = DesignTokens.commentTextNSColor.withAlphaComponent(0.9)
+        textView.textColor = (textColor ?? DesignTokens.commentTextNSColor).withAlphaComponent(0.9)
+        configureBookAppearance(textView)
         textView.backgroundColor = .clear
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
@@ -45,6 +57,8 @@ struct CustomTextEditor: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? CommentTextView else { return }
 
+        textView.setAccessibilityLabel(fieldLabel)
+        textView.annotationOwner = annotationOwner
         context.coordinator.onTextChange = { [weak scrollView] newText in
             guard scrollView != nil else { return }
             text = newText
@@ -56,13 +70,18 @@ struct CustomTextEditor: NSViewRepresentable {
 
         if textView.string != text {
             textView.string = text
+            // The typing history's ranges are for the text it replaced.
+            context.coordinator.undoManager.removeAllActions()
         }
 
-        textView.textColor = DesignTokens.commentTextNSColor.withAlphaComponent(0.9)
+        textView.textColor = (textColor ?? DesignTokens.commentTextNSColor).withAlphaComponent(0.9)
+        configureBookAppearance(textView)
         textView.onCommit = onCommit
 
-        if isFocused && scrollView.window?.firstResponder != textView {
-            scrollView.window?.makeFirstResponder(textView)
+        let requestsFocus = focusRevision.map { context.coordinator.lastFocusRevision != $0 } ?? isFocused
+        if requestsFocus, let window = scrollView.window {
+            if window.firstResponder !== textView { window.makeFirstResponder(textView) }
+            context.coordinator.lastFocusRevision = focusRevision
         }
 
         if let textContainer = textView.textContainer,
@@ -77,13 +96,31 @@ struct CustomTextEditor: NSViewRepresentable {
         }
     }
 
+    private func configureBookAppearance(_ textView: CommentTextView) {
+        guard let colorScheme, let appearance = NSAppearance(named: colorScheme == .dark ? .darkAqua : .aqua) else { return }
+        if textView.appearance?.name != appearance.name { textView.appearance = appearance }
+        textView.insertionPointColor = (textColor ?? DesignTokens.commentTextNSColor).withAlphaComponent(0.9)
+        appearance.performAsCurrentDrawingAppearance {
+            textView.selectedTextAttributes = [
+                .foregroundColor: NSColor.selectedTextColor.usingColorSpace(.sRGB) ?? .selectedTextColor,
+                .backgroundColor: NSColor.selectedTextBackgroundColor.usingColorSpace(.sRGB) ?? .selectedTextBackgroundColor
+            ]
+        }
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        var lastFocusRevision: Int?
         var onTextChange: ((String) -> Void)?
         var onHeightChange: ((CGFloat) -> Void)?
+        /// The typing in this comment, undone in the field. Its own stack: the
+        /// window's would outlive the editor and carry over to the next comment.
+        let undoManager = UndoManager()
+
+        func undoManager(for view: NSTextView) -> UndoManager? { undoManager }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
@@ -100,9 +137,27 @@ struct CustomTextEditor: NSViewRepresentable {
 }
 
 final class CommentTextView: NSTextView {
+    weak var annotationOwner: AnyObject?
+
+    static func owns(_ responder: NSResponder?, owner: AnyObject) -> Bool {
+        guard let editor = responder as? CommentTextView, editor.isEditable,
+              let window = editor.window, window.firstResponder === editor else { return false }
+        return editor.annotationOwner === owner
+    }
+
     var onCommit: () -> Void = {}
+    var takesFocusOnAppear = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard takesFocusOnAppear, let window else { return }
+        takesFocusOnAppear = false
+        window.makeFirstResponder(self)
+    }
 
     override func keyDown(with event: NSEvent) {
+        // Return during an input method's composition is the composition's.
+        guard !hasMarkedText() else { return super.keyDown(with: event) }
         let isReturn = event.keyCode == 36
         let isShiftPressed = event.modifierFlags.contains(.shift)
 

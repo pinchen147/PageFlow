@@ -2,8 +2,8 @@
 //  PrintPanel.swift
 //  PageFlow
 //
-//  Runs the modal AppKit print panel for a PDF document. UI-layer helper so
-//  PDFManager stays out of print orchestration.
+//  Runs the modal AppKit print panel for a PDF, a note or a book. UI-layer helper
+//  so the document managers stay out of print orchestration.
 //
 
 import AppKit
@@ -55,14 +55,44 @@ func runMarkdownPrintPanel(jobTitle: String, makePrintView: (_ pageWidth: CGFloa
     present(printOperation)
 }
 
-/// The modal tail shared by both print paths: show the panel + progress, sheet onto
-/// the key window when there is one, else run app-modal (an edge case — never sheet
-/// onto a throwaway NSWindow that never closes).
+/// Print settings for a book: its pages carry their own margins and fill the paper,
+/// so the panel's paper and orientation decide the whole layout. The text's size is
+/// the reader's, so there is no scale. A COPY, as for Markdown, so the shared
+/// settings keep their margins.
 @MainActor
-private func present(_ printOperation: NSPrintOperation) {
+func makeEPUBPrintInfo() -> NSPrintInfo {
+    let printInfo = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
+    printInfo.leftMargin = 0
+    printInfo.rightMargin = 0
+    printInfo.topMargin = 0
+    printInfo.bottomMargin = 0
+    printInfo.horizontalPagination = .clip
+    printInfo.verticalPagination = .clip
+    printInfo.scalingFactor = 1
+    printInfo.isHorizontallyCentered = false
+    printInfo.isVerticallyCentered = false
+    return printInfo
+}
+
+/// The operation for a laid-out book. A view's panel starts with copies and page
+/// range alone; a book also takes its paper and orientation from it.
+@MainActor
+func makeEPUBPrintOperation(view: EPUBPrintView, printInfo: NSPrintInfo, jobTitle: String) -> NSPrintOperation {
+    let printOperation = NSPrintOperation(view: view, printInfo: printInfo)
+    printOperation.jobTitle = jobTitle
+    printOperation.printPanel.options.formUnion([.showsPaperSize, .showsOrientation, .showsPreview])
+    return printOperation
+}
+
+/// The modal tail shared by every print path: show the panel + progress, sheet onto
+/// `parent` (the key window, unless the caller has waited and knows better) when there
+/// is one, else run app-modal (an edge case — never sheet onto a throwaway NSWindow
+/// that never closes).
+@MainActor
+func present(_ printOperation: NSPrintOperation, parent: NSWindow? = NSApp.keyWindow) {
     printOperation.showsPrintPanel = true
     printOperation.showsProgressPanel = true
-    if let window = NSApp.keyWindow {
+    if let window = parent {
         printOperation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
     } else {
         printOperation.run()

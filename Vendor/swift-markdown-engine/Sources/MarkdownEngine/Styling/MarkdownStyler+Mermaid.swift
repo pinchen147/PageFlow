@@ -3,13 +3,11 @@
 //  MarkdownEngine
 //
 //  Rendered block diagrams (```` ```mermaid ````, …). The diagram peer of the
-//  block-LaTeX pass: an INACTIVE fenced block whose info-string names a diagram
-//  language is handed to ``BlockDiagramRenderer`` and, when it renders, collapses
-//  to a centered standalone image (raw source hidden via the shared collapse
-//  primitive, its height reserved). A `nil` render — unsupported language,
-//  broken source, or the no-op renderer — or an ACTIVE block (caret inside)
-//  emits nothing, leaving the ordinary code block ``MarkdownASTStyler`` already
-//  styled: the "never lie, show the source" contract.
+//  block-LaTeX pass: a recognized fenced block whose info-string names a diagram
+//  language is handed to the diagram renderer and collapses to its image.
+//  Only a deliberate click on the rendered object edits its source content;
+//  ordinary caret/selection movement keeps it rendered. Fallback code remains
+//  readable, with recognized fences concealed by the AST styler.
 //
 
 import AppKit
@@ -37,10 +35,10 @@ extension MarkdownStyler {
         let rasterScale = (ctx.layoutBridge?.firstTextContainer?.textView as? NativeTextView)?
             .blockRasterScale ?? 2
 
-        for (idx, token, language) in ctx.scopedMermaid {
-            // Caret inside → leave the ordinary code block MarkdownASTStyler
-            // already styled (source revealed).
-            guard !ctx.activeTokenIndices.contains(idx) else { continue }
+        for (_, token, language) in ctx.scopedMermaid {
+            // Only an explicit object click edits the diagram content. The AST
+            // pass still conceals the fences while that content is editable.
+            guard !ctx.isEditingRenderedSource(token) else { continue }
             guard let paraRange = token.standaloneParagraphRange(in: ctx.nsText) else { continue }
 
             let rawContent = ctx.nsText.substring(with: token.contentRange)

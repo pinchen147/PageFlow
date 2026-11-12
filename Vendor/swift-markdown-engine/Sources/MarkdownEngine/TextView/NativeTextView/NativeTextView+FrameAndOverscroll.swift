@@ -407,11 +407,14 @@ extension NativeTextView {
         targetWidth: CGFloat? = nil,
         debugTag: String = "?"
     ) {
+        // A SwiftUI mount updates the editor before it has a viewport. The first
+        // real width rewraps the text and measures it in setFrameSize.
+        guard scrollView.contentView.bounds.width > 0 else { return }
         scrollView.contentInsets.bottom = 0
 
         let lineHeight = layoutBridgeDefaultLineHeight(for: self.baseFont, using: layoutBridge)
         // File switch/resize forces full layout until height settles; typing stays O(edit).
-        if debugTag == "?" { pendingFullLayoutMeasure = true }
+        if debugTag == "?", !owesFullMeasureAfterStyling { pendingFullLayoutMeasure = true }
         let measured = measuredBaseContentHeight(
             minimumHeight: lineHeight,
             forceFullLayout: pendingFullLayoutMeasure
@@ -547,7 +550,7 @@ extension NativeTextView {
             #if DEBUG
             let started = CACurrentMediaTime()
             #endif
-            PerfTrace.time("overscroll.fullMeasure") { textLayoutManager.ensureLayout(for: textLayoutManager.documentRange) }
+            PerfTrace.time("overscroll.fullMeasure") { textLayoutManager.ensureLayout(for: textLayoutManager.documentRange) } // whole-note-layout: the gate's counterpart, which long notes skip
             #if DEBUG
             anchorTrace(String(format: "FULLMEASURE: whole-note layout took %.0f ms (docH %.0f)",
                                (CACurrentMediaTime() - started) * 1000, textLayoutManager.usageBoundsForTextContainer.height))
@@ -638,6 +641,31 @@ extension NativeTextView {
         return max(ceil(rawHeight + (textContainerInset.height * 2)), minimumContentHeight)
     }
 
+    /// Uses the same unscaled row and lane as wrapping/column placement. Native
+    /// magnification changes clip bounds, but never the viewport's frame width.
+    var unscaledReadingRowWidth: CGFloat? {
+        guard let scroll = enclosingScrollView else { return nil }
+        let width = scroll.contentView.frame.width
+        let inset = configuration.horizontalLayoutInset
+        let reserve = commentLaneReserve
+        guard width.isFinite, width > 0,
+              [inset, reserve].allSatisfy({ $0.isFinite && $0 >= 0 }) else { return nil }
+        let row: CGFloat
+        if let reading = configuration.readingWidth {
+            guard reading.isFinite, reading > 0 else { return nil }
+            row = max(readingColumnWidth, readingColumnWidth - inset + reserve)
+        } else {
+            row = max(width - inset * 2 - reserve, 1) + inset * 2 + reserve
+        }
+        return row.isFinite && row > 0 ? row : nil
+    }
+
+    var readingRowFitsViewportWidth: Bool {
+        guard let scroll = enclosingScrollView, let row = unscaledReadingRowWidth,
+              scroll.magnification.isFinite, scroll.magnification > 0 else { return false }
+        return scroll.magnification <= scroll.contentView.frame.width / row + 1e-9
+    }
+
     /// Fixed reading-column width = wrap width + horizontal insets on both sides.
     var readingColumnWidth: CGFloat {
         (configuration.readingWidth ?? 0) + configuration.horizontalLayoutInset * 2
@@ -669,27 +697,13 @@ extension NativeTextView {
         (superview as? NativeTextViewContainer)?.textViewDidResize()
     }
 
-    /// Re-center the column by moving its X (not resizing it) so it stays smooth during live resize.
-    func centerReadingColumn(forClipWidth clipWidth: CGFloat) {
+    /// Reading geometry shares one transaction with its document extent. Native
+    /// zoom calls this at completion; ordinary window/configuration changes center normally.
+    func centerReadingColumn(forClipWidth clipWidth: CGFloat, preservingViewport: Bool = false) {
         guard configuration.readingWidth != nil,
+              (enclosingScrollView as? ClampedScrollView)?.isApplyingNativeMagnification != true,
               let container = superview as? NativeTextViewContainer else { return }
-        if abs(container.frame.size.width - clipWidth) > 0.5 {
-            var f = container.frame
-            f.size.width = max(clipWidth, 0)
-            container.frame = f
-        }
-        var originX = floor(max(0, (clipWidth - readingColumnWidth) / 2))
-        // the reference editor's comment lane: the text ends at least `commentLaneReserve`
-        // from the right edge, centred when there is room.
-        if commentLaneReserve > 0 {
-            let limit = clipWidth - commentLaneReserve - (readingColumnWidth - configuration.horizontalLayoutInset)
-            originX = floor(max(0, min(originX, limit)))
-        }
-        let delta = originX - frame.origin.x
-        if abs(delta) > 0.5 {
-            setFrameOrigin(NSPoint(x: originX, y: frame.origin.y))
-            repositionWideTableOverlaysForWidthChange(insetDelta: delta)
-        }
+        container.centerReadingColumn(forClipWidth: clipWidth, preservingViewport: preservingViewport)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -712,7 +726,7 @@ extension NativeTextView {
             // canvas growth, and the full-document measure — the expensive part
             // of every zoom settle — is skipped. A pinned-wrap CHANGE (window
             // resize while zoomed) re-arms the flag in applyZoomWrapPinning.
-            if textContainer?.widthTracksTextView ?? true {
+            if textContainer?.widthTracksTextView ?? true, !owesFullMeasureAfterStyling {
                 pendingFullLayoutMeasure = true
             }
             isApplyingManagedFrameSize = true
@@ -867,6 +881,17 @@ extension NativeTextView {
     }
 
     private func performZoomRefit() {
+        // A zoom scrolls no observer's way while it runs: what a later resize lands on.
+        defer {
+            if let coordinator = delegate as? NativeTextViewCoordinator {
+                coordinator.lastReadingPosition = readingPosition() ?? coordinator.lastReadingPosition
+                coordinator.scheduleWidthFit()
+            }
+        }
+        // The column centers in the clip's bounds, which the zoom just changed.
+        if configuration.readingWidth != nil, let clipWidth = enclosingScrollView?.contentView.bounds.width {
+            centerReadingColumn(forClipWidth: clipWidth)
+        }
         guard configuration.readingWidth == nil else { return }
         #if DEBUG
         let originBefore = enclosingScrollView?.contentView.bounds.origin.y ?? .nan

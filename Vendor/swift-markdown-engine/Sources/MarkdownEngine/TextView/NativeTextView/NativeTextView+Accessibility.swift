@@ -10,11 +10,17 @@
 import AppKit
 
 extension NativeTextView {
-    /// NSTextView owns its AX children, so append the selected image's handles explicitly.
+    /// NSTextView owns its AX children, so append the selected image's handles
+    /// and the rendered tables (AXTables of rows and cells) explicitly.
     override func accessibilityChildren() -> [Any]? {
         var children = super.accessibilityChildren() ?? []
         guard let coordinator = delegate as? NativeTextViewCoordinator else { return children }
         children.append(contentsOf: coordinator.foldControls?.accessibilityControls ?? [])
+        children.append(contentsOf: renderedTableAccessibilityElements())
+        if let grid = coordinator.tableEditingSession.grid, grid.window != nil, !grid.isHiddenOrHasHiddenAncestor,
+           !children.contains(where: { ($0 as AnyObject) === grid }) {
+            children.append(grid)
+        }
         guard let controls = coordinator.imageControls else { return children }
         let group = controls.resizeAccessibilityGroup
         children.removeAll { ($0 as AnyObject) === group }

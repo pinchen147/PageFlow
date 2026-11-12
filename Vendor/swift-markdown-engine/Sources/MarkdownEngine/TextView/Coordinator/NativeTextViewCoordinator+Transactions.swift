@@ -11,7 +11,13 @@ extension NativeTextViewCoordinator {
 
     func finishComposition(in textView: NativeTextView) {
         guard !isComposing(in: textView) else { return }
-        defer { textView.resumeCompletedImageImports() }
+        defer {
+            normalizeCommittedListCaret(in: textView)
+            textView.resumeCompletedImageImports()
+            resumeAppearanceRefresh()
+            scheduleWidthFit()
+        }
+        finishEmphasisComposition(in: textView)
         guard pendingCompositionRefresh else {
             finishPendingFind(in: textView)
             return
@@ -57,6 +63,15 @@ extension NativeTextViewCoordinator {
     }
 
     func cancelDocumentWork() {
+        widthFitWorkItem?.cancel()
+        widthFitWorkItem = nil
+        lastWidthFitGeometry = nil
+        pendingAppearanceRefresh = false
+        appearanceRefreshScheduled = false
+        appearanceRestyleRanges.removeAll()
+        appearanceSourceGeneration = -1
+        appearanceRestyleChunkSize = Self.deferredRestyleChunk / 4
+        emphasisEditor = MarkdownEmphasisEditorState()
         invalidateSectionNavigation()
         blockMover.cancelIndexPreparation()
         foldIndexTask?.cancel()

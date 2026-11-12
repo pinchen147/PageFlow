@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import EPUBKit
 import SwiftUI
 
 enum PageFlowWindowIdentifiers {
@@ -33,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let isSecurityScoped: Bool
     }
 
-    private let firstLaunchManager = FirstLaunchManager()
+    let firstLaunchManager = FirstLaunchManager()
     let recentFilesManager = RecentFilesManager()
     private var didFinishLaunching = false
     private var recoveryRestoreTask: Task<Void, Never>?
@@ -56,6 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// leftover empty default WindowGroup window is reaped. Finder launch-opens stay
     /// in `pendingDocumentOpens` (the default window) and de-dup by canonical URL.
     private(set) var pendingRestoreWindows: [WindowSessionState] = []
+
+    /// Takes one restored window into full screen; a test seam too, since a
+    /// test host's windows can't.
+    var enterFullScreen: (NSWindow) -> Void = { $0.toggleFullScreen(nil) }
+    private var fullScreenRestoreObservers: [NSObjectProtocol] = []
 
     var pendingURLs: [URL] {
         pendingDocumentOpens.map(\.url)
@@ -87,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static func makeHostedWindow(contentView: some View, contentSize: NSSize) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -97,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⌘T/⌘W menu commands read via `.focusedSceneValue` — to a manually
         // created NSWindow. (A nested hosting subview does not bridge.)
         window.contentView = NSHostingView(rootView: contentView)
-        // Canonical hidden-titlebar chrome (adds .fullSizeContentView). Applied
+        // Canonical hidden-titlebar chrome. Applied
         // here at construction so the window never flashes a solid titlebar
         // before WindowChromeController installs via the SwiftUI content.
         WindowChromeController.applyHiddenTitlebarChrome(to: window)
@@ -110,7 +116,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         with contentView: some View,
         screenPoint: CGPoint? = nil,
         frame: NSRect? = nil,
-        animatePresentation: Bool = true
+        animatePresentation: Bool = true,
+        makeKey: Bool = true
     ) -> NSWindow {
         let contentSize = frame?.size
             ?? NSSize(width: DesignTokens.defaultWindowWidth, height: DesignTokens.defaultWindowHeight)
@@ -148,11 +155,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         defer { window.animationBehavior = originalAnimationBehavior }
         if !animatePresentation { window.animationBehavior = .none }
         #if DEBUG
-        if QAPresentation.runsInBackground { QAPresentation.show(window) }
-        else { windowController.showWindow(nil) }
-        #else
-        windowController.showWindow(nil)
+        if QAPresentation.runsInBackground {
+            QAPresentation.show(window)
+            return window
+        }
         #endif
+        if makeKey { windowController.showWindow(nil) }
+        else { window.orderFront(nil) }
         return window
     }
 
@@ -164,22 +173,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         with tabManager: TabManager,
         screenPoint: CGPoint? = nil,
         frame: NSRect? = nil,
-        animatePresentation: Bool = true
+        animatePresentation: Bool = true,
+        makeKey: Bool = true
     ) -> NSWindow? {
         guard let builder = windowContentBuilder else {
             assertionFailure("windowContentBuilder not installed")
             return nil
         }
         return createNewWindow(with: builder(tabManager), screenPoint: screenPoint, frame: frame,
-                               animatePresentation: animatePresentation)
+                               animatePresentation: animatePresentation, makeKey: makeKey)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Audio copied out for a book's narration, left by a quit or crash.
+        Task.detached(priority: .background) { _ = EPUBExtractedAudio.staleCopiesCleared }
+        // Book snapshots a crash left. A test host shares this folder with the real app.
+        if !TestEnvironment.isRunningTests { EPUBBook.removeLeftoverFileSnapshots() }
         #if DEBUG
         QAPresentation.prepare()
         #endif
         if !TestEnvironment.isRunningTests { firstLaunchManager.handleFirstLaunch() }
         ShortcutMenuRefresh.install()
+        if !TestEnvironment.isRunningTests { TabCycleKeyboard.shared.install() }
+        MemoryPressureMonitor.shared.start()
         #if DEBUG
         RestoreOpenQA.prepareIfRequested(delegate: self)
         #endif
@@ -304,32 +320,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard windowContentBuilder != nil, !pendingRestoreWindows.isEmpty else { return }
         let windows = pendingRestoreWindows
         pendingRestoreWindows = []
+        restoreWindows(windows)
+    }
 
-        var didCreateWindow = false
+    /// Opens saved windows back to front, so the last one ends in front.
+    func restoreWindows(_ windows: [WindowSessionState]) {
+        var fullScreen: [NSWindow] = []
+        var front: NSWindow?
         for window in windows {
-            if materializeRestoreWindow(window) { didCreateWindow = true }
+            guard let native = materializeRestoreWindow(window) else { continue }
+            front = native
+            if window.placement?.isFullScreen == true { fullScreen.append(native) }
         }
 
         // Reap the empty default WindowGroup window left behind by launch (a no-op
         // if it adopted a Finder launch-open and is no longer a placeholder). Reuses
         // the same deferred placeholder-dismissal machinery as an external open.
-        if didCreateWindow {
-            WindowRegistry.shared.dismissTransientPlaceholderWindowForExternalOpen()
-        }
+        guard let front else { return }
+        makeRestoredWindowKey(front)
+        WindowRegistry.shared.dismissTransientPlaceholderWindowForExternalOpen()
+        if !fullScreen.isEmpty { enterFullScreen(fullScreen, thenRaising: front) }
     }
 
-    /// Builds one restore window; returns whether a window was actually created
-    /// (false when every tab failed to resolve or de-duped into another window).
-    private func materializeRestoreWindow(_ window: WindowSessionState) -> Bool {
+    private func makeRestoredWindowKey(_ window: NSWindow) {
+        #if DEBUG
+        guard !QAPresentation.runsInBackground else { return }
+        #endif
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// AppKit runs one full-screen transition at a time, and each moves to its
+    /// own Space, so they go in turn and the front window is raised after. One
+    /// that can't enter just loses its turn.
+    private func enterFullScreen(_ windows: [NSWindow], thenRaising front: NSWindow?) {
+        fullScreenRestoreObservers.forEach(NotificationCenter.default.removeObserver(_:))
+        fullScreenRestoreObservers = []
+        guard let window = windows.first else {
+            if let front { makeRestoredWindowKey(front) }
+            return
+        }
+        fullScreenRestoreObservers = [NSWindow.didEnterFullScreenNotification, .pageFlowWindowDidFailToEnterFullScreen].map { name in
+            NotificationCenter.default.addMainActorObserver(forName: name, object: window) { [weak self] in
+                self?.enterFullScreen(Array(windows.dropFirst()), thenRaising: front)
+            }
+        }
+        enterFullScreen(window)
+    }
+
+    /// Builds one restore window; returns it, or nil when none was created
+    /// (every tab failed to resolve or de-duped into another window).
+    private func materializeRestoreWindow(_ window: WindowSessionState) -> NSWindow? {
         // Resolve each surviving tab exactly once; the pure `filteringReopenable`
         // remaps the active index across the skipped (unresolvable) tabs.
         var resolvedByPath: [String: ResolvedRestoreURL] = [:]
+        // A file on an unmounted volume may be back next launch; one missing
+        // from a mounted volume is gone.
+        var unavailable: [RestoreTab] = []
         guard let reopenable = window.filteringReopenable({ tab in
-            guard let resolved = resolveRestoreTab(tab) else { return false }
+            guard let resolved = resolveRestoreTab(tab) else {
+                if URL(fileURLWithPath: tab.path).pageFlowVolumeIsOffline { unavailable.append(tab) }
+                return false
+            }
             resolvedByPath[tab.path] = resolved
             return true
         }) else {
-            return false
+            WindowRegistry.shared.hold(unavailableTabs: unavailable, placement: window.placement)
+            return nil
         }
 
         let tabManager = TabManager()
@@ -338,24 +394,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var activeURL: URL?
         for (index, tab) in reopenable.tabs.enumerated() {
             guard let resolved = resolvedByPath[tab.path] else { continue }
-            tabManager.openDocument(url: resolved.url, isSecurityScoped: resolved.isSecurityScoped)
+            tabManager.openDocument(url: resolved.url, isSecurityScoped: resolved.isSecurityScoped, bringsToFront: false)
             if index == reopenable.activeIndex { activeURL = resolved.url }
+            // Its original bookmark, should the download fail.
+            if tabManager.downloadingURLs.contains(resolved.url) { unavailable.append(tab) }
             resolved.stopAccess()
         }
 
         // Every file de-duped into an already-open window → don't spawn an empty one.
         // A window whose files are still downloading isn't empty: it opens them
         // when they land, and without it they'd open nowhere.
-        guard tabManager.captureWindowSession() != nil || !tabManager.downloadingURLs.isEmpty else { return false }
+        guard tabManager.captureWindowSession() != nil else {
+            WindowRegistry.shared.hold(unavailableTabs: unavailable, placement: window.placement)
+            return nil
+        }
+        tabManager.heldRestoreTabs = unavailable
 
         // By file, not position: a tab that de-duped into another window is
         // missing here, which shifts every position after it.
-        if let activeURL, let activeID = tabManager.tabID(for: activeURL) {
-            tabManager.selectTab(activeID)
-        }
-        guard let nativeWindow = createNewWindow(with: tabManager) else { return false }
+        tabManager.prepareRestoredWindow(selectedURL: activeURL)
+        let frame = window.placement?.restoredFrame(onScreens: NSScreen.screens.map(\.visibleFrame))
+        guard let nativeWindow = createNewWindow(with: tabManager, frame: frame, makeKey: false) else { return nil }
         WindowRegistry.shared.register(tabManager, window: nativeWindow)
-        return true
+        return nativeWindow
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -425,8 +486,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        if !TestEnvironment.isRunningTests { EPUBBook.removeAllFileSnapshots() }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        // Generated windows can all close between test steps; only the runner
+        // should end an app-hosted test process.
+        !TestEnvironment.isRunningTests
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

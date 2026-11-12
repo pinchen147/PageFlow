@@ -108,7 +108,8 @@ struct FileDropOverlay: View {
                     VStack(spacing: DesignTokens.spacingMD) {
                         HStack(alignment: .bottom, spacing: DesignTokens.fileDropGlyphSpacing) {
                             glyph(ContentKind.pdf.tabIconSystemName, tilt: -DesignTokens.fileDropGlyphTilt)
-                            glyph("doc.on.doc", tilt: 0)
+                            // One glyph per kind of document a drop can open.
+                            glyph(ContentKind.epub.tabIconSystemName, tilt: 0)
                                 .offset(y: -DesignTokens.fileDropGlyphLift)
                             // The app's Markdown-file glyph ("Copy Page as Markdown"); the
                             // Markdown tab's bare lines don't read as a file in the fan.

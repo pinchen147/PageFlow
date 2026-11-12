@@ -67,31 +67,34 @@ final class SettingsManager {
             set { hex = Self.colorToHex(newValue) }
         }
 
+        /// A preset's colour from its hex form (EPUB highlights store the hex).
+        static func color(fromHex hex: String) -> NSColor? { hexToColor(hex) }
+
+        static func hex(from color: NSColor) -> String { colorToHex(color) }
+
+        nonisolated static func colorsMatch(_ lhs: String, _ rhs: String) -> Bool {
+            if lhs == rhs { return true }
+            guard let left = rgbaValue(lhs), let right = rgbaValue(rhs) else { return false }
+            return left == right
+        }
+
+        /// Six-digit presets are opaque. The color picker also writes an alpha byte.
+        nonisolated private static func rgbaValue(_ hex: String) -> UInt32? {
+            let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+            let digits = trimmed.hasPrefix("#") ? trimmed.dropFirst() : trimmed[...]
+            guard digits.count == 6 || digits.count == 8, digits.allSatisfy(\.isHexDigit),
+                  let value = UInt32(digits, radix: 16) else { return nil }
+            return digits.count == 6 ? (value << 8) | 0xFF : value
+        }
+
         private static func hexToColor(_ hex: String) -> NSColor? {
-            var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-            hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
-
-            var rgba: UInt64 = 0
-            Scanner(string: hexSanitized).scanHexInt64(&rgba)
-
-            // Support both #RRGGBB (6 chars) and #RRGGBBAA (8 chars)
-            // Use sRGB color space for consistency with DesignTokens
-            if hexSanitized.count == 6 {
-                return NSColor(
-                    srgbRed: CGFloat((rgba & 0xFF0000) >> 16) / 255.0,
-                    green: CGFloat((rgba & 0x00FF00) >> 8) / 255.0,
-                    blue: CGFloat(rgba & 0x0000FF) / 255.0,
-                    alpha: 1.0
-                )
-            } else if hexSanitized.count == 8 {
-                return NSColor(
-                    srgbRed: CGFloat((rgba & 0xFF000000) >> 24) / 255.0,
-                    green: CGFloat((rgba & 0x00FF0000) >> 16) / 255.0,
-                    blue: CGFloat((rgba & 0x0000FF00) >> 8) / 255.0,
-                    alpha: CGFloat(rgba & 0x000000FF) / 255.0
-                )
-            }
-            return nil
+            guard let rgba = rgbaValue(hex) else { return nil }
+            return NSColor(
+                srgbRed: CGFloat((rgba >> 24) & 0xFF) / 255,
+                green: CGFloat((rgba >> 16) & 0xFF) / 255,
+                blue: CGFloat((rgba >> 8) & 0xFF) / 255,
+                alpha: CGFloat(rgba & 0xFF) / 255
+            )
         }
 
         private static func colorToHex(_ color: NSColor) -> String {
@@ -156,7 +159,11 @@ final class SettingsManager {
         static let toolbarMagnificationEnabled = "settings.toolbarMagnificationEnabled"
         static let showTooltips = "settings.showTooltips"
         static let showNavigationRail = "settings.showNavigationRail"
+        static let navigationRailRevealsOnHover = "settings.navigationRailRevealsOnHover"
         static let markdownColorScheme = "settings.markdownColorScheme"
+        static let bookTheme = "settings.bookTheme"
+        static let bookFontFamily = "settings.bookFontFamily"
+        static let bookFontName = "settings.bookFontName"
         static let markdownSideMargin = "settings.markdownSideMargin"
         static let markdownFontFamily = "settings.markdownFontFamily"
         static let markdownFontSize = "settings.markdownFontSize"
@@ -212,7 +219,8 @@ final class SettingsManager {
 
     // MARK: - Properties
 
-    private let defaults: UserDefaults
+    /// Internal so a test can check where this writes without writing there.
+    let defaults: UserDefaults
     private var isLoading = false
 
     var highlightPresets: [ColorPreset] = defaultHighlightPresets {
@@ -236,6 +244,34 @@ final class SettingsManager {
 
     /// Posted when a shortcut changes, for the open editors to rebind live.
     static let shortcutsDidChange = Notification.Name("PageFlow.shortcutsDidChange")
+
+    /// A deliberate Settings save chooses one binding across the old content
+    /// contexts. Bulk loads/imports keep both original values for disclosure.
+    func setShortcut(_ shortcut: ShortcutModel, for actionID: String) {
+        let canonical = ShortcutCatalog.canonicalID(for: actionID)
+        let conflicts = ShortcutCatalog.conflictingBindings(forCombo: shortcut, excluding: canonical, saved: customShortcuts)
+        var saved = customShortcuts
+        // Materialize both sides before clearing either one: a PDF replacement
+        // can leave the same shared action's Markdown choice intact.
+        for action in ShortcutCatalog.all where conflicts.contains(where: { $0.action.id == action.id }) {
+            if let legacy = ShortcutCatalog.legacyMarkdownIDs[action.id] {
+                saved[action.id] = ShortcutCatalog.shortcut(for: action.id, saved: customShortcuts)
+                saved[legacy] = ShortcutCatalog.shortcut(for: legacy, saved: customShortcuts)
+            }
+        }
+        for conflict in conflicts { saved[conflict.binding.id] = ShortcutModel.none }
+        saved[canonical] = shortcut
+        if let legacy = ShortcutCatalog.legacyMarkdownIDs[canonical] { saved.removeValue(forKey: legacy) }
+        customShortcuts = saved
+    }
+
+    func shortcutDiscrepancy(for actionID: String) -> String? {
+        let canonical = ShortcutCatalog.canonicalID(for: actionID)
+        guard let legacyID = ShortcutCatalog.legacyMarkdownIDs[canonical], let markdown = customShortcuts[legacyID] else { return nil }
+        let pages = ShortcutCatalog.shortcut(for: canonical, saved: customShortcuts)
+        guard pages != markdown else { return nil }
+        return "PDF/EPUB: \(pages.displayString) · Markdown: \(markdown.displayString). Choose a shortcut to use it everywhere."
+    }
 
     var toolbarScale = SettingsManager.defaultToolbarScale {
         didSet {
@@ -311,6 +347,36 @@ final class SettingsManager {
         }
     }
 
+    /// Off: a rail shows whenever its document is zoomed off the fit. On: it
+    /// stays hidden while reading and appears with the pointer at its edge.
+    var navigationRailRevealsOnHover = false {
+        didSet {
+            if !isLoading {
+                defaults.set(navigationRailRevealsOnHover, forKey: Keys.navigationRailRevealsOnHover)
+            }
+        }
+    }
+
+    /// The theme a new book opens in: the one last chosen, or set in Settings.
+    var bookTheme: EPUBReaderTheme = .system {
+        didSet { if !isLoading { defaults.set(bookTheme.rawValue, forKey: Keys.bookTheme) } }
+    }
+
+    /// The font a new book opens in, likewise: a preset, and an installed
+    /// family chosen over it.
+    var bookFontFamily: EPUBFontFamily = .system {
+        didSet { if !isLoading { defaults.set(bookFontFamily.rawValue, forKey: Keys.bookFontFamily) } }
+    }
+
+    var bookFontName: String? {
+        didSet { if !isLoading { defaults.set(bookFontName, forKey: Keys.bookFontName) } }
+    }
+
+    /// What a book with no settings of its own opens in.
+    var newBookTypography: EPUBTypography {
+        EPUBTypography(family: bookFontFamily, fontName: bookFontName, theme: bookTheme)
+    }
+
     /// The Markdown editor's forced color scheme. `.system` follows the OS.
     var markdownColorScheme: MarkdownColorScheme = .system {
         didSet {
@@ -381,7 +447,7 @@ final class SettingsManager {
 
     // MARK: - Init
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = AppDefaults.store) {
         self.defaults = defaults
         isLoading = true
         loadSettings()
@@ -489,7 +555,15 @@ final class SettingsManager {
         if defaults.object(forKey: Keys.showNavigationRail) != nil {
             showNavigationRail = defaults.bool(forKey: Keys.showNavigationRail)
         }
+        navigationRailRevealsOnHover = defaults.bool(forKey: Keys.navigationRailRevealsOnHover)
 
+        if let raw = defaults.string(forKey: Keys.bookTheme), let theme = EPUBReaderTheme(rawValue: raw) {
+            bookTheme = theme
+        }
+        if let raw = defaults.string(forKey: Keys.bookFontFamily), let family = EPUBFontFamily(rawValue: raw) {
+            bookFontFamily = family
+        }
+        bookFontName = defaults.string(forKey: Keys.bookFontName)
         if let raw = defaults.string(forKey: Keys.markdownColorScheme),
            let scheme = MarkdownColorScheme(rawValue: raw) {
             markdownColorScheme = scheme

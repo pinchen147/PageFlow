@@ -35,11 +35,24 @@ final class TabManager {
     /// edit-mode key monitor.
     var activeTabID: UUID? {
         didSet {
+            tabRecency.noteActivated(activeTabID)
             reconcileRenderedTabs()
             reconcileEditModeKeyMonitor()
-            if activeTabID != oldValue { checkActiveMarkdownForExternalChange() }
+            if activeTabID != oldValue {
+                checkActiveMarkdownForExternalChange()
+                noteHiddenTab(oldValue)
+            }
         }
     }
+
+    /// This window's tabs in the order Ctrl-Tab walks. Ids only, so nothing here
+    /// has to travel with a tab that moves away.
+    @ObservationIgnored var tabRecency = TabRecency()
+
+    @ObservationIgnored var hiddenTabRelease: DispatchWorkItem?
+    /// Seconds a tab stays hidden before it gives memory back. Long enough
+    /// that going back and forth between tabs never pays for it.
+    @ObservationIgnored var hiddenTabLifetime: TimeInterval = 120
 
     /// Tab ids whose views are kept warm so switching back is an instant show, not
     /// a rebuild — most-recently-active first, the active tab always at the head.
@@ -70,11 +83,13 @@ final class TabManager {
     /// instead), nil when no file drag is over an editor.
     var editorFileDragShowsOverlay: Bool?
 
-    /// Find presentation belongs to the window, including manually created windows.
-    var showingSearch = false {
-        didSet {
-            if oldValue && !showingSearch { clearAllSearchState() }
-        }
+    /// Find for the tab on screen. In every type Find belongs to the tab: each
+    /// has its own bar, query and matches, which stay as the reader moves between
+    /// tabs and go with a tab that moves to another window. Closing ends Find in
+    /// that tab only.
+    var showingSearch: Bool {
+        get { activeTabID.map(showingSearch(for:)) ?? false }
+        set { if let activeTabID { setShowingSearch(newValue, for: activeTabID) } }
     }
     var searchFocusRequest = 0
 
@@ -88,6 +103,9 @@ final class TabManager {
     let logger = Logger(subsystem: "com.pageflow", category: "TabManager")  // internal for cross-file decomposition (TabManager+*.swift)
 
     @ObservationIgnored var documentOpenedHandler: ((URL, Bool) -> Void)?
+
+    /// Where closed tabs go and come back from: the app's, or a test's own.
+    @ObservationIgnored var closedTabStore = ClosedTabStore.shared
 
     // Edit mode keyboard shortcut monitor (intercepts Cmd+C/V for page copy/paste)
     @ObservationIgnored private var editModeKeyMonitor: Any?
@@ -109,6 +127,8 @@ final class TabManager {
     // each TabSession; this is the FIFO order of tab ids waiting for the single
     // sheet — the head is the request currently presented.
     var unlockQueue: [UUID] = []  // internal for cross-file decomposition (TabManager+*.swift)
+    /// A password-protected source for Insert Pages from File; it shares the sheet.
+    var pendingInsertionUnlock: InsertionUnlockRequest?
 
     /// The movable unit when a tab is torn off or merged: the tab model plus its
     /// session (which carries managers, undo history, UI state, and pending
@@ -143,11 +163,7 @@ final class TabManager {
     /// shared toolbar's format buttons and the Format menu post requests through.
     var activeMarkdownContent: MarkdownContent? { activeSession?.content.markdown }
 
-    var activeAnnotationManager: AnnotationManager? { activeSession?.annotationManager }
-
     var activeCommentManager: CommentManager? { activeSession?.commentManager }
-
-    var activeBookmarkManager: BookmarkManager? { activeSession?.bookmarkManager }
 
     var activeRuntime: TabRuntime? {
         guard let id = activeTabID,
@@ -191,14 +207,25 @@ final class TabManager {
 
     /// Projects a tab id onto the render unit for its content, or nil if the
     /// session is gone (a just-closed tab still lingering in an id list).
-    private func renderModel(for tabID: UUID) -> TabRender? {
+    func renderModel(for tabID: UUID) -> TabRender? {
         guard let session = sessions[tabID] else { return nil }
         switch session.content {
         case .pdf:
             return .pdf(runtime(for: session))
         case .markdown(let content):
             return .markdown(MarkdownRuntime(tabID: tabID, content: content))
+        case .epub(let content):
+            return .epub(EPUBRuntime(tabID: tabID, content: content))
         }
+    }
+
+    /// Opening the saved files visits each tab before the window exists. Only the
+    /// selected tab needs a native view when the restored window first appears.
+    func prepareRestoredWindow(selectedURL: URL?) {
+        if let selectedURL, let id = tabID(for: selectedURL) {
+            selectTab(id)
+        }
+        renderedTabIDs = activeTabID.map { [$0] } ?? []
     }
 
     private func reconcileRenderedTabs() {
@@ -222,18 +249,22 @@ final class TabManager {
             // rebuilt view falls back to scroll-to-top and then persists that
             // wrong position over the user's real one.
             let evicted = Array(renderedTabIDs[Self.maxRenderedTabs...])
-            for evictedID in evicted {
-                guard let session = sessions[evictedID] else { continue }
-                switch session.content {
-                case .pdf(let c): _ = c.pdfManager.captureViewState()
-                case .markdown(let c):
-                    // Detach editors with native undo history; pristine editors
-                    // can release their surface entirely.
-                    c.evictEditorSurface()
-                }
-            }
+            evicted.forEach(prepareRenderedViewEviction)
             logger.debug("warmset.evict count=\(evicted.count, privacy: .public) cap=\(Self.maxRenderedTabs, privacy: .public)")
             renderedTabIDs.removeLast(renderedTabIDs.count - Self.maxRenderedTabs)
+        }
+    }
+
+    /// Readies a tab's view to be torn down, so it rebuilds where the reader was.
+    func prepareRenderedViewEviction(_ id: UUID) {
+        guard let session = sessions[id] else { return }
+        switch session.content {
+        case .pdf(let c): c.pdfManager.prepareViewEviction()
+        case .markdown(let c):
+            // Detach editors with native undo history; pristine editors
+            // can release their surface entirely.
+            c.evictEditorSurface()
+        case .epub(let c): c.prepareViewEviction()
         }
     }
 
@@ -256,6 +287,9 @@ final class TabManager {
     var activeCanUndo: Bool { activeSession?.undoAvailability.canUndo ?? false }
 
     var activeCanRedo: Bool { activeSession?.undoAvailability.canRedo ?? false }
+
+    /// The active tab's Undo and Redo, with the Edit menu's titles.
+    var activeUndoAvailability: UndoAvailability { activeSession?.undoAvailability ?? UndoAvailability() }
 
     // MARK: - UI State (Active Tab)
 
@@ -316,6 +350,14 @@ final class TabManager {
         sessions[tabID]?.uiState.showingOutline ?? false
     }
 
+    func pdfSidebarMode(for tabID: UUID) -> SidebarMode {
+        sessions[tabID]?.uiState.pdfSidebarMode ?? .outline
+    }
+
+    func epubSidebarSection(for tabID: UUID) -> EPUBReaderSidebar.Section {
+        sessions[tabID]?.uiState.epubSidebarSection ?? .contents
+    }
+
     func showingComments(for tabID: UUID) -> Bool {
         sessions[tabID]?.uiState.showingComments ?? false
     }
@@ -328,8 +370,27 @@ final class TabManager {
         sessions[tabID]?.uiState.isEditingPages ?? false
     }
 
+    func showingSearch(for tabID: UUID) -> Bool {
+        sessions[tabID]?.uiState.showingSearch ?? false
+    }
+
+    func setShowingSearch(_ value: Bool, for tabID: UUID) {
+        guard let session = sessions[tabID] else { return }
+        let wasShowing = session.uiState.showingSearch
+        session.uiState.showingSearch = value
+        if wasShowing && !value { clearFind(in: session) }
+    }
+
     func setShowingOutline(_ value: Bool, for tabID: UUID) {
         sessions[tabID]?.uiState.showingOutline = value
+    }
+
+    func setPDFSidebarMode(_ value: SidebarMode, for tabID: UUID) {
+        sessions[tabID]?.uiState.pdfSidebarMode = value
+    }
+
+    func setEPUBSidebarSection(_ value: EPUBReaderSidebar.Section, for tabID: UUID) {
+        sessions[tabID]?.uiState.epubSidebarSection = value
     }
 
     func setShowingComments(_ value: Bool, for tabID: UUID) {
@@ -359,13 +420,14 @@ final class TabManager {
         // markdown extensions come from the single shared list so they can't drift
         // from the open gate / content router. `UTType(filenameExtension:)` can be
         // nil on a system without the type registered, so absent types are dropped.
-        panel.allowedContentTypes = [.pdf] + URL.pageFlowMarkdownExtensions.compactMap {
+        panel.allowedContentTypes = [.pdf, UTType(filenameExtension: "epub")].compactMap { $0 }
+            + URL.pageFlowMarkdownExtensions.compactMap {
             UTType(filenameExtension: $0)
         }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.message = "Select a PDF or Markdown file to open"
+        panel.message = "Select a PDF, EPUB or Markdown file to open"
 
         openPanel = panel  // Set immediately to block concurrent calls
         presentOpenPanel(panel, retryCount: 0)
@@ -428,10 +490,6 @@ final class TabManager {
         }
     }
 
-    var hasMultipleTabs: Bool {
-        tabs.count > 1
-    }
-
     var tabCount: Int {
         tabs.count
     }
@@ -455,9 +513,23 @@ final class TabManager {
     /// file-backed tab (a lone untitled buffer). Untitled tabs are excluded — they
     /// have no on-disk source to reopen from (ADR-0012 D7).
     func captureWindowSession() -> WindowSessionState? {
-        let orderedTabs: [RestoreTab?] = tabs.map { restoreTab(for: $0) }
+        let orderedTabs: [RestoreTab?] = tabs.map { restoreTab(for: $0) } + restoreTabsNotOpenYet
         let activeListIndex = activeTabID.flatMap { id in tabs.firstIndex { $0.id == id } }
         return WindowSessionState.capturing(orderedTabs: orderedTabs, activeListIndex: activeListIndex)
+    }
+
+    /// What this window will reopen though no tab shows it yet: the saved tabs
+    /// that couldn't come back this launch, and files still downloading. A quit
+    /// now must not lose them. They follow the window's tabs.
+    private var restoreTabsNotOpenYet: [RestoreTab] {
+        let held = heldRestoreTabs.filter { tabID(for: URL(fileURLWithPath: $0.path)) == nil }
+        let heldPaths = Set(held.map(\.path))
+        let downloading = downloadingURLs.sorted { $0.path < $1.path }.compactMap { url -> RestoreTab? in
+            let path = url.pageFlowCanonicalDocumentURL.path
+            return heldPaths.contains(path) || tabID(for: url) != nil
+                ? nil : RestoreTab(path: path, bookmark: mintedRestoreBookmark(for: url, path: path))
+        }
+        return held + downloading
     }
 
     /// The persisted restore entry for one tab, or `nil` for an untitled/URL-less
@@ -515,6 +587,11 @@ final class TabManager {
 
     @ObservationIgnored var pendingTabCloses: [UUID: Task<Void, Never>] = [:]
 
+    /// A tab with a document, or one on its way in.
+    func holdsDocument(_ tab: TabModel) -> Bool {
+        tab.hasDocument || sessions[tab.id]?.pendingMarkdownOpen != nil
+    }
+
     func closeTab(_ tabID: UUID, using prompt: DocumentClosePrompt? = nil) {
         guard pendingTabCloses[tabID] == nil, tabs.contains(where: { $0.id == tabID }),
               let session = sessions[tabID] else { return }
@@ -536,7 +613,8 @@ final class TabManager {
         // Archive into the Recently Closed history (Tab Switcher) before teardown.
         // Placed after the dirty-confirm guard so a cancelled close isn't recorded;
         // URL-less tabs are ignored by the store (nothing to reopen).
-        ClosedTabStore.shared.record(tabs[index])
+        recordClosedTab(tabs[index])
+        if holdsDocument(tabs[index]) { WindowRegistry.shared.noteDocumentClosedOnPurpose() }
 
         // Capture the closing tab's reading position before teardown, but only
         // when it's the active tab (its live view still exists for an exact scroll
@@ -674,39 +752,33 @@ final class TabManager {
     }
 
     var hasOnlyPlaceholderTab: Bool {
-        guard tabs.count == 1,
-              let activeTabID,
-              let activeTab = activeTab,
-              let pdf = sessions[activeTabID]?.content.pdf else {
-            return false
-        }
-
-        // An untitled Markdown tab is a document even before its first edit.
-        // Only the empty PDF-backed New Tab can be dismissed without approval,
-        // and not while a password or a download is about to fill it.
-        return !activeTab.hasDocument && !pdf.pdfManager.hasDocument &&
-            !pdf.pdfManager.isDirty && !isAwaitingPassword(for: activeTabID) &&
-            downloadingURLs.isEmpty && sessions[activeTabID]?.pendingMarkdownOpen == nil
+        guard tabs.count == 1, let activeTabID else { return false }
+        return isBlankTab(activeTabID) && downloadingURLs.isEmpty
     }
 
-    func updateTabDocument(_ tabID: UUID, url: URL) {
-        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
-        tabs[index].documentURL = url
+    /// An untitled Markdown tab is a document even before its first edit. Only
+    /// the empty PDF-backed New Tab can be dismissed without approval, and not
+    /// while a password or a read is about to fill it.
+    func isBlankTab(_ tabID: UUID) -> Bool {
+        guard let tab = tabs.first(where: { $0.id == tabID }),
+              let session = sessions[tabID], let pdf = session.content.pdf else { return false }
+        return !tab.hasDocument && !pdf.pdfManager.hasDocument && !pdf.pdfManager.isDirty &&
+            !isAwaitingPassword(for: tabID) && session.pendingMarkdownOpen == nil
     }
 
-    func clearAllSearchState() {
-        for session in sessions.values {
-            // Content-aware: clear the PDF backend (+ its snapshot) or the Markdown
-            // Find backend (which posts findClearHighlights to drop highlights).
-            // Exhaustive over `TabContent` so a new content type must define its
-            // Find teardown rather than silently leaving stale highlights.
-            switch session.content {
-            case .pdf(let content):
-                content.searchManager.clearSearch()
-                content.clearSearchSnapshot()
-            case .markdown(let content):
-                content.searchManager.clear()
-            }
+    private func clearFind(in session: TabSession) {
+        // Content-aware: clear the PDF backend (+ its snapshot) or the Markdown
+        // Find backend (which posts findClearHighlights to drop highlights).
+        // Exhaustive over `TabContent` so a new content type must define its
+        // Find teardown rather than silently leaving stale highlights.
+        switch session.content {
+        case .pdf(let content):
+            content.searchManager.clearSearch()
+            content.clearSearchSnapshot()
+        case .markdown(let content):
+            content.searchManager.clear()
+        case .epub(let content):
+            content.searchManager.clear()
         }
     }
 
@@ -762,6 +834,8 @@ final class TabManager {
             persistViewState(for: content.pdfManager)
         case .markdown(let content):
             content.persistReadingPosition()
+        case .epub(let content):
+            content.persistReadingPosition()
         }
     }
 
@@ -798,6 +872,9 @@ final class TabManager {
     @ObservationIgnored var localFileLinkPrompt: (_ fileName: String) -> Bool = presentMarkdownLocalFileLinkPrompt
     /// Asks before a save writes U+FFFD over damaged UTF-8 bytes; a test seam too.
     @ObservationIgnored var invalidUTF8SavePrompt: (_ title: String) -> Bool = presentMarkdownInvalidUTF8SavePrompt
+    /// Saved tabs that couldn't reopen because their volume or download isn't
+    /// available now. They stay in the session until this window is closed.
+    @ObservationIgnored var heldRestoreTabs: [RestoreTab] = []
     /// Fallback restore bookmarks by canonical path (see `restoreTab(for:)`).
     @ObservationIgnored private var mintedRestoreBookmarks: [String: Data?] = [:]
     /// Only the newest focus check may prompt; older reads finish and are dropped.
@@ -808,8 +885,7 @@ final class TabManager {
     /// Coalesce selection changes and check the latest active session after the
     /// native host has updated. Defer modal work while another panel or drag owns input.
     private func scheduleMarkdownExternalChangeCheck(after delay: TimeInterval = 0) {
-        guard !TestEnvironment.isRunningTests, !isPresentingExternalChangePrompt,
-              !isExternalChangeCheckScheduled else { return }
+        guard !isPresentingExternalChangePrompt, !isExternalChangeCheckScheduled else { return }
         isExternalChangeCheckScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
@@ -827,7 +903,7 @@ final class TabManager {
     /// Reads the disk off the main thread (a slow share or an iCloud download
     /// must never freeze a tab switch), then decides on main.
     private func performMarkdownExternalChangeCheck() {
-        guard !TestEnvironment.isRunningTests, !isPresentingExternalChangePrompt,
+        guard !isPresentingExternalChangePrompt,
               let session = activeSession, let content = session.content.markdown,
               WindowRegistry.shared.window(for: self)?.isVisible == true,
               // A save landing mid-read would look external; its receipt re-checks.
@@ -977,8 +1053,13 @@ final class TabManager {
 
     /// Shows a transient pill in THIS window (see `TransientToastOverlay` —
     /// the fresh id re-triggers equal messages).
-    func postTransientToast(_ message: String) {
-        transientToast = TransientToast(id: UUID(), message: message)
+    func postTransientToast(_ message: String, duration: TimeInterval = 2) {
+        transientToast = TransientToast(id: UUID(), message: message, duration: duration)
+    }
+
+    /// Takes down a pill whose wait is over, if it is still the one showing.
+    func dismissTransientToast(_ message: String) {
+        if transientToast?.message == message { transientToast = nil }
     }
 
     // MARK: - Edit Mode Keyboard Monitor
@@ -992,7 +1073,8 @@ final class TabManager {
         let shouldBeInstalled = activeTabID.flatMap { sessions[$0]?.uiState.isEditingPages } ?? false
         if shouldBeInstalled, editModeKeyMonitor == nil {
             editModeKeyMonitor = editModeMonitorInstall { [weak self] event in
-                self?.handleEditModeKeyEvent(event) ?? event
+                guard let self else { return event }
+                return self.handleEditModeKeyEvent(event)
             }
         } else if !shouldBeInstalled, let monitor = editModeKeyMonitor {
             editModeKeyMonitor = nil
@@ -1015,7 +1097,7 @@ final class TabManager {
         guard isEditingPages else { return event }
 
         // Don't intercept when text field/view is focused - let normal copy/paste work
-        if let responder = NSApp.keyWindow?.firstResponder,
+        if let responder = window.firstResponder,
            responder is NSTextView || responder is NSTextField {
             return event
         }

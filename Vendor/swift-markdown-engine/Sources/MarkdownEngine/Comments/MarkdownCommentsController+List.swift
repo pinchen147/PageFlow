@@ -36,10 +36,11 @@ extension MarkdownCommentsController {
 
     func refreshList() {
         guard store.mode == .list, let scrollView, let main = textView else {
-            listPanel?.removeFromSuperview()
+            listPanel?.dismiss()
             listPanel = nil
             return
         }
+        let isNew = listPanel == nil
         let panel = listPanel ?? makeListPanel()
         if panel.superview !== scrollView { scrollView.addSubview(panel, positioned: .above, relativeTo: nil) }
         // Docked beside a wide editor; a popover over a narrow one.
@@ -57,6 +58,7 @@ extension MarkdownCommentsController {
         let frame = scrollView.isFlipped ? topDown
             : NSRect(x: topDown.minX, y: scrollView.bounds.height - topDown.maxY, width: topDown.width, height: topDown.height)
         if panel.frame != frame { panel.frame = frame }
+        if isNew { panel.presentFromTrailingEdge() }
 
         let filter = listFilter
         let ordered = orderedForList(store.threads)
@@ -159,7 +161,9 @@ extension MarkdownCommentsController {
     private func showListMoreMenu(from button: CommentButton) {
         closeMenu()
         guard let scrollView else { return }
-        let items = [TableMenuView.Item("Hide comments", symbol: "eye.slash", shortcut: "\u{2325}\u{21E7}C") { [weak self] in
+        // The host may rebind the hide key, so the row shows the bound one.
+        let shortcut = commentKeyBindings[.toggleComments].first?.displayString
+        let items = [TableMenuView.Item("Hide comments", symbol: "eye.slash", shortcut: shortcut) { [weak self] in
             self?.setMode(.hidden)
         }]
         presentMenu(items, label: "More", from: button, in: scrollView)
@@ -179,7 +183,7 @@ extension MarkdownCommentsController {
     /// A `#thread-‹id›` link: an open, attached thread opens where it is (its
     /// text centred); a resolved or detached one opens in the list.
     func openLinked(_ id: String) {
-        coordinator?.performNavigationWhenInputSettles { [weak self] in self?.openLinkedNow(id) }
+        performCommentNavigation { [weak self] in self?.openLinkedNow(id) }
     }
 
     private func openLinkedNow(_ id: String) {
@@ -198,12 +202,12 @@ extension MarkdownCommentsController {
 
     /// A list row opened: the text it is on comes into view, centred.
     func revealAnchor(of id: String) {
-        coordinator?.performNavigationWhenInputSettles { [weak self] in self?.revealAnchorNow(of: id) }
+        performCommentNavigation { [weak self] in self?.revealAnchorNow(of: id) }
     }
 
     private func revealAnchorNow(of id: String) {
         if let range = store.ranges[id] { _ = coordinator?.revealFoldedSource(range) }
-        guard let main = textView, let scrollView, let range = store.ranges[id], let line = main.lineFrame(at: range.location) else { return }
+        guard let main = textView, let scrollView, let range = store.ranges[id], let line = main.comments_lineFrame(at: range.location) else { return }
         let visible = main.visibleRect
         let target = line.midY - visible.height / 2
         let clip = scrollView.contentView

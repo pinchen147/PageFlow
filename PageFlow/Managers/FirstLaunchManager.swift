@@ -7,15 +7,33 @@ import UniformTypeIdentifiers
 final class FirstLaunchManager {
     private let hasShownDefaultPromptKey = "hasShownDefaultPDFPrompt"
     private var isSettingDefaultPDFReader = false
+    private let defaultPDFApplication: () -> URL?
+    private let applicationURL: URL
+    @ObservationIgnored private var activationObserver: NSObjectProtocol?
 
-    /// Check if PageFlow is currently the default PDF reader
-    var isDefaultPDFReader: Bool {
-        guard let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: UTType.pdf) else {
-            return false
+    /// Whether PageFlow is the default PDF reader, as of the last time the app
+    /// came to the front or set it. The menu bar reads this each time it
+    /// updates, on every tab switch, so it never waits on Launch Services.
+    private(set) var isDefaultPDFReader = false
+
+    init(defaultPDFApplication: @escaping () -> URL? = { NSWorkspace.shared.urlForApplication(toOpen: UTType.pdf) },
+         applicationURL: URL = Bundle.main.bundleURL,
+         center: NotificationCenter = .default) {
+        self.defaultPDFApplication = defaultPDFApplication
+        self.applicationURL = applicationURL
+        refreshDefaultPDFReader()
+        // The choice is also made outside the app: Finder's Get Info, another copy.
+        activationObserver = center.addMainActorObserver(forName: NSApplication.didBecomeActiveNotification) { [weak self] in
+            self?.refreshDefaultPDFReader()
         }
+    }
+
+    private func refreshDefaultPDFReader() {
         // Bundle identifiers are shared by installed, downloaded, and development copies.
-        return applicationURL.resolvingSymlinksInPath().standardizedFileURL
-            == Bundle.main.bundleURL.resolvingSymlinksInPath().standardizedFileURL
+        let isDefault = defaultPDFApplication().map {
+            $0.resolvingSymlinksInPath().standardizedFileURL == applicationURL.resolvingSymlinksInPath().standardizedFileURL
+        } ?? false
+        if isDefault != isDefaultPDFReader { isDefaultPDFReader = isDefault }
     }
 
     /// Check if this is first launch and show default PDF reader prompt if needed
@@ -28,11 +46,11 @@ final class FirstLaunchManager {
     }
 
     private var hasShownDefaultPrompt: Bool {
-        UserDefaults.standard.bool(forKey: hasShownDefaultPromptKey)
+        AppDefaults.store.bool(forKey: hasShownDefaultPromptKey)
     }
 
     private func markPromptAsShown() {
-        UserDefaults.standard.set(true, forKey: hasShownDefaultPromptKey)
+        AppDefaults.store.set(true, forKey: hasShownDefaultPromptKey)
     }
 
     /// Show native alert asking user to set PageFlow as default PDF reader
@@ -67,6 +85,7 @@ final class FirstLaunchManager {
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.isSettingDefaultPDFReader = false
+                self.refreshDefaultPDFReader()
                 if let error {
                     self.showManualDefaultInstructions(reason: error.localizedDescription)
                 } else if self.isDefaultPDFReader {

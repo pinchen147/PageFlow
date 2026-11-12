@@ -39,7 +39,9 @@ final class WindowChromeController: NSObject {
     static func applyHiddenTitlebarChrome(to window: NSWindow) {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
+        if !window.styleMask.contains(.fullSizeContentView) {
+            window.styleMask.insert(.fullSizeContentView)
+        }
         window.titlebarSeparatorStyle = .none
     }
 

@@ -245,6 +245,11 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
     override func mouseDown(with event: NSEvent) {
         resetMousePressState()
         guard !TabDragController.shared.isActive else { return }
+        // A Control-click opens the context menu, as a right-click does.
+        if event.modifierFlags.contains(.control), let menu = menu(for: event) {
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
         guard let target = clickTarget(at: point) else { return }
         pressOrigin = point
@@ -306,6 +311,37 @@ final class TabBarMouseNSView: NSView, TabBarHandle {
             return
         }
         onClick(target)
+    }
+
+    // MARK: - Context Menu
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard !TabDragController.shared.isActive, let tabManager = tabManagerRef,
+              let tabID = findTab(at: convert(event.locationInWindow, from: nil)) else { return nil }
+        return contextMenu(forTab: tabID, in: tabManager)
+    }
+
+    /// The commands of a tab's context menu, enabled by the rules the Tab menu uses.
+    func contextMenu(forTab tabID: UUID, in tabManager: TabManager) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let move = menu.addItem(withTitle: "Move Tab to New Window", action: #selector(moveTabToNewWindow(_:)), keyEquivalent: "")
+        move.target = self
+        move.representedObject = tabID
+        move.isEnabled = tabManager.canMoveTabToNewWindow(tabID)
+        let merge = menu.addItem(withTitle: "Merge All Windows", action: #selector(mergeAllWindows(_:)), keyEquivalent: "")
+        merge.target = self
+        merge.isEnabled = WindowRegistry.shared.canMergeAllWindows(into: tabManager)
+        return menu
+    }
+
+    @objc private func moveTabToNewWindow(_ sender: NSMenuItem) {
+        guard let tabID = sender.representedObject as? UUID else { return }
+        tabManagerRef?.moveTabToNewWindow(tabID)
+    }
+
+    @objc private func mergeAllWindows(_ sender: NSMenuItem) {
+        if let tabManagerRef { WindowRegistry.shared.mergeAllWindows(into: tabManagerRef) }
     }
 
     private func resetMousePressState() {

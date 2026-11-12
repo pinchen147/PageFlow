@@ -12,10 +12,7 @@ struct DesignTokens {
     // MARK: - Colors (macOS native)
 
     static let background = NSColor.windowBackgroundColor
-    static let secondaryBackground = NSColor.controlBackgroundColor
     static let text = NSColor.labelColor
-    static let secondaryText = NSColor.secondaryLabelColor
-    static let accent = NSColor.controlAccentColor
     static let separator = NSColor.separatorColor
     static let viewerBackground = NSColor(
         red: 27.0 / 255.0,
@@ -27,23 +24,13 @@ struct DesignTokens {
     // MARK: - Annotation Colors
 
     static let highlightYellow = NSColor(red: 1.0, green: 1.0, blue: 0.0, alpha: 1.0) // #FFFF00 @100%
-    static let highlightGreen = NSColor(red: 0.0, green: 0.7, blue: 0.258, alpha: 1.0) // #00B342 @100%
-    static let highlightRed = NSColor(red: 0.824, green: 0.0, blue: 0.0, alpha: 1.0) // #D20000 @100%
-    static let highlightBlue = NSColor(red: 0.0, green: 0.447, blue: 0.776, alpha: 1.0) // #0072C6 @100%
-    static let underlineColor = NSColor.black
-    static let underlineYellow = NSColor(red: 1.0, green: 1.0, blue: 0.0, alpha: 1.0) // #FFFF00
-    static let underlineGreen = NSColor(red: 0.0, green: 0.7, blue: 0.258, alpha: 1.0) // #00B342
-    static let underlineRed = NSColor(red: 0.824, green: 0.0, blue: 0.0, alpha: 1.0) // #D20000
-    static let underlineBlue = NSColor(red: 0.0, green: 0.447, blue: 0.776, alpha: 1.0) // #0072C6
 
     // MARK: - Search Highlight Colors
 
-    static let searchCurrentResult = NSColor(red: 0.6, green: 0, blue: 0, alpha: 0.6)
-    static let searchOtherResults = NSColor(red: 0, green: 0, blue: 0.6, alpha: 0.6)
-
-    // MARK: - Text Selection
-
-    static let textSelectionColor = NSColor(red: 0.494, green: 0.769, blue: 0.878, alpha: 0.3)
+    /// Find matches look the same in every document type: the current one a
+    /// strong yellow, the rest a light one (the macOS convention).
+    static let searchCurrentResult = NSColor.systemYellow.withAlphaComponent(0.65)
+    static let searchOtherResults = NSColor.systemYellow.withAlphaComponent(0.3)
 
     // MARK: - Spacing
 
@@ -55,26 +42,28 @@ struct DesignTokens {
 
     // MARK: - Layout
 
-    static let sidebarWidth: CGFloat = 200
+    static let sidebarWidth: CGFloat = 176
     static let thumbnailWidth: CGFloat = 120
-    static let toolbarHeight: CGFloat = 38
+    static let sidebarThumbnailWidth: CGFloat = sidebarWidth - 24
     static let dialogWidth: CGFloat = 300
     static let textFieldWidth: CGFloat = 200
 
     // MARK: - Thumbnail Grid
 
     static let thumbnailHeight: CGFloat = 170
-    static let thumbnailRenderWidth: CGFloat = 240
-    static let thumbnailRenderHeight: CGFloat = 340
-    static let thumbnailGridPadding: CGFloat = 12
+    static let sidebarThumbnailHeight: CGFloat = 215
+    static let thumbnailRenderWidth: CGFloat = 304
+    static let thumbnailRenderHeight: CGFloat = 430
+    static let thumbnailGridPadding: CGFloat = 8
     static let thumbnailCornerRadius: CGFloat = 4
     static let thumbnailBorderWidth: CGFloat = 2
     static let thumbnailBadgeFontSize: CGFloat = 12
 
     // MARK: - Settings Window
 
-    static let settingsWindowWidth: CGFloat = 500
-    static let settingsWindowHeight: CGFloat = 450
+    static let settingsWindowWidth: CGFloat = 760
+    static let settingsWindowHeight: CGFloat = 560
+    static let settingsSidebarWidth: CGFloat = 210
     static let colorWellWidth: CGFloat = 44
     static let colorWellHeight: CGFloat = 20
     static let presetRowHeight: CGFloat = 24
@@ -85,7 +74,6 @@ struct DesignTokens {
 
     static let floatingToolbarPadding: CGFloat = 16
     static let floatingToolbarCornerRadius: CGFloat = 14
-    static let floatingToolbarHeight: CGFloat = 28
     static let collapsedToolbarSize: CGFloat = 28
     static let toolbarButtonSize: CGFloat = 20
     static let toolbarIconSize: CGFloat = 10
@@ -94,29 +82,35 @@ struct DesignTokens {
     // MARK: - Liquid Glass
 
     static let glassPanelTintOpacity: CGFloat = 0.12
-    static let glassControlTintOpacity: CGFloat = 0.06
     static let sidebarGlassTintOpacity: CGFloat = 0.32
     static let sidebarControlGlassTintOpacity: CGFloat = 0.18
+    /// Light-tinted chrome glass adds this to its own tint, capped below, so
+    /// labels keep contrast over a white page in dark mode or a dark image in
+    /// light mode (see `LegibleGlass`).
+    static let legibleGlassBaseTint: CGFloat = 0.5
+    static let legibleGlassMaxTint: CGFloat = 0.85
     static let glassElevationShadowOpacity: Double = 0.055
-    // Fixed foregrounds for porcelain chrome and opaque white content cards only.
+    // Fixed foregrounds for opaque white content cards only (chrome adapts).
     static let glassTextPrimary = Color(red: 0.08, green: 0.08, blue: 0.08)
-    static let glassTextSecondary = Color(red: 0.24, green: 0.24, blue: 0.24)
 
     // MARK: - Traffic Lights
 
     static let trafficLightSize: CGFloat = 12
-    static let trafficLightSpacing: CGFloat = 8
     /// Reserved leading width in the top chrome so the tab strip clears the
     /// native window buttons (close / minimize / zoom).
     static let trafficLightClusterWidth: CGFloat = 70
-    static let trafficLightContainerPadding: CGFloat = 8
-    static let trafficLightHotspotWidth: CGFloat = 180
     static let trafficLightHotspotHeight: CGFloat = 40
+
+    // MARK: - Controls
+
+    /// A disabled control's glyph, relative to an enabled one: macOS's
+    /// disabled control text is about 0.25 alpha against the label's 0.85.
+    /// Applied once, by the shared toolbar label.
+    static let disabledControlOpacity: Double = 0.3
 
     // MARK: - Animation
 
     static let animationFast: Double = 0.15
-    static let animationNormal: Double = 0.25
 
     /// The chrome's spring: the Deck's cards sliding. Reduce Motion swaps it
     /// for a short ease.
@@ -140,10 +134,9 @@ struct DesignTokens {
 
     // MARK: - PDF Viewer
 
-    static let pdfMinScale: CGFloat = 0.1
-    static let pdfMaxScale: CGFloat = 4.0
+    nonisolated static let pdfMinScale: CGFloat = 0.1
+    nonisolated static let pdfMaxScale: CGFloat = 4.0
     static let pdfDefaultScale: CGFloat = 1.0
-    static let pdfZoomStep: CGFloat = 0.25
     static let pdfViewPadding: CGFloat = 20
     static let pdfFitZoomBump: CGFloat = 0.05
     static let pdfTwoPageGap: CGFloat = 10
@@ -151,9 +144,12 @@ struct DesignTokens {
 
     /// Markdown visual zoom (NSScrollView magnification, PDF-style). 50%–400%,
     /// with ⌘+/⌘− stepping multiplicatively.
-    static let markdownMinZoom: CGFloat = 0.5
-    static let markdownMaxZoom: CGFloat = 4.0
-    static let markdownZoomStepFactor: CGFloat = 1.25
+    nonisolated static let markdownMinZoom: CGFloat = 0.5
+    nonisolated static let markdownMaxZoom: CGFloat = 4.0
+    /// ⌘+/⌘− and the toolbar's zoom buttons step by this factor in every
+    /// document type, so a press feels the same everywhere. The zoom limits
+    /// are nonisolated so `ZoomRange` can serve off-main page geometry.
+    nonisolated static let zoomStepFactor: CGFloat = 1.25
 
     // MARK: - Markdown Reading
 
@@ -166,9 +162,26 @@ struct DesignTokens {
     /// Breathing room between the floating top chrome and the document's first line.
     static let markdownFirstLineGap: CGFloat = 24
 
+    // MARK: - Navigation Rail
+
+    /// The rail sliding in from the leading edge and out to it.
+    static let navigationRailSlideDuration: Double = 0.24
+    /// How far the rail travels off the leading edge: its lane and a margin.
+    static let navigationRailSlideDistance: CGFloat = 56
+    /// The preview's leading edge, just past the marks so it reads as the rail's own.
+    static let navigationRailPreviewX: CGFloat = 46
+    /// The Markdown section preview card.
+    static let navigationRailSectionPreviewWidth: CGFloat = 352
+    static let navigationRailSectionPreviewHeight: CGFloat = 104
+
     // MARK: - Search
 
     static let searchBarWidth: CGFloat = 200
+    /// The query and replacement fields and the magnifying glass.
+    static let searchFieldFontSize: CGFloat = 14
+    /// The result count and the match and close buttons.
+    static let searchControlFontSize: CGFloat = 12
+    static let searchBarAnimationDuration: Double = 0.2
 
     // MARK: - Comments
 
@@ -178,21 +191,15 @@ struct DesignTokens {
         let alpha = CGFloat(0x99) / 255.0
         return NSColor(srgbRed: gray, green: gray, blue: gray, alpha: alpha)
     }()
-    static let commentSidebarWidth: CGFloat = sidebarWidth
-    static let commentBubbleCornerRadius: CGFloat = 12
+    static let commentSidebarWidth: CGFloat = 200
     static let commentTailSize: CGFloat = 8
     static let commentDefaultRectWidth: CGFloat = 140
     static let commentDefaultRectHeight: CGFloat = 32
-    static let commentNoteIconSize: CGFloat = 24
-    static let commentNoteOffset: CGFloat = 12
 
     // Opaque white content cards retain dark text in either appearance.
     /// The opaque content-card surface, shared by comment bubbles, the thumbnail
     /// letterbox fill, and the tab drag pill so they all read as the same card.
     static let contentCardSurface = Color.white
-    /// The chrome's porcelain in dark mode (`GlassStyle.porcelainInDark`): the
-    /// opacity of the Deck's unfocused tab cards.
-    static let chromePorcelainOpacity: Double = 0.88
     static let commentCardBackground = contentCardSurface
     static let commentCardStroke = Color.black.opacity(0.08)
     static let commentCardStrokeSelected = Color(nsColor: .controlAccentColor)
@@ -203,13 +210,38 @@ struct DesignTokens {
     static let commentBubbleShadowRadius: CGFloat = 8
     static let commentBubbleShadowOpacity: Double = 0.15
 
+    // MARK: - EPUB Highlights
+
+    /// How strongly a highlight colour shows behind book text: enough to read
+    /// as the PDF colour on white and sepia paper, a little more on dark.
+    static let epubHighlightOpacityLight: CGFloat = 0.38
+    static let epubHighlightOpacitySepia: CGFloat = 0.34
+    static let epubHighlightOpacityDark: CGFloat = 0.45
+    /// Read Aloud: the sentence being read, and the word being said.
+    static let epubSpokenSentence = NSColor.systemTeal.withAlphaComponent(0.16)
+    static let epubSpokenWord = NSColor.systemTeal.withAlphaComponent(0.45)
+    /// The dot in the margin beside a highlight with a note.
+    static let epubNoteMarkerSize: CGFloat = 7
+    static let epubNoteMarkerGap: CGFloat = 10
+    static let epubNoteEditorHeight: CGFloat = 96
+    static let epubHighlightSwatchSize: CGFloat = 18
+    /// A colour swatch's ring in the note editor, stronger on the current colour.
+    static let epubSwatchStrokeOpacity: Double = 0.2
+    static let epubSwatchStrokeOpacityCurrent: Double = 0.7
+    static let epubSwatchStrokeWidth: CGFloat = 1
+    static let epubSwatchStrokeWidthCurrent: CGFloat = 2
+    /// The highlight's colour beside its words on a Notes panel card.
+    static let epubNoteColorBarWidth: CGFloat = 3
+    static let epubNoteColorBarCornerRadius: CGFloat = 1.5
+    /// A Notes panel card's outline, as a comment card's: heavier while edited.
+    static let epubNoteCardStrokeWidth: CGFloat = 1
+    static let epubNoteCardStrokeWidthEditing: CGFloat = 1.5
+    static let epubNotesEmptyIconSize: CGFloat = 24
+
     // MARK: - Sidebar Toggle
 
     static let sidebarToggleButtonSize: CGFloat = 24
     static let sidebarToggleIconSize: CGFloat = 12
-    static let sidebarToggleCornerRadius: CGFloat = 4
-    static let sidebarToggleContainerCornerRadius: CGFloat = 6
-    static let sidebarToggleContainerPadding: CGFloat = 2
 
     // MARK: - Window
 
@@ -232,7 +264,6 @@ struct DesignTokens {
 
     // MARK: - Tabs
 
-    static let tabBarHeight: CGFloat = 32
     static let tabHeight: CGFloat = 26
     static let tabMaxWidth: CGFloat = 160
     static let tabMinWidth: CGFloat = 80

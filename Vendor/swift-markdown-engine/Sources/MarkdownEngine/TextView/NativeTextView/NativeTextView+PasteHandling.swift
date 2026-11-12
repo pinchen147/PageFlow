@@ -15,15 +15,26 @@ extension NativeTextView {
     ]
 
     override func copy(_ sender: Any?) {
-        if !copySelectedMarkdownBlock(to: .general) { super.copy(sender) }
+        if !copySelectedMarkdownBlock(to: .general),
+           (delegate as? NativeTextViewCoordinator)?.copyEmphasisSelection(in: self, to: .general) != true { super.copy(sender) }
     }
 
     override func cut(_ sender: Any?) {
-        guard isEditable, !hasMarkedText() else { return }
-        guard (delegate as? NativeTextViewCoordinator)?.admitFoldedEdit(selectedRange(), in: self) != false else { return }
-        if copySelectedMarkdownBlock(to: .general), let coordinator = delegate as? NativeTextViewCoordinator {
+        if !cutSelection(to: .general) { super.cut(sender) }
+    }
+
+    /// Refusal is handled; ordinary native Cut remains the caller's fallback.
+    func cutSelection(to board: NSPasteboard) -> Bool {
+        guard isEditable, !hasMarkedText() else { return true }
+        guard (delegate as? NativeTextViewCoordinator)?.admitFoldedEdit(selectedRange(), in: self) != false else { return true }
+        if copySelectedMarkdownBlock(to: board), let coordinator = delegate as? NativeTextViewCoordinator {
             _ = coordinator.replaceSourceRanges([selectedRange()], with: "", expectedSource: string, actionName: "Cut")
-        } else { super.cut(sender) }
+            return true
+        } else if let coordinator = delegate as? NativeTextViewCoordinator,
+                  coordinator.copyEmphasisSelection(in: self, to: board) {
+            return coordinator.applyEmphasisInput("", range: selectedRange(), in: self)
+        }
+        return false
     }
 
     func copySelectedMarkdownBlock(to pasteboard: NSPasteboard) -> Bool {
@@ -47,6 +58,14 @@ extension NativeTextView {
 
         guard (delegate as? NativeTextViewCoordinator)?.admitFoldedEdit(selectedRange(), in: self) != false else { return true }
         if (delegate as? NativeTextViewCoordinator)?.pasteMarkdownBlock(from: pasteboard) == true { return true }
+
+        // A spreadsheet's grid (its HTML table first, else tab-separated text)
+        // becomes a Markdown table on its own lines (owner decision, PR D),
+        // before the picture of the cells a spreadsheet also puts there.
+        if pastesTablesHere(), let table = TableClipboard.proseTable(from: pasteboard) {
+            insertLiteralText(blockSeparated(table))
+            return true
+        }
 
         if let imageEmbed = onPasteImage?(pasteboard), !imageEmbed.isEmpty {
             insertBlockEmbed(imageEmbed)
@@ -75,12 +94,51 @@ extension NativeTextView {
         return false
     }
 
+    /// A pasted grid is a table only in prose: inside a code block or a
+    /// table's revealed source it is the text it says.
+    private func pastesTablesHere() -> Bool {
+        guard let coordinator = delegate as? NativeTextViewCoordinator else { return true }
+        let location = selectedRange().location
+        return !coordinator.parsedDocument(for: string).tokens.contains {
+            ($0.kind == .codeBlock || $0.kind == .table) && $0.range.location < location && location < NSMaxRange($0.range)
+        }
+    }
+
+    /// `block` with the line breaks that put it on its own lines, a blank
+    /// line away from the text around the selection.
+    private func blockSeparated(_ block: String) -> String {
+        let text = string as NSString
+        let selection = selectedRange()
+        func isNewline(_ index: Int) -> Bool { [0x0A, 0x0D].contains(text.character(at: index)) }
+        var prefix = ""
+        if selection.location > 0 {
+            if !isNewline(selection.location - 1) {
+                prefix = "\n\n"
+            } else if selection.location > 1, !isNewline(selection.location - 2) {
+                prefix = "\n"
+            }
+        }
+        var suffix = ""
+        let end = NSMaxRange(selection)
+        if end < text.length {
+            if !isNewline(end) {
+                suffix = "\n\n"
+            } else {
+                let crlf = text.character(at: end) == 0x0D && end + 1 < text.length && text.character(at: end + 1) == 0x0A
+                let next = end + (crlf ? 2 : 1)
+                if next < text.length, !isNewline(next) { suffix = "\n" }
+            }
+        }
+        return prefix + block + suffix
+    }
+
     private func insertLiteralText(_ text: String) {
         let coordinator = delegate as? NativeTextViewCoordinator
         let previous = coordinator?.isLiteralInsertion ?? false
         coordinator?.isLiteralInsertion = true
         defer { coordinator?.isLiteralInsertion = previous }
-        insertText(text, replacementRange: selectedRange())
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        insertText(normalized, replacementRange: selectedRange())
     }
 
     /// AppKit's own pasteboard reader (Services, Paste and Match Style). The
@@ -97,6 +155,11 @@ extension NativeTextView {
            pboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]),
            let embed = onPasteImage?(pboard), !embed.isEmpty {
             insertBlockEmbed(embed)
+            return true
+        }
+        if type == .string, isEditable, !hasMarkedText(),
+           let plain = pboard.string(forType: .string) {
+            insertLiteralText(plain)
             return true
         }
         return super.readSelection(from: pboard, type: type)
@@ -140,7 +203,7 @@ extension NativeTextView {
         if !newlineFollows {
             suffix = "\n"
         }
-        insertText(prefix + embed + suffix, replacementRange: sel)
+        insertLiteralText(prefix + embed + suffix)
         if newlineFollows {
             let caret = sel.location + (prefix + embed).utf16.count + 1
             setSelectedRange(NSRange(location: min(caret, (string as NSString).length), length: 0))
